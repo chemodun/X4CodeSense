@@ -11,13 +11,14 @@ Preview. The current build:
 [*] recognises script and patch documents and shows the script type and name in the status bar;
 [*] reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type;
 [*] validates scripts against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes and invalid attribute values;
+[*] parses every expression and reports syntax errors the way the game would reject them, plus [b]@[/b] combined with `?`, text references that are not [b]{page, id}[/b] literals, and [b]%d[/b] in format strings;
 [*] completes child elements allowed at the caret, attribute names, attribute values from the schema enumerations, and property chains in expressions from [b]scriptproperties.xml[/b] (`player.ship.cargo.{$ware}.count`), with keywords and the values of lookups such as [b]class[/b] or `ware`;
 [*] shows hover documentation for elements, attributes, enumeration values, keywords and properties;
 [*] goes to the definition of an element or attribute in the schema, of a keyword or property in `scriptproperties.xml`, and of a lookup value in the game file it comes from.
 [/list]
 Being ported and rebuilt next, in this order:
 [list]
-[*] A real parser for the expression language with syntax diagnostics
+[*] Types of expressions, unknown properties and keywords as diagnostics
 [*] Variables with scopes and inferred types
 [*] Labels, actions, handlers, cues, libraries and script names across files
 [*] Text file (`t/*.xml`) lookups: hover and completion for [b]{page, id}[/b] references, also in other game XML such as macros, wares and libraries
@@ -52,7 +53,8 @@ Being ported and rebuilt next, in this order:
 
 [size=125][u]Unreleased[/u][/size]
 [list]
-[*] Completion, hover and go to definition from the schemas and `scriptproperties.xml`: child elements allowed at the caret, attribute names, enumeration values, keywords, property chains with placeholders and lookup values. Lookups the game evaluates but [b]scriptproperties.xml[/b] does not list (relation ranges, licence types, component states, input functions and more) come from the game's own data files.
+[*] Expression diagnostics: every attribute that takes an expression is parsed with the game's operator precedence; syntax errors, [b]@[/b] combined with `?`, text references without numeric literals and [b]%d[/b] in a format string are reported at their position. All 247,000 expressions of the vanilla scripts parse cleanly in about a second.
+[*] Completion, hover and go to definition from the schemas and `scriptproperties.xml`: child elements allowed at the caret, attribute names, enumeration values, keywords, property chains with placeholders and lookup values. Lookups the game evaluates but [b]scriptproperties.xml[/b] does not list (relation ranges, licence types, component states, input functions and more) come from the game's own data files. Everything keeps working while a tag, an attribute or a quote is still being typed.
 [*] Schema validation of scripts against the game's XSD files, on by default: unknown elements and attributes, misplaced and missing child elements, missing required attributes, invalid attribute values with the expected values in the message. The schemas load in well under a second and the largest vanilla script validates in tens of milliseconds.
 [*] XML well-formedness diagnostics for scripts and patches: unclosed start and end tags, missing or unquoted attribute values, missing closing quotes, duplicate attributes, missing end tags, unclosed comments.
 [*] Initial scaffold: language server, client and command-line checker with script detection.
