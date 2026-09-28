@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { analyzeDocument, loadSchemas, scriptSchemas, schemaFolderName, type AnalysisContext, type ScriptSchema } from 'x4-script-core';
+import { analyzeDocument, loadGameData, scriptSchemas, schemaFolderName, type AnalysisContext, type ScriptSchema } from 'x4-script-core';
 
 interface ScriptFolder {
   folder: string;
@@ -162,17 +162,22 @@ async function main(argv: string[]): Promise<number> {
   }
   const context: AnalysisContext = { validateStructure: options.structure };
   if (options.unpacked !== undefined) {
-    const libraries = path.join(path.resolve(options.unpacked), 'libraries');
+    const unpacked = path.resolve(options.unpacked);
+    const libraries = path.join(unpacked, 'libraries');
     if (!(await isDirectory(libraries))) {
       console.error(`Not a folder: ${libraries}`);
       return 2;
     }
-    context.schemas = loadSchemas(libraries);
-    for (const problem of context.schemas.problems) {
-      console.error(`${problem.file}: ${problem.message}`);
+    const game = loadGameData(unpacked);
+    for (const problem of game.problems) {
+      console.error(problem);
     }
-    if (Object.keys(context.schemas.schemas).length === 0) {
+    if (Object.keys(game.schemas.schemas).length === 0) {
       return 2;
+    }
+    context.schemas = game.schemas;
+    if (game.properties) {
+      context.properties = game.properties;
     }
   }
   const findings: Finding[] = [];

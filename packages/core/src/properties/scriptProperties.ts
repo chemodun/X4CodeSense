@@ -11,19 +11,62 @@ import type { ScriptSchema } from '../types';
 import { selectElements, selectValue } from '../xml/miniXPath';
 import { attributeNamed, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 
-export type PropertySegment = { kind: 'literal'; text: string } | { kind: 'expression'; type: string } | { kind: 'variable' };
+/**
+ * One segment of a property name pattern:
+ * - `literal`: a fixed name such as `cargo`;
+ * - `expression`: `{$type}`, a braced expression of that datatype, or a bare value of the keyword of that name;
+ * - `variable`: `$<variable>` or `$<keyname>`, a variable or key written as `$name`;
+ * - `any`: `<cuename>`, `<classname>`, ..., any name; some stand for the values of a keyword;
+ * - `args`: `[$x, $y, $z]`, a bracketed argument list.
+ */
+export type PropertySegment =
+  | { kind: 'literal'; text: string }
+  | { kind: 'expression'; type: string }
+  | { kind: 'variable'; name: string }
+  | { kind: 'any'; name: string }
+  | { kind: 'args'; text: string };
 
 const expressionPlaceholder = /^\{\$(\w+)\}$/;
+const variablePlaceholder = /^\$<(\w+)>$/;
+const anyPlaceholder = /^<(\w+)>$/;
+
+/** Splits a property name pattern on the dots outside brackets, braces and angle brackets. */
+function splitPattern(name: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < name.length; index++) {
+    const character = name[index];
+    if (character === '[' || character === '{' || character === '<') {
+      depth++;
+    } else if (character === ']' || character === '}' || character === '>') {
+      depth--;
+    } else if (character === '.' && depth === 0) {
+      parts.push(name.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(name.slice(start));
+  return parts;
+}
 
 /** Splits a property name pattern into its segments. */
 export function parseSegments(name: string): PropertySegment[] {
-  return name.split('.').map((part) => {
-    const placeholder = expressionPlaceholder.exec(part);
-    if (placeholder) {
-      return { kind: 'expression', type: placeholder[1] };
+  return splitPattern(name).map((part) => {
+    const expression = expressionPlaceholder.exec(part);
+    if (expression) {
+      return { kind: 'expression', type: expression[1] };
     }
-    if (part === '$<variable>') {
-      return { kind: 'variable' };
+    const variable = variablePlaceholder.exec(part);
+    if (variable) {
+      return { kind: 'variable', name: variable[1] };
+    }
+    const any = anyPlaceholder.exec(part);
+    if (any) {
+      return { kind: 'any', name: any[1] };
+    }
+    if (part.startsWith('[')) {
+      return { kind: 'args', text: part };
     }
     return { kind: 'literal', text: part };
   });
@@ -107,6 +150,8 @@ export class ScriptKeyword {
   readonly properties = new Map<string, ScriptProperty>();
   /** Datatype of the keyword's own value, when declared. */
   type: ScriptDatatype | undefined;
+  /** True when values were imported from game data files: a lookup whose list may lag behind the game or its DLCs. */
+  imported = false;
 
   constructor(
     readonly name: string,
@@ -275,14 +320,18 @@ export class ScriptProperties {
         this.problems.push(`${source.path}: keyword '${name}' has unknown script '${scriptAttribute}'`);
       }
       const typeName = attributeNamed(node, 'type')?.value;
-      const keyword = new ScriptKeyword(name, attributeNamed(node, 'description')?.value ?? '', typeName, script, this.locationOf(source, node));
-      if (typeName !== undefined) {
-        keyword.type = this.datatypes.get(typeName);
-        if (!keyword.type) {
-          this.problems.push(`${source.path}: keyword '${name}' has unknown type '${typeName}'`);
+      // A later file (the additions) may extend a keyword the main file declares.
+      let keyword = this.keywords.find((existing) => existing.name === name && existing.script === script);
+      if (!keyword) {
+        keyword = new ScriptKeyword(name, attributeNamed(node, 'description')?.value ?? '', typeName, script, this.locationOf(source, node));
+        if (typeName !== undefined) {
+          keyword.type = this.datatypes.get(typeName);
+          if (!keyword.type) {
+            this.problems.push(`${source.path}: keyword '${name}' has unknown type '${typeName}'`);
+          }
         }
+        this.keywords.push(keyword);
       }
-      this.keywords.push(keyword);
       for (const child of node.children) {
         if (child.name === 'property') {
           this.readProperty(source, child, keyword, keyword.properties);
@@ -338,6 +387,7 @@ export class ScriptProperties {
       this.problems.push(`${source.path}: import for keyword '${keyword.name}': ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
+    keyword.imported = true;
     const nameExpression = attributeNamed(template, 'name')?.value ?? '';
     const resultExpression = attributeNamed(template, 'result')?.value ?? '';
     const type = attributeNamed(template, 'type')?.value;

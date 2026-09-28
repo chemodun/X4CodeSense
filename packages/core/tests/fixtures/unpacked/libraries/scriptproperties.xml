@@ -6,6 +6,8 @@
     <property name="name" result="Name of the component" type="string" />
     <property name="isclass.{$class}" result="true iff the component is of the given class" type="boolean" />
     <property name="isclass.{$list}" result="true iff the component is of one of the classes in the list" type="boolean" />
+    <property name="isclass.&lt;classname&gt;" result="Shortcut for isclass.{class.&lt;classname&gt;}" type="boolean" />
+    <property name="distanceto.[$component, $position]" result="Distance to the other component or position" type="length" />
     <property name="sector" result="Sector the component is in" type="sector" />
   </datatype>
   <datatype name="object" type="component">
@@ -18,8 +20,13 @@
   <datatype name="ship" type="container">
     <property name="pilot" result="Pilot of the ship" type="entity" />
     <property name="speed" result="Current speed" type="length" />
+    <property name="dock" result="Docking bay the ship is docked at" type="dockingbay" />
+    <property name="dock.{$docksize}" result="Docking bay of the given size the ship is docked at" type="dockingbay" />
   </datatype>
   <datatype name="station" type="container" />
+  <datatype name="dockingbay" type="component">
+    <property name="container" result="Container the docking bay belongs to" type="container" />
+  </datatype>
   <datatype name="entity" type="component">
     <property name="skill.{$skilltype}" result="Skill level" type="integer" />
     <property name="controlled" result="Object controlled by the entity" type="object" />
@@ -27,7 +34,9 @@
   <datatype name="sector" type="component">
     <property name="ships" result="Ships in the sector" type="list" />
   </datatype>
-  <datatype name="faction" type="component" />
+  <datatype name="faction" type="component">
+    <property name="haslicence.&lt;licencetype&gt;.{$faction}" result="true iff the faction has the licence of the other faction" type="boolean" />
+  </datatype>
   <datatype name="numeric" />
   <datatype name="integer" type="numeric" suffix="i" />
   <datatype name="length" type="numeric" suffix="m" />
@@ -37,6 +46,7 @@
   <datatype name="boolean" />
   <datatype name="string">
     <property name="len" result="Length of the string" type="integer" />
+    <property name="[$arg1, $arg2, ...]" result="Formatted text" type="string" />
   </datatype>
   <datatype name="list">
     <property name="count" result="Number of elements" type="integer" />
@@ -50,7 +60,9 @@
   <datatype name="npctemplateentry" pseudo="true" />
   <datatype name="cue">
     <property name="name" result="Name of the cue" type="string" />
+    <property name="$&lt;variable&gt;" result="Cue variable" />
   </datatype>
+  <datatype name="tag" type="enum" />
 
   <keyword name="player" description="Access to player-specific data">
     <property name="ship" result="The player ship" type="ship" />
@@ -73,5 +85,12 @@
   <keyword name="skilltype" description="Skill type lookup">
     <property name="piloting" result="Piloting skill" type="skilltype" />
     <property name="boarding" result="Boarding skill" type="skilltype" />
+  </keyword>
+  <keyword name="tag" description="Tag lookup">
+    <property name="&lt;tagname&gt;" result="Tag with the given name" type="tag" />
+    <property name="{$enum}" result="Tag for the given enumeration value" type="tag" />
+  </keyword>
+  <keyword name="md" description="Access to Mission Director scripts" script="md">
+    <property name="&lt;mdscriptname&gt;.&lt;cuename&gt;" result="Specified cue" type="cue" />
   </keyword>
 </scriptproperties>

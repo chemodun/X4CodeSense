@@ -2,7 +2,8 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
 import { detectDocument } from '../scripts/scriptMetadata';
 import type { DocumentDetection } from '../types';
-import { parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
+import type { ScriptProperties } from '../properties/scriptProperties';
+import { attributeNamed, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { rootElementName, type SchemaSet } from '../xsd/loadSchemas';
 import type { XsdElement } from '../xsd/schema';
 import { validateStructure } from '../xsd/validateStructure';
@@ -19,6 +20,22 @@ export interface AnalysisContext {
   validateStructure?: boolean;
   /** Parse expression attributes and report syntax problems. Defaults to true; needs the schemas. */
   validateExpressions?: boolean;
+  /** Script properties; with them expressions are also checked for unknown keywords and properties. */
+  properties?: ScriptProperties;
+}
+
+/** Names of the cues and libraries of a script: they may start a chain like a keyword. */
+function cueNames(structure: XmlStructure): Set<string> {
+  const names = new Set<string>();
+  for (const element of structure.elements) {
+    if (element.name === 'cue' || element.name === 'library') {
+      const name = attributeNamed(element, 'name')?.value;
+      if (name !== undefined && name !== '') {
+        names.add(name);
+      }
+    }
+  }
+  return names;
 }
 
 /** Everything the library knows about one document after a full analysis. */
@@ -65,7 +82,13 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     analysis.declarations = validation.declarations;
     analysis.diagnostics.push(...validation.diagnostics);
     if (context.validateExpressions ?? true) {
-      analysis.diagnostics.push(...validateExpressions(validation.declarations, document, diagnosticSource));
+      analysis.diagnostics.push(
+        ...validateExpressions(validation.declarations, document, diagnosticSource, {
+          properties: context.properties,
+          schema: detection.script.schema,
+          knownHeads: cueNames(structure),
+        })
+      );
     }
   }
   return analysis;

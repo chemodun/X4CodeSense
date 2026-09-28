@@ -54,3 +54,48 @@ describe('expression diagnostics', () => {
     expect(report('<debug_text text="\'%s: %,s\'.[{1001, 5}, @$ship.knownname]"/>')).toEqual([]);
   });
 });
+
+describe('unknown keywords and properties', () => {
+  const ai = (body: string): string =>
+    `<aiscript name="a">\n  <attention min="1">\n    <actions>\n      ${body}\n    </actions>\n  </attention>\n</aiscript>\n`;
+
+  function reportWith(text: string): string[] {
+    return analyzeText(text, { schemas: game.schemas, properties: game.properties })
+      .diagnostics.filter((diagnostic) => String(diagnostic.code).startsWith('expression-unknown'))
+      .map(
+        (diagnostic) =>
+          `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}-${diagnostic.range.end.character + 1} ${diagnostic.code}: ${diagnostic.message}`
+      );
+  }
+
+  it('reports unknown chain heads in AI scripts only', () => {
+    expect(reportWith(ai('<set_value name="$x" exact="frobnicate.ship"/>'))).toEqual(["4:35-45 expression-unknown-keyword: Unknown keyword 'frobnicate'"]);
+    expect(reportWith(ai('<set_value name="$x" exact="1 + frobnicate"/>'))).toEqual(["4:39-49 expression-unknown-keyword: Unknown keyword 'frobnicate'"]);
+    expect(reportWith(ai('<set_value name="$x" exact="frobnicate"/>'))).toEqual([]);
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.name"/>'))).toEqual([]);
+    expect(reportWith(actions('<set_value name="$x" exact="SomeCue.$value"/>'))).toEqual([]);
+  });
+
+  it('reports unknown properties on known types', () => {
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.frobnicate"/>'))).toEqual([
+      "4:47-57 expression-unknown-property: 'ship' has no property 'frobnicate'",
+    ]);
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.cargo.{$w}.count.frobnicate"/>'))).toEqual([
+      "4:64-74 expression-unknown-property: 'integer' has no property 'frobnicate'",
+    ]);
+    expect(reportWith(ai('<set_value name="$x" exact="this.controlled.frobnicate"/>'))).toEqual([
+      "4:51-61 expression-unknown-property: 'object' has no property 'frobnicate'",
+    ]);
+  });
+
+  it('leaves alone what the data cannot describe', () => {
+    expect(reportWith(ai('<set_value name="$x" exact="class.nope"/>'))).toEqual([]);
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.{$name}.frobnicate"/>'))).toEqual([]);
+    expect(reportWith(ai('<set_value name="$x" exact="$x.frobnicate"/>'))).toEqual([]);
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.owner.haslicence.{$l}"/>'))).toEqual([]);
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.dock.container.name"/>'))).toEqual([]);
+    expect(reportWith(ai('<set_value name="$x" exact="this.$var.frobnicate"/>'))).toEqual([]);
+    expect(reportWith(ai('<find_ship name="$s" class="ship"/>'))).toEqual([]);
+    expect(analyzeText(ai('<set_value name="$x" exact="player.ship.frobnicate"/>'), { schemas: game.schemas }).diagnostics).toEqual([]);
+  });
+});

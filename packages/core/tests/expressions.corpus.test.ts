@@ -61,19 +61,30 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
     expect(failures).toEqual([]);
   }, 60_000);
 
-  it('reports no expression diagnostics through the analysis', () => {
-    const codes = new Map<string, number>();
+  /**
+   * What the analysis reports on vanilla with the script properties at hand. Each entry is a defect of
+   * vanilla itself or a property the game has but scriptproperties.xml does not describe; nothing else
+   * may appear, and an entry that disappears must be removed here.
+   */
+  const knownVanillaFindings = [
+    "expression-unknown-property: 'boolean' has no property 'isventuremodule' (x4ep1_mentor_subscription.xml)",
+    "expression-unknown-property: 'controllable' has no property 'destination' (order.trade.routine.xml)",
+    "expression-unknown-property: 'this' has no property 'id' (move.attack.object.capital.steering.xml)",
+  ];
+
+  it('reports only the known findings through the analysis', () => {
+    const found = new Set<string>();
     for (const schema of ['md', 'aiscripts']) {
       for (const file of xmlFilesIn(path.join(root, schema))) {
-        const analysis = analyzeText(readFileSync(file, 'utf8'), { schemas: game.schemas });
+        const analysis = analyzeText(readFileSync(file, 'utf8'), { schemas: game.schemas, properties: game.properties });
         for (const diagnostic of analysis.diagnostics) {
           const code = String(diagnostic.code);
           if (code.startsWith('expression-')) {
-            codes.set(code, (codes.get(code) ?? 0) + 1);
+            found.add(`${code}: ${diagnostic.message} (${path.basename(file)})`);
           }
         }
       }
     }
-    expect([...codes.entries()]).toEqual([]);
+    expect([...found].sort()).toEqual(knownVanillaFindings);
   }, 60_000);
 });

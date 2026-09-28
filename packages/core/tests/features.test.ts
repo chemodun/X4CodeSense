@@ -113,11 +113,13 @@ describe('completion', () => {
     expect(labels(actions('<set_value name="$x" exact="player.ship.|"/>'))).toEqual([
       'pilot',
       'speed',
+      'dock',
       'cargo',
       'owner',
       'exists',
       'name',
       'isclass',
+      'distanceto',
       'sector',
     ]);
     expect(labels(actions('<set_value name="$x" exact="player.ship.cargo.|"/>'))).toEqual(['{$ware}', 'energycells', 'ore', 'list']);
@@ -200,7 +202,18 @@ describe('while typing', () => {
   });
 
   it('completes inside a value whose closing quote is missing', () => {
-    expect(labels(actions('<set_value name="$x" exact="player.ship.|\n'))).toEqual(['pilot', 'speed', 'cargo', 'owner', 'exists', 'name', 'isclass', 'sector']);
+    expect(labels(actions('<set_value name="$x" exact="player.ship.|\n'))).toEqual([
+      'pilot',
+      'speed',
+      'dock',
+      'cargo',
+      'owner',
+      'exists',
+      'name',
+      'isclass',
+      'distanceto',
+      'sector',
+    ]);
     expect(labels(actions('<set_value name="$x" operation="|\n'))).toEqual(['set', 'add', 'subtract']);
     expect(labels(actions('<set_value name="$x exact="player.|"/>'))).toContain('ship');
     expect(labels(actions('<set_value name="$x" exact="player.ship.|/>'))).toContain('pilot');

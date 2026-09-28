@@ -74,6 +74,8 @@ describe('ScriptProperties', () => {
     expect([...(ship?.allProperties() ?? [])].map((property) => property.name)).toEqual([
       'pilot',
       'speed',
+      'dock',
+      'dock.{$docksize}',
       'cargo.{$ware}.count',
       'cargo.list',
       'owner',
@@ -81,6 +83,8 @@ describe('ScriptProperties', () => {
       'name',
       'isclass.{$class}',
       'isclass.{$list}',
+      'isclass.<classname>',
+      'distanceto.[$component, $position]',
       'sector',
     ]);
     expect(ship?.property('owner')?.owner.name).toBe('object');
@@ -94,8 +98,17 @@ describe('ScriptProperties', () => {
       { kind: 'expression', type: 'ware' },
       { kind: 'literal', text: 'count' },
     ]);
-    expect(parseSegments('$<variable>')).toEqual([{ kind: 'variable' }]);
+    expect(parseSegments('$<variable>')).toEqual([{ kind: 'variable', name: 'variable' }]);
     expect(parseSegments('{$numeric}')).toEqual([{ kind: 'expression', type: 'numeric' }]);
+    expect(parseSegments('<mdscriptname>.<cuename>')).toEqual([
+      { kind: 'any', name: 'mdscriptname' },
+      { kind: 'any', name: 'cuename' },
+    ]);
+    expect(parseSegments('distanceto.[$component, $position]')).toEqual([
+      { kind: 'literal', text: 'distanceto' },
+      { kind: 'args', text: '[$component, $position]' },
+    ]);
+    expect(parseSegments('[$arg1, $arg2, ...]')).toEqual([{ kind: 'args', text: '[$arg1, $arg2, ...]' }]);
   });
 
   it('reads keywords per script kind', () => {
@@ -103,7 +116,8 @@ describe('ScriptProperties', () => {
     expect(properties.keyword('this', 'aiscripts')?.typeName).toBe('entity');
     expect(properties.keyword('this')).toBeUndefined();
     expect(properties.keyword('player', 'md')?.properties.size).toBe(3);
-    expect(properties.keywordsFor('md').map((keyword) => keyword.name)).toEqual(['player', 'true', 'this', 'class', 'ware', 'skilltype']);
+    expect(properties.keywordsFor('md').map((keyword) => keyword.name)).toEqual(['player', 'true', 'this', 'class', 'ware', 'skilltype', 'tag', 'md']);
+    expect(properties.keywordsFor('aiscripts').map((keyword) => keyword.name)).toEqual(['player', 'true', 'this', 'class', 'ware', 'skilltype', 'tag']);
     expect(properties.keyword('true', 'md')?.type?.name).toBe('boolean');
   });
 
@@ -198,7 +212,22 @@ describe('property chains', () => {
       'component.isclass.{$class}',
       'component.isclass.{$class}',
     ]);
-    expect(summary(resolve('player.ship.isclass.[class.ship]'))).toEqual(['keyword player', 'player.ship', '?', '?']);
+    expect(summary(resolve('player.ship.isclass.[class.ship, class.station]'))).toEqual([
+      'keyword player',
+      'player.ship',
+      'component.isclass.{$class}',
+      'component.isclass.{$class}',
+    ]);
+    expect(summary(resolve("'%s'.[$a]"))).toEqual(['?', 'string.[$arg1, $arg2, ...]']);
+    expect(summary(resolve('player.ship.distanceto.[$other]'))).toEqual([
+      'keyword player',
+      'player.ship',
+      'component.distanceto.[$component, $position]',
+      'component.distanceto.[$component, $position]',
+    ]);
+    expect(summary(resolve('tag.anything'))).toEqual(['keyword tag', 'tag.<tagname>']);
+    expect(summary(resolve('md.Script.Cue.$var'))).toEqual(['keyword md', 'md.<mdscriptname>.<cuename>', 'md.<mdscriptname>.<cuename>', 'cue.$<variable>']);
+    expect(summary(resolve('this.$var'))).toEqual(['keyword this', 'cue.$<variable>']);
     expect(resolve('player.ship.isclass.ship').steps[3].datatype?.name).toBe('boolean');
 
     const literal = resolve("'abc'.len");
@@ -233,7 +262,8 @@ describe('property chains', () => {
     const ambiguous = resolve('$x.name.len');
     expect(summary(ambiguous)).toEqual(['?', 'candidates 2', 'string.len']);
     expect(ambiguous.steps[1].datatype?.name).toBe('string');
-    expect(resolve('$t.$key.count').steps.map((step) => step.property?.name)).toEqual([undefined, undefined, 'count']);
+    // `.$key` on an unknown owner: the fixture has one variable-holding datatype, so it is the sole candidate.
+    expect(resolve('$t.$key.count').steps.map((step) => step.property?.name)).toEqual([undefined, '$<variable>', 'count']);
   });
 
   function complete(expression: string): string[] {
@@ -246,7 +276,10 @@ describe('property chains', () => {
 
   it('completes the next segment of matching properties', () => {
     expect(complete('player.')).toEqual(['ship', 'entity', 'money']);
-    expect(complete('player.ship.')).toEqual(['pilot', 'speed', 'cargo', 'owner', 'exists', 'name', 'isclass', 'sector']);
+    expect(complete('player.ship.')).toEqual(['pilot', 'speed', 'dock', 'cargo', 'owner', 'exists', 'name', 'isclass', 'distanceto', 'sector']);
+    expect(complete('tag.')).toEqual(['{$enum}']);
+    expect(complete('md.')).toEqual([]);
+    expect(complete('player.ship.distanceto.')).toEqual([]);
     expect(complete('player.ship.cargo.')).toEqual(['{$ware}', 'energycells', 'ore', 'list']);
     expect(complete('player.ship.cargo.{$ware}.')).toEqual(['count']);
     expect(complete('player.ship.isclass.')).toEqual(['{$class}', 'ship', 'station', '{$list}']);
@@ -259,5 +292,32 @@ describe('property chains', () => {
     const cargo = chain && completeChain(chain, properties, 'md').find((completion) => completion.label === 'cargo');
     expect(cargo?.continues).toBe(true);
     expect(cargo?.property.name).toBe('cargo.{$ware}.count');
+  });
+
+  it('prefers a literal property over a placeholder taking a bare name, and accepts a prefix of a pattern', () => {
+    expect(summary(resolve('player.ship.dock.container.name'))).toEqual([
+      'keyword player',
+      'player.ship',
+      'ship.dock',
+      'dockingbay.container',
+      'component.name',
+    ]);
+    expect(summary(resolve('player.ship.dock.{$size}.container'))).toEqual([
+      'keyword player',
+      'player.ship',
+      'ship.dock.{$docksize}',
+      'ship.dock.{$docksize}',
+      'dockingbay.container',
+    ]);
+    const prefix = resolve('player.ship.owner.haslicence.{$licence}');
+    expect(summary(prefix)).toEqual([
+      'keyword player',
+      'player.ship',
+      'object.owner',
+      'faction.haslicence.<licencetype>.{$faction}',
+      'faction.haslicence.<licencetype>.{$faction}',
+    ]);
+    expect(prefix.steps[4].datatype).toBeUndefined();
+    expect(summary(resolve('player.ship.frobnicate'))).toEqual(['keyword player', 'player.ship', '?']);
   });
 });

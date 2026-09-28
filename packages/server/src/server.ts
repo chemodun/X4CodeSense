@@ -148,6 +148,9 @@ function analysisContext(): AnalysisContext {
   const context: AnalysisContext = { validateStructure: settings.validateXmlStructure };
   if (game) {
     context.schemas = game.schemas;
+    if (game.properties) {
+      context.properties = game.properties;
+    }
   }
   return context;
 }

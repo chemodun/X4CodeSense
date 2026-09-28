@@ -86,5 +86,17 @@ export const scriptPropertiesAdditions = `<?xml version="1.0" encoding="utf-8"?>
       <property name="@id" type="inputfunction" />
     </import>
   </keyword>
+
+  <!-- Keywords and values the game evaluates but scriptproperties.xml does not list (used by vanilla scripts) -->
+  <keyword name="component" description="Component lookup by ID">
+    <property name="{$id}" result="The component with the given ID" type="component" />
+  </keyword>
+  <keyword name="datatype" description="Datatype lookup">
+    <property name="macroslot" result="Macro slot" type="datatype" />
+  </keyword>
+  <datatype name="chairtype" type="enum" />
+  <keyword name="chairtype" description="Chair type lookup">
+    <property name="&lt;chairtypename&gt;" result="The chair type with the given name (navigation, comms, pilot, manager, ...)" type="chairtype" />
+  </keyword>
 </scriptproperties>
 `;

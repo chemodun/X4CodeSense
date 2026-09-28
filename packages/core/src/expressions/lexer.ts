@@ -142,6 +142,9 @@ export function tokenize(expression: string): Token[] {
           while (position < length && isDigit(expression.charCodeAt(position))) {
             position++;
           }
+        } else if (expression.charCodeAt(position) === DOT && isLetter(expression.charCodeAt(position + 1))) {
+          // `2.f` is a float literal: the dot belongs to the number, the letters are its suffix.
+          position++;
         }
         const exponent = expression.charCodeAt(position);
         if (exponent === 0x65 || exponent === 0x45) {

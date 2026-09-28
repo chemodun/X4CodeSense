@@ -220,41 +220,96 @@ function literalDatatype(step: ChainStep, properties: ScriptProperties): ScriptD
   }
 }
 
-/** True when a written step fits a segment of a property name pattern. */
-export function segmentMatches(segment: PropertySegment, step: ChainStep, properties: ScriptProperties, schema: ScriptSchema): boolean {
+/**
+ * True when a written step fits a segment of a property name pattern. A bare name fits a `{$type}`
+ * placeholder when it is a value of the keyword of that type (`isclass.ship`); when `lenient`, any bare
+ * name fits a placeholder whose type has no keyword (`project.agr_fields_sunrise`). Strict matches are
+ * tried first, so `dock.container` is the `dock` property followed by `container`, not `dock.{$docksize}`.
+ */
+export function segmentMatches(segment: PropertySegment, step: ChainStep, properties: ScriptProperties, schema: ScriptSchema, lenient = false): boolean {
   switch (segment.kind) {
     case 'literal':
       return step.kind === 'identifier' && step.text === segment.text;
-    case 'expression':
-      if (step.kind === 'braces') {
+    case 'expression': {
+      if (step.kind === 'braces' || step.kind === 'brackets') {
         return true;
       }
-      if (step.kind === 'identifier') {
-        return properties.keyword(segment.type, schema)?.properties.has(step.text) ?? false;
+      if (step.kind !== 'identifier') {
+        return false;
       }
-      return false;
+      const keyword = properties.keyword(segment.type, schema);
+      return keyword ? keyword.properties.has(step.text) : lenient;
+    }
     case 'variable':
-      return step.kind === 'variable';
+      // `$name`, or a braced expression that yields the name: `this.{'$' + $name}`.
+      return step.kind === 'variable' || step.kind === 'braces';
+    case 'any':
+      return step.kind === 'identifier' || step.kind === 'braces' || step.kind === 'brackets';
+    case 'args':
+      return step.kind === 'brackets';
   }
 }
 
-/** Number of steps from `from` a property covers, or -1 when it does not match there. */
-function matchLength(property: ScriptProperty, steps: readonly ChainStep[], from: number, properties: ScriptProperties, schema: ScriptSchema): number {
+/**
+ * The keyword whose values an `<name>` placeholder stands for: named in the property description as
+ * `{keyword.<name>}`, or a keyword called like the placeholder, with or without a trailing `name`
+ * (`<classname>` is `class`). Undefined for free names such as `<cuename>`.
+ */
+export function keywordForPlaceholder(name: string, property: ScriptProperty, properties: ScriptProperties, schema: ScriptSchema): ScriptKeyword | undefined {
+  const hint = new RegExp(`\\{(\\w+)\\.<${name}>\\}`).exec(property.result);
+  const candidates = hint ? [hint[1]] : [name, name.replace(/name$/, '')];
+  for (const candidate of candidates) {
+    const keyword = properties.keyword(candidate, schema);
+    if (keyword) {
+      return keyword;
+    }
+  }
+  return undefined;
+}
+
+/** True when a keyword property is a concrete value, not a placeholder pattern. */
+function isConcreteValue(value: ScriptProperty): boolean {
+  return value.segments.length === 1 && value.segments[0].kind === 'literal';
+}
+
+/**
+ * Number of steps from `from` a property covers, or -1 when it does not match there. With `prefix`, a
+ * chain that ends before the pattern does still matches (`faction.player.haslicence.{$licence}` uses the
+ * first part of `haslicence.<licencetype>.{$faction}`).
+ */
+function matchLength(
+  property: ScriptProperty,
+  steps: readonly ChainStep[],
+  from: number,
+  properties: ScriptProperties,
+  schema: ScriptSchema,
+  lenient: boolean,
+  prefix = false
+): number {
   const segments = property.segments;
-  if (from + segments.length > steps.length) {
+  const available = steps.length - from;
+  if (segments.length > available && !(prefix && available > 0)) {
     return -1;
   }
-  for (let index = 0; index < segments.length; index++) {
-    if (!segmentMatches(segments[index], steps[from + index], properties, schema)) {
+  const count = Math.min(segments.length, available);
+  for (let index = 0; index < count; index++) {
+    if (!segmentMatches(segments[index], steps[from + index], properties, schema, lenient)) {
       return -1;
     }
   }
-  return segments.length;
+  return count;
 }
 
 function literalCount(property: ScriptProperty): number {
   return property.segments.filter((segment) => segment.kind === 'literal').length;
 }
+
+/** Matching passes in order: [lenient, prefix]. */
+const matchPasses: readonly (readonly [boolean, boolean])[] = [
+  [false, false],
+  [true, false],
+  [true, true],
+];
 
 /**
  * Properties an owner offers: its own and inherited ones, then those of its subtypes, because a value of
@@ -327,42 +382,54 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
   while (index < steps.length) {
     let best: ScriptProperty | undefined;
     let bestLength = 0;
-    const candidates: ScriptProperty[] = [];
-    for (const property of propertiesOf(owner, properties)) {
-      const length = matchLength(property, steps, index, properties, schema);
-      if (length < 0) {
-        continue;
+    let candidates: ScriptProperty[] = [];
+    // Strict matches first, then bare names for free placeholders, then a chain that ends inside a pattern.
+    for (const [lenient, prefix] of matchPasses) {
+      candidates = [];
+      for (const property of propertiesOf(owner, properties)) {
+        const length = matchLength(property, steps, index, properties, schema, lenient, prefix);
+        if (length < 0) {
+          continue;
+        }
+        if (owner.kind === 'unknown') {
+          candidates.push(property);
+        }
+        if (!best || length > bestLength || (length === bestLength && literalCount(property) > literalCount(best))) {
+          best = property;
+          bestLength = length;
+        }
       }
-      if (owner.kind === 'unknown') {
-        candidates.push(property);
-      }
-      if (!best || length > bestLength || (length === bestLength && literalCount(property) > literalCount(best))) {
-        best = property;
-        bestLength = length;
+      if (best) {
+        break;
       }
     }
-    if (best && (owner.kind !== 'unknown' || candidates.length === 1)) {
+    if (best && owner.kind === 'unknown') {
+      // Any datatype may fit: the longest matches count, and only one of them may be adopted.
+      const longest = candidates.filter((candidate) => candidate.segments.length === bestLength);
+      if (longest.length > 1) {
+        for (let covered = index; covered < index + bestLength; covered++) {
+          resolved[covered].candidates = longest;
+          owners[covered] = owner;
+        }
+        const datatype = bestLength === longest[0].segments.length ? commonType(longest, properties) : undefined;
+        resolved[index + bestLength - 1].datatype = datatype;
+        owner = ownerOfDatatype(datatype);
+        index += bestLength;
+        continue;
+      }
+      best = longest[0];
+    }
+    if (best) {
       for (let covered = index; covered < index + bestLength; covered++) {
         resolved[covered].property = best;
         owners[covered] = owner;
       }
-      const datatype = best.type !== undefined ? properties.datatype(best.type) : undefined;
+      // A chain that stops inside a pattern yields an intermediate value, not the property's type.
+      const complete = bestLength === best.segments.length;
+      const datatype = complete && best.type !== undefined ? properties.datatype(best.type) : undefined;
       resolved[index + bestLength - 1].datatype = datatype;
       owner = ownerOfDatatype(datatype);
       index += bestLength;
-      continue;
-    }
-    if (candidates.length > 1) {
-      // Several datatypes fit: keep them all, and keep going with their common result type when they agree.
-      const length = candidates.every((candidate) => candidate.segments.length === candidates[0].segments.length) ? candidates[0].segments.length : 1;
-      for (let covered = index; covered < index + length; covered++) {
-        resolved[covered].candidates = candidates;
-        owners[covered] = owner;
-      }
-      const datatype = length === candidates[0].segments.length ? commonType(candidates, properties) : undefined;
-      resolved[index + length - 1].datatype = datatype;
-      owner = ownerOfDatatype(datatype);
-      index += length;
       continue;
     }
     owners[index] = owner;
@@ -395,6 +462,10 @@ function segmentLabel(segment: PropertySegment): string {
       return `{$${segment.type}}`;
     case 'variable':
       return '$';
+    case 'any':
+      return `<${segment.name}>`;
+    case 'args':
+      return segment.text;
   }
 }
 
@@ -434,18 +505,33 @@ export function completeChain(chain: PropertyChain, properties: ScriptProperties
       }
       let fits = true;
       for (let index = 0; index < matched && fits; index++) {
-        fits = segmentMatches(segments[index], steps[from + index], properties, schema);
+        fits = segmentMatches(segments[index], steps[from + index], properties, schema, true);
       }
       if (!fits) {
         continue;
       }
       const next = segments[matched];
       const continues = matched + 1 < segments.length;
+      if (next.kind === 'any') {
+        // A free name cannot be completed; the values of its keyword can.
+        const keyword = keywordForPlaceholder(next.name, property, properties, schema);
+        for (const value of keyword?.properties.values() ?? []) {
+          if (isConcreteValue(value)) {
+            offer(value.name, property, continues, value);
+          }
+        }
+        continue;
+      }
+      if (next.kind === 'args') {
+        continue;
+      }
       offer(segmentLabel(next), property, continues);
       if (next.kind === 'expression') {
         const keyword = properties.keyword(next.type, schema);
         for (const value of keyword?.properties.values() ?? []) {
-          offer(value.name, property, continues, value);
+          if (isConcreteValue(value)) {
+            offer(value.name, property, continues, value);
+          }
         }
       }
     }
