@@ -5,8 +5,7 @@ import { isInsideString, tokenize } from '../expressions/lexer';
 import { chainAtToken, resolveChain, type ResolvedStep } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
 import { offsetInValue, type XmlAttribute } from '../xml/xmlStructure';
-import { enumerationsOf, type XsdAttribute } from '../xsd/schema';
-import { isExpressionAttribute } from './completion';
+import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
 import { describeAttribute, describeCandidates, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
 
 function hover(analysis: DocumentAnalysis, value: string, start: number, end: number): Hover {

@@ -240,6 +240,19 @@ export function typeNamesOf(type: XsdSimpleType): Set<string> {
   return names;
 }
 
+/** True when an attribute takes script expressions: a type in its chain has `expression` in its name (`expression`, `lvalueexpression`, `booleanexpression`, ...). */
+export function isExpressionAttribute(declared: XsdAttribute | undefined): boolean {
+  if (!declared) {
+    return false;
+  }
+  for (const name of typeNamesOf(declared.type)) {
+    if (name.includes('expression')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** True when a pattern facet applies somewhere in the type: in it, its restriction bases, union members or list items. */
 export function constrainedByPattern(type: XsdSimpleType): boolean {
   if (type.patterns.length > 0) {

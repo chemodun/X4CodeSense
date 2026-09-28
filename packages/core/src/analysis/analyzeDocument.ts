@@ -6,6 +6,7 @@ import { parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructur
 import { rootElementName, type SchemaSet } from '../xsd/loadSchemas';
 import type { XsdElement } from '../xsd/schema';
 import { validateStructure } from '../xsd/validateStructure';
+import { validateExpressions } from '../expressions/validateExpressions';
 
 /** `source` of every diagnostic this library produces. */
 export const diagnosticSource = 'X4CodeSense';
@@ -16,6 +17,8 @@ export interface AnalysisContext {
   schemas?: SchemaSet;
   /** Check the order and completeness of child elements, not only their names. Defaults to true. */
   validateStructure?: boolean;
+  /** Parse expression attributes and report syntax problems. Defaults to true; needs the schemas. */
+  validateExpressions?: boolean;
 }
 
 /** Everything the library knows about one document after a full analysis. */
@@ -61,6 +64,9 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     });
     analysis.declarations = validation.declarations;
     analysis.diagnostics.push(...validation.diagnostics);
+    if (context.validateExpressions ?? true) {
+      analysis.diagnostics.push(...validateExpressions(validation.declarations, document, diagnosticSource));
+    }
   }
   return analysis;
 }

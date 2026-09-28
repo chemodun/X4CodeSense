@@ -6,8 +6,7 @@ import { chainAtToken, resolveChain } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
 import type { SourceLocation } from '../sourceLocation';
 import type { XmlAttribute } from '../xml/xmlStructure';
-import { enumerationsOf, type XsdAttribute } from '../xsd/schema';
-import { isExpressionAttribute } from './completion';
+import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
 
 function locations(game: GameData, sources: (SourceLocation | undefined)[]): Location[] {
   const result: Location[] = [];

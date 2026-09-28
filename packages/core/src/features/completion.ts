@@ -7,25 +7,12 @@ import type { GameData } from '../gameData';
 import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
-import { enumerationsOf, typeNamesOf, type XsdAttribute, type XsdElement } from '../xsd/schema';
+import { enumerationsOf, isExpressionAttribute, type XsdAttribute, type XsdElement } from '../xsd/schema';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
 
 export interface CompletionOptions {
   /** The client understands snippet syntax in inserted text. */
   snippetSupport?: boolean;
-}
-
-/** True when an attribute takes script expressions: its type derives from `expression` or a kin of it. */
-export function isExpressionAttribute(declared: XsdAttribute | undefined): boolean {
-  if (!declared) {
-    return false;
-  }
-  for (const name of typeNamesOf(declared.type)) {
-    if (name.includes('expression')) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function markdown(value: string): { kind: 'markdown'; value: string } {
