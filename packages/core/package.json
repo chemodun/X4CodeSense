@@ -42,10 +42,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "sax": "^1.6.1",
+    "vscode-languageserver-textdocument": "^1.0.15",
     "vscode-languageserver-types": "^3.18.4"
   },
   "devDependencies": {
-    "@types/sax": "^1.2.7"
+    "@types/sax": "^1.2.7",
+    "sax": "^1.6.1"
   }
 }

@@ -1,5 +1,5 @@
-import * as sax from 'sax';
 import type { DocumentDetection, ScriptMetadata, ScriptRootElement, ScriptSchema } from '../types';
+import { attributeNamed, parseXml, type XmlElement } from '../xml/xmlStructure';
 
 const rootElementToSchema: Record<ScriptRootElement, ScriptSchema> = {
   aiscript: 'aiscripts',
@@ -29,44 +29,17 @@ function isScriptRootElement(value: string): value is ScriptRootElement {
   return value in rootElementToSchema;
 }
 
-/** The attribute name as the non-strict, lowercasing sax parser reports it. */
 const schemaLocationAttribute = 'xsi:nonamespaceschemalocation';
 
 /**
- * Reads the first start tag of an XML text without parsing the rest.
+ * Reads the first start tag of an XML text without scanning the rest.
  * Tolerant of a BOM, a prolog, comments and processing instructions before the root.
+ * Returns nothing while the start tag is still being typed, so a document does not change its kind
+ * before the tag is complete.
  */
-function firstStartTag(text: string): sax.Tag | undefined {
-  const parser = sax.parser(false, { lowercase: true });
-  let found: sax.Tag | undefined;
-  let stop = false;
-
-  parser.onopentag = (node) => {
-    if (!found) {
-      found = node as sax.Tag;
-      stop = true;
-    }
-  };
-  parser.onerror = () => {
-    // A non-strict parser rarely errors; when it does, give up on this document.
-    stop = true;
-    parser.resume();
-  };
-
-  const chunkSize = 256;
-  try {
-    for (let offset = 0; offset < text.length && !stop; offset += chunkSize) {
-      parser.write(text.slice(offset, offset + chunkSize));
-    }
-  } catch {
-    return undefined;
-  }
-  return found;
-}
-
-function attributeValue(tag: sax.Tag, name: string): string | undefined {
-  const value = tag.attributes[name];
-  return typeof value === 'string' ? value : undefined;
+function firstStartTag(text: string): XmlElement | undefined {
+  const root = parseXml(text, { stopAfterFirstStartTag: true }).elements[0];
+  return root?.startTagClosed ? root : undefined;
 }
 
 /** Root element of a patch document. */
@@ -88,11 +61,11 @@ export function detectDocument(text: string): DocumentDetection {
     const script: ScriptMetadata = {
       schema: rootElementToSchema[rootElement],
       rootElement,
-      name: attributeValue(root, 'name') ?? '',
+      name: attributeNamed(root, 'name')?.value ?? '',
     };
-    const schemaLocation = attributeValue(root, schemaLocationAttribute);
+    const schemaLocation = root.attributes.find((attribute) => attribute.name.toLowerCase() === schemaLocationAttribute);
     if (schemaLocation !== undefined) {
-      script.schemaLocation = schemaLocation;
+      script.schemaLocation = schemaLocation.value;
     }
     detection.script = script;
   }

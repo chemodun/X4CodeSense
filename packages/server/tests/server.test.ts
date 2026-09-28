@@ -12,15 +12,18 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createProtocolConnection,
   DidChangeTextDocumentNotification,
+  DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   ExitNotification,
   InitializedNotification,
   InitializeRequest,
+  PublishDiagnosticsNotification,
   ShutdownRequest,
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
   type ProtocolConnection,
+  type PublishDiagnosticsParams,
 } from 'vscode-languageserver/node';
 import { DocumentInfoRequestMethod, type DocumentInfoResult } from '../../core/src';
 
@@ -37,6 +40,18 @@ const aiText = '<aiscript name="order.sample" version="1">\n</aiscript>\n';
 
 async function documentInfo(uri: string): Promise<DocumentInfoResult> {
   return connection.sendRequest<DocumentInfoResult>(DocumentInfoRequestMethod, { uri });
+}
+
+/** Resolves with the next diagnostics the server publishes for the uri. Call before sending the change that triggers them. */
+function nextDiagnostics(uri: string): Promise<PublishDiagnosticsParams> {
+  return new Promise((resolve) => {
+    const disposable = connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
+      if (params.uri === uri) {
+        disposable.dispose();
+        resolve(params);
+      }
+    });
+  });
 }
 
 beforeAll(async () => {
@@ -131,5 +146,50 @@ describe('language server over stdio', () => {
   it('returns no metadata for a document it has never seen', async () => {
     const info = await documentInfo('file:///nowhere.xml');
     expect(info.metadata).toBeUndefined();
+  });
+});
+
+describe('diagnostics', () => {
+  const uri = 'file:///mod/md/Broken.xml';
+  const brokenText = '<mdscript name="Broken">\n  <cues>\n    <cue name="A>\n      <actions/>\n    </cue>\n  </cues>\n</mdscript>\n';
+
+  it('publishes well-formedness problems of a script with positions', async () => {
+    const published = nextDiagnostics(uri);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri, languageId: 'xml', version: 1, text: brokenText },
+    });
+    const params = await published;
+    expect(params.version).toBe(1);
+    expect(params.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.source, diagnostic.range.start.line])).toEqual([
+      ['unclosed-attribute', 'X4CodeSense', 2],
+    ]);
+    expect(params.diagnostics[0].range.start.character).toBe(brokenText.split('\n')[2].indexOf('"A'));
+  });
+
+  it('clears the problems once the text is fixed', async () => {
+    const published = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri, version: 2 },
+      contentChanges: [{ range: { start: { line: 2, character: 16 }, end: { line: 2, character: 16 } }, text: '"' }],
+    });
+    const params = await published;
+    expect(params.version).toBe(2);
+    expect(params.diagnostics).toEqual([]);
+  });
+
+  it('publishes nothing for XML that is not a script', async () => {
+    const otherUri = 'file:///mod/libraries/broken.xml';
+    const published = nextDiagnostics(otherUri);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<wares><ware id="x></wares>' },
+    });
+    expect((await published).diagnostics).toEqual([]);
+  });
+
+  it('clears diagnostics when the document closes', async () => {
+    const published = nextDiagnostics(uri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    expect((await published).diagnostics).toEqual([]);
+    expect((await documentInfo(uri)).metadata).toBeUndefined();
   });
 });

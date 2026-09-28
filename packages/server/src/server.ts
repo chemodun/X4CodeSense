@@ -8,7 +8,7 @@ import {
   type InitializeResult,
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { detectDocument, DocumentInfoRequestMethod, type DocumentDetection, type DocumentInfoParams, type DocumentInfoResult } from 'x4-script-core';
+import { analyzeDocument, DocumentInfoRequestMethod, type DocumentAnalysis, type DocumentInfoParams, type DocumentInfoResult } from 'x4-script-core';
 
 /** Settings under the `x4CodeSense` section, mirrored from the client's package.json. */
 interface X4CodeSenseSettings {
@@ -35,8 +35,8 @@ const documents = new TextDocuments(TextDocument);
 let settings: X4CodeSenseSettings = defaultSettings;
 let hasConfigurationCapability = false;
 
-/** What the server currently knows about each open document. */
-const detectionByUri = new Map<string, DocumentDetection>();
+/** The latest analysis of each open document. */
+const analysisByUri = new Map<string, DocumentAnalysis>();
 
 function log(message: string): void {
   connection.console.log(`[X4CodeSense] ${message}`);
@@ -86,20 +86,19 @@ connection.onDidChangeConfiguration(async () => {
   }
 });
 
-/**
- * Analyses one document. For now this only detects the script kind and clears diagnostics;
- * the XML structure, expression and symbol passes are added on top of this entry point.
- */
+/** Analyses one document and publishes its diagnostics. */
 function analyze(document: TextDocument): void {
-  const detection = detectDocument(document.getText());
-  detectionByUri.set(document.uri, detection);
+  const started = performance.now();
+  const analysis = analyzeDocument(document);
+  analysisByUri.set(document.uri, analysis);
+  const detection = analysis.detection;
   const description = detection.script
     ? `${detection.script.schema} '${detection.script.name}'`
     : detection.isDiff
       ? 'patch'
       : `not a script (root '${detection.rootElement ?? ''}')`;
-  debug(`${document.uri}: ${description}`);
-  void connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
+  debug(`${document.uri}: ${description}, ${analysis.diagnostics.length} diagnostic(s), ${(performance.now() - started).toFixed(1)} ms`);
+  void connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics: analysis.diagnostics });
 }
 
 documents.onDidChangeContent((event) => {
@@ -107,12 +106,12 @@ documents.onDidChangeContent((event) => {
 });
 
 documents.onDidClose((event) => {
-  detectionByUri.delete(event.document.uri);
+  analysisByUri.delete(event.document.uri);
   void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {
-  const detection = detectionByUri.get(params.uri);
+  const detection = analysisByUri.get(params.uri)?.detection;
   return {
     metadata: detection?.script,
     isDiff: detection?.isDiff ?? false,

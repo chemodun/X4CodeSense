@@ -6,7 +6,7 @@ X4CodeSense is the successor of X4CodeComplete. It is rebuilt around a language 
 
 ## Status
 
-Preview. The current build recognises script documents and shows the script type and name in the status bar. Completion, hover, navigation and diagnostics are being ported and rebuilt in this order:
+Preview. The current build recognises script and patch documents, shows the script type and name in the status bar, and reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type. Completion, hover, navigation and diagnostics are being ported and rebuilt in this order:
 
 - XML structure and attribute validation from the game's XSD schemas
 - Property completion, hover and go to definition from `scriptproperties.xml`
@@ -45,4 +45,5 @@ Preview. The current build recognises script documents and shows the script type
 
 ### Unreleased
 
+- XML well-formedness diagnostics for scripts and patches: unclosed start and end tags, missing or unquoted attribute values, missing closing quotes, duplicate attributes, missing end tags, unclosed comments.
 - Initial scaffold: language server, client and command-line checker with script detection.
