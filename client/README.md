@@ -6,9 +6,8 @@ X4CodeSense is the successor of X4CodeComplete. It is rebuilt around a language 
 
 ## Status
 
-Preview. The current build recognises script and patch documents, shows the script type and name in the status bar, and reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type. Completion, hover, navigation and diagnostics are being ported and rebuilt in this order:
+Preview. The current build recognises script and patch documents, shows the script type and name in the status bar, reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type, and validates scripts against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes and invalid attribute values. Completion, hover, navigation and further diagnostics are being ported and rebuilt in this order:
 
-- XML structure and attribute validation from the game's XSD schemas
 - Property completion, hover and go to definition from `scriptproperties.xml`
 - A real parser for the expression language with syntax diagnostics
 - Variables with scopes and inferred types
@@ -18,7 +17,7 @@ Preview. The current build recognises script and patch documents, shows the scri
 
 ## Requirements
 
-- The extracted vanilla game files (`aiscripts`, `md`, `libraries`, `t`), set in `x4CodeSense.unpackedFileLocation`.
+- The extracted vanilla game files (`aiscripts`, `md`, `libraries`, `t`), set in `x4CodeSense.unpackedFileLocation`. The schemas `md.xsd`, `aiscripts.xsd` and `common.xsd` are read from its `libraries` folder; without it scripts are only checked for well-formedness.
 - Optionally a folder with other extensions whose scripts should be visible, set in `x4CodeSense.extensionsFolder`.
 
 ## Settings
@@ -27,7 +26,7 @@ Preview. The current build recognises script and patch documents, shows the scri
 - `x4CodeSense.extensionsFolder` - path to a folder with other extensions.
 - `x4CodeSense.languageNumber` - preferred language number for text lookups, `44` by default.
 - `x4CodeSense.limitLanguageOutput` - show only the preferred language in hovers.
-- `x4CodeSense.validateXmlStructure` - report elements that are not allowed at their position.
+- `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas, on by default. Unknown elements and attributes and invalid values are always reported.
 - `x4CodeSense.debug` - verbose server logging in the X4CodeSense output channel.
 - `x4CodeSense.trace.server` - LSP message tracing.
 
@@ -45,5 +44,6 @@ Preview. The current build recognises script and patch documents, shows the scri
 
 ### Unreleased
 
+- Schema validation of scripts against the game's XSD files, on by default: unknown elements and attributes, misplaced and missing child elements, missing required attributes, invalid attribute values with the expected values in the message. The schemas load in well under a second and the largest vanilla script validates in tens of milliseconds.
 - XML well-formedness diagnostics for scripts and patches: unclosed start and end tags, missing or unquoted attribute values, missing closing quotes, duplicate attributes, missing end tags, unclosed comments.
 - Initial scaffold: language server, client and command-line checker with script detection.

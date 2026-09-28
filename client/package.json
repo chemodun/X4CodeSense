@@ -73,8 +73,8 @@
         },
         "x4CodeSense.validateXmlStructure": {
           "type": "boolean",
-          "default": false,
-          "description": "Report elements that are not allowed at their position according to the XSD schemas."
+          "default": true,
+          "description": "Check the order and completeness of child elements against the game's XSD schemas. Unknown elements and attributes and invalid attribute values are always reported when the unpacked game files are configured."
         },
         "x4CodeSense.debug": {
           "type": "boolean",

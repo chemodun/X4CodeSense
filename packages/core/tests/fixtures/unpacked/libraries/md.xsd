@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test schema for X4CodeSense: a small stand-in for the game's md.xsd. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:include schemaLocation="common.xsd" />
+  <xs:simpleType name="cuename">
+    <xs:restriction base="name" />
+  </xs:simpleType>
+  <xs:complexType name="cue">
+    <xs:annotation>
+      <xs:documentation>A cue.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="conditions" type="conditions_withref" minOccurs="0" />
+      <xs:element name="delay" minOccurs="0">
+        <xs:complexType>
+          <xs:attribute name="exact" type="expression" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="actions" minOccurs="0">
+        <xs:complexType>
+          <xs:group ref="actions" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="cues" type="cues" minOccurs="0" />
+    </xs:sequence>
+    <xs:attribute name="name" type="cuename" use="required" />
+    <xs:attribute name="instantiate" type="boolean" />
+    <xs:attribute name="namespace">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="this" />
+          <xs:enumeration value="static" />
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="cues">
+    <xs:sequence>
+      <xs:element name="cue" type="cue" minOccurs="0" maxOccurs="unbounded" />
+      <xs:element name="library" type="cue" minOccurs="0" maxOccurs="unbounded" />
+    </xs:sequence>
+  </xs:complexType>
+  <xs:element name="mdscript">
+    <xs:annotation>
+      <xs:documentation>Root of a Mission Director script.</xs:documentation>
+    </xs:annotation>
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="cues" type="cues" />
+      </xs:sequence>
+      <xs:attribute name="name" type="name" use="required" />
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

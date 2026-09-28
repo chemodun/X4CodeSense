@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test schema for X4CodeSense: a small stand-in for the game's aiscripts.xsd. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:include schemaLocation="common.xsd" />
+  <xs:complexType name="interrupt_actions">
+    <xs:group ref="actions" />
+  </xs:complexType>
+  <xs:complexType name="interrupt_actions_withref">
+    <xs:complexContent>
+      <xs:extension base="interrupt_actions">
+        <xs:attribute name="ref" type="name" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:element name="aiscript">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="params" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="param" minOccurs="0" maxOccurs="unbounded">
+                <xs:complexType>
+                  <xs:attribute name="name" type="name" use="required" />
+                  <xs:attribute name="default" type="expression" />
+                  <xs:attribute name="type" type="classexprlookup" />
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="init" type="interrupt_actions" minOccurs="0" />
+        <xs:element name="attention" minOccurs="1" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="actions" type="interrupt_actions_withref" />
+            </xs:sequence>
+            <xs:attribute name="min" type="expression" use="required" />
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+      <xs:attribute name="name" type="name" use="required" />
+      <xs:attribute name="version" type="xs:integer" />
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

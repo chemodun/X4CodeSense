@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test schema for X4CodeSense: a small stand-in for the game's common.xsd, using the same constructs. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:simpleType name="expression">
+    <xs:annotation>
+      <xs:documentation>Any script expression.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:string">
+      <xs:pattern value=" *([A-Za-z0-9_$@+\-({\[]|(#?'([^'\\]|\\.)*'))([A-Za-z0-9_$!?@=&lt;&gt;,.+\-*/%\^(){}\[\] ]|(#?'([^'\\]|\\.)*'))*" />
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="lvalueexpression">
+    <xs:restriction base="expression" />
+  </xs:simpleType>
+  <xs:simpleType name="booleanexpression">
+    <xs:restriction base="expression" />
+  </xs:simpleType>
+  <xs:simpleType name="lvaluename">
+    <xs:annotation>
+      <xs:documentation>A variable or a stat: several patterns in one step are alternatives.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:string">
+      <xs:pattern value=" *[$][a-zA-Z0-9_]+ *" />
+      <xs:pattern value=" *(stat|userdata) *\. *[a-zA-Z_][a-zA-Z0-9_]* *" />
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="boolean">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="true" />
+      <xs:enumeration value="false" />
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="comment">
+    <xs:restriction base="xs:string" />
+  </xs:simpleType>
+  <xs:simpleType name="name">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Za-z_][A-Za-z0-9_.]*" />
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="classlookup">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="ship">
+        <xs:annotation>
+          <xs:documentation>Any ship</xs:documentation>
+        </xs:annotation>
+      </xs:enumeration>
+      <xs:enumeration value="station" />
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="classexprlookup">
+    <xs:union memberTypes="classlookup expression" />
+  </xs:simpleType>
+  <xs:simpleType name="flaglookup">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="a" />
+      <xs:enumeration value="b" />
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="flaglist">
+    <xs:list itemType="flaglookup" />
+  </xs:simpleType>
+  <xs:simpleType name="percentage">
+    <xs:restriction base="xs:integer">
+      <xs:minInclusive value="0" />
+      <xs:maxInclusive value="100" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:attributeGroup name="commentgroup">
+    <xs:attribute name="comment" type="comment">
+      <xs:annotation>
+        <xs:documentation>Free text comment.</xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+  </xs:attributeGroup>
+
+  <xs:group name="actions">
+    <xs:sequence>
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="set_value">
+        <xs:annotation>
+          <xs:documentation>
+            Sets a variable.
+            The value is evaluated once.
+          </xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:attribute name="name" type="lvalueexpression" use="required" />
+          <xs:attribute name="exact" type="expression" />
+          <xs:attribute name="operation" default="set">
+            <xs:simpleType>
+              <xs:restriction base="xs:string">
+                <xs:enumeration value="set" />
+                <xs:enumeration value="add" />
+                <xs:enumeration value="subtract" />
+              </xs:restriction>
+            </xs:simpleType>
+          </xs:attribute>
+          <xs:attributeGroup ref="commentgroup" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="debug_text">
+        <xs:complexType>
+          <xs:attribute name="text" type="expression" use="required" />
+          <xs:attribute name="filter">
+            <xs:simpleType>
+              <xs:union memberTypes="expression">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="error" />
+                    <xs:enumeration value="general" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:union>
+            </xs:simpleType>
+          </xs:attribute>
+          <xs:attribute name="chance" type="percentage" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="do_if">
+        <xs:complexType>
+          <xs:group ref="actions" />
+          <xs:attribute name="value" type="booleanexpression" use="required" />
+          <xs:attributeGroup ref="commentgroup" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="find_ship">
+        <xs:complexType>
+          <xs:attribute name="name" type="lvaluename" use="required" />
+          <xs:attribute name="class" type="classexprlookup" />
+          <xs:attribute name="flags" type="flaglist" />
+          <xs:attribute name="multiple" type="boolean" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="create_ship">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:group ref="createship" />
+            <xs:element name="position" type="position" minOccurs="0" maxOccurs="1" />
+            <xs:element name="rotation" type="rotation" minOccurs="0" maxOccurs="1" />
+          </xs:sequence>
+          <xs:attribute name="macro" type="expression" use="required" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="deliver">
+        <xs:complexType>
+          <xs:all>
+            <xs:element name="people" minOccurs="0">
+              <xs:complexType>
+                <xs:attribute name="target" type="expression" use="required" />
+              </xs:complexType>
+            </xs:element>
+            <xs:element name="wares" minOccurs="0">
+              <xs:complexType>
+                <xs:attribute name="amount" type="expression" />
+              </xs:complexType>
+            </xs:element>
+            <xs:element name="reward">
+              <xs:complexType>
+                <xs:attribute name="money" type="expression" use="required" />
+              </xs:complexType>
+            </xs:element>
+          </xs:all>
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+    </xs:sequence>
+  </xs:group>
+
+  <xs:group name="createship">
+    <xs:sequence>
+      <xs:element name="select" minOccurs="0">
+        <xs:complexType>
+          <xs:attribute name="faction" type="expression" />
+        </xs:complexType>
+      </xs:element>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="owner">
+          <xs:complexType>
+            <xs:attribute name="exact" type="expression" use="required" />
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="pilot">
+          <xs:complexType>
+            <xs:attribute name="actor" type="expression" />
+          </xs:complexType>
+        </xs:element>
+      </xs:choice>
+    </xs:sequence>
+  </xs:group>
+
+  <xs:complexType name="position">
+    <xs:attribute name="x" type="expression" />
+    <xs:attribute name="y" type="expression" />
+    <xs:attribute name="z" type="expression" />
+  </xs:complexType>
+  <xs:complexType name="rotation">
+    <xs:attribute name="yaw" type="expression" />
+  </xs:complexType>
+
+  <xs:complexType name="conditions">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="check_value">
+        <xs:complexType>
+          <xs:attribute name="value" type="booleanexpression" use="required" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="event_object_destroyed">
+        <xs:complexType>
+          <xs:attribute name="object" type="expression" use="required" />
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+  </xs:complexType>
+  <xs:complexType name="conditions_withref">
+    <xs:complexContent>
+      <xs:extension base="conditions">
+        <xs:attribute name="ref" type="name" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+</xs:schema>
