@@ -1,0 +1,59 @@
+[h1]X4CodeSense[/h1]
+
+Language support for [b]X4: Foundations[/b] scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`) and Mission Director scripts (`md/*.xml`).
+
+X4CodeSense is the successor of X4CodeComplete. It is rebuilt around a language server, so the same analysis also runs from the command line and in CI.
+
+[h2][b]Status[/b][/h2]
+
+Preview. The current build:
+[list]
+[*] recognises script and patch documents and shows the script type and name in the status bar;
+[*] reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type;
+[*] validates scripts against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes and invalid attribute values;
+[*] completes child elements allowed at the caret, attribute names, attribute values from the schema enumerations, and property chains in expressions from [b]scriptproperties.xml[/b] (`player.ship.cargo.{$ware}.count`), with keywords and the values of lookups such as [b]class[/b] or `ware`;
+[*] shows hover documentation for elements, attributes, enumeration values, keywords and properties;
+[*] goes to the definition of an element or attribute in the schema, of a keyword or property in `scriptproperties.xml`, and of a lookup value in the game file it comes from.
+[/list]
+Being ported and rebuilt next, in this order:
+[list]
+[*] A real parser for the expression language with syntax diagnostics
+[*] Variables with scopes and inferred types
+[*] Labels, actions, handlers, cues, libraries and script names across files
+[*] Text file (`t/*.xml`) lookups: hover and completion for [b]{page, id}[/b] references, also in other game XML such as macros, wares and libraries
+[*] Patch documents (`<diff>`) checked in the context of the file they patch
+[/list]
+[h2][b]Requirements[/b][/h2]
+[list]
+[*] The extracted vanilla game files (`aiscripts`, `md`, `libraries`, `t`), set in `x4CodeSense.unpackedFileLocation`. The schemas `md.xsd`, [b]aiscripts.xsd[/b] and [b]common.xsd[/b] and [b]scriptproperties.xml[/b] with the files it imports are read from its [b]libraries[/b] folder; without it scripts are only checked for well-formedness.
+[*] Optionally a folder with other extensions whose scripts should be visible, set in `x4CodeSense.extensionsFolder`.
+[/list]
+[h2][b]Settings[/b][/h2]
+[list]
+[*] [b]x4CodeSense.unpackedFileLocation[/b] - path to the extracted vanilla game files.
+[*] [b]x4CodeSense.extensionsFolder[/b] - path to a folder with other extensions.
+[*] [b]x4CodeSense.languageNumber[/b] - preferred language number for text lookups, [b]44[/b] by default.
+[*] [b]x4CodeSense.limitLanguageOutput[/b] - show only the preferred language in hovers.
+[*] [b]x4CodeSense.validateXmlStructure[/b] - check the order and completeness of child elements against the schemas, on by default. Unknown elements and attributes and invalid values are always reported.
+[*] [b]x4CodeSense.debug[/b] - verbose server logging in the X4CodeSense output channel.
+[*] [b]x4CodeSense.trace.server[/b] - LSP message tracing.
+[/list]
+[h2][b]Commands[/b][/h2]
+[list]
+[*] [b]X4CodeSense: Restart Language Server[/b]
+[/list]
+[h2][b]Credits[/b][/h2]
+[list]
+[*] [url=https://www.egosoft.com]Egosoft[/url] for the game.
+[*] Cgetty and archenovalis for X4CodeComplete, the starting point of this extension.
+[*] Members of the [url=https://discord.com/channels/337098290917146624/502057640877228042]x4_modding Discord channel[/url] for answers, support and ideas.
+[/list]
+[h2][b]Changelog[/b][/h2]
+
+[h2]Unreleased[/h2]
+[list]
+[*] Completion, hover and go to definition from the schemas and `scriptproperties.xml`: child elements allowed at the caret, attribute names, enumeration values, keywords, property chains with placeholders and lookup values. Lookups the game evaluates but [b]scriptproperties.xml[/b] does not list (relation ranges, licence types, component states, input functions and more) come from the game's own data files.
+[*] Schema validation of scripts against the game's XSD files, on by default: unknown elements and attributes, misplaced and missing child elements, missing required attributes, invalid attribute values with the expected values in the message. The schemas load in well under a second and the largest vanilla script validates in tens of milliseconds.
+[*] XML well-formedness diagnostics for scripts and patches: unclosed start and end tags, missing or unquoted attribute values, missing closing quotes, duplicate attributes, missing end tags, unclosed comments.
+[*] Initial scaffold: language server, client and command-line checker with script detection.
+[/list]
