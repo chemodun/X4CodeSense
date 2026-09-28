@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<aiscript name="order.sample" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="aiscripts.xsd" version="1">
+  <order id="Sample" name="{1001, 1}" description="{1001, 2}" category="navigation" infinite="true">
+    <params>
+      <param name="targetSector" type="sector" text="{1001, 3}" required="true" />
+      <param name="checkInterval" type="number" default="5" text="{1001, 4}" />
+    </params>
+  </order>
+  <init>
+    <set_value name="$counter" exact="0" />
+  </init>
+  <attention min="unknown">
+    <actions>
+      <label name="loop" />
+      <set_value name="$counter" operation="add" />
+      <debug_text text="'%s: loop %s in %s'.[this.assignedcontrolled.knownname, $counter, $targetSector.knownname]" chance="0" />
+      <wait exact="($checkInterval)s" />
+      <resume label="loop" />
+    </actions>
+  </attention>
+</aiscript>

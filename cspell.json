@@ -1,0 +1,29 @@
+{
+  "version": "0.2",
+  "ignorePaths": ["node_modules", "out", "dist", "package-lock.json", ".git", "*.vsix", "client/docs"],
+  "dictionaries": ["en", "typescript", "node", "npm"],
+  "words": [
+    "aiscript",
+    "aiscripts",
+    "archenovalis",
+    "bbcode",
+    "Cgetty",
+    "chemodun",
+    "codesense",
+    "Egosoft",
+    "esbuild",
+    "languageclient",
+    "languageserver",
+    "mdscript",
+    "nolazy",
+    "nonamespaceschemalocation",
+    "npmjs",
+    "onopentag",
+    "tsbuildinfo",
+    "virustotal",
+    "vitest",
+    "vsce",
+    "vsix",
+    "xmldom"
+  ]
+}

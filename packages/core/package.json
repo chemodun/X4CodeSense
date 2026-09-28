@@ -1,0 +1,51 @@
+{
+  "name": "x4-script-core",
+  "version": "0.0.0",
+  "description": "Editor-independent analysis of X4: Foundations scripts (AI scripts and Mission Director scripts).",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "files": [
+    "out/**/*.js",
+    "out/**/*.d.ts",
+    "out/**/*.map",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Chem O'Dun",
+    "email": "chemodun@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chemodun/X4CodeSense.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/chemodun/X4CodeSense#readme",
+  "bugs": {
+    "url": "https://github.com/chemodun/X4CodeSense/issues"
+  },
+  "keywords": [
+    "x4",
+    "x4-foundations",
+    "egosoft",
+    "modding",
+    "mission-director",
+    "aiscript",
+    "xml",
+    "language-server"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "sax": "^1.6.1",
+    "vscode-languageserver-types": "^3.18.4"
+  },
+  "devDependencies": {
+    "@types/sax": "^1.2.7"
+  }
+}

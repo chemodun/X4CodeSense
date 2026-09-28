@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mdscript name="Sample" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd">
+  <cues>
+    <cue name="Start" version="1">
+      <conditions>
+        <event_game_loaded />
+      </conditions>
+      <actions>
+        <set_value name="$counter" exact="0" />
+        <set_value name="$config" exact="table[$enabled = true, $delay = 5s]" />
+        <do_if value="$config.$enabled? and $config.$enabled">
+          <debug_text text="'Sample started: %s'.[$counter]" />
+        </do_if>
+      </actions>
+      <cues>
+        <cue name="Tick" instantiate="true" checkinterval="10s">
+          <conditions>
+            <check_value value="parent.$counter lt 10" />
+          </conditions>
+          <actions>
+            <set_value name="parent.$counter" operation="add" />
+          </actions>
+        </cue>
+      </cues>
+    </cue>
+  </cues>
+</mdscript>

@@ -1,0 +1,51 @@
+{
+  "name": "x4-script-language-server",
+  "version": "0.0.0",
+  "description": "Language Server Protocol server for X4: Foundations scripts (AI scripts and Mission Director scripts).",
+  "main": "out/server.js",
+  "bin": {
+    "x4-script-language-server": "out/server.js"
+  },
+  "files": [
+    "out/**/*.js",
+    "out/**/*.d.ts",
+    "out/**/*.map",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Chem O'Dun",
+    "email": "chemodun@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chemodun/X4CodeSense.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/chemodun/X4CodeSense#readme",
+  "bugs": {
+    "url": "https://github.com/chemodun/X4CodeSense/issues"
+  },
+  "keywords": [
+    "x4",
+    "x4-foundations",
+    "egosoft",
+    "modding",
+    "mission-director",
+    "aiscript",
+    "xml",
+    "language-server",
+    "lsp"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "vscode-languageserver": "^10.1.2",
+    "vscode-languageserver-textdocument": "^1.0.15",
+    "x4-script-core": "0.0.0"
+  }
+}

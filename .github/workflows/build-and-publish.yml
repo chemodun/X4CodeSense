@@ -1,0 +1,108 @@
+name: Build and Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extension:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'x4codesense@') }}
+    runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      VT_API_KEY: ${{ secrets.VT_API_KEY }}
+      RELEASE_PLEASE_TOKEN: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package extension
+        id: package
+        working-directory: client
+        run: |
+          mkdir -p artifacts
+          npx --yes @vscode/vsce package --no-dependencies --out ./artifacts
+          PACKAGE_PATH="$(find ./artifacts -maxdepth 1 -name '*.vsix' -print -quit)"
+          echo "package_path=client/${PACKAGE_PATH#./}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Visual Studio Marketplace
+        if: ${{ github.event_name == 'release' && env.VSCE_PAT != '' }}
+        working-directory: client
+        run: npx --yes @vscode/vsce publish --no-dependencies
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: ${{ steps.package.outputs.package_path }}
+
+      - name: Attach Extension .vsix to Release
+        if: ${{ github.event_name == 'release' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ env.RELEASE_PLEASE_TOKEN != '' && env.RELEASE_PLEASE_TOKEN || github.token }}
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ steps.package.outputs.package_path }}
+
+      - name: VirusTotal scan
+        if: ${{ github.event_name == 'release' && env.VT_API_KEY != '' }}
+        uses: crazy-max/ghaction-virustotal@v4
+        with:
+          update_release_body: true
+          request_rate: 4
+          vt_api_key: ${{ env.VT_API_KEY }}
+          github_token: ${{ env.RELEASE_PLEASE_TOKEN != '' && env.RELEASE_PLEASE_TOKEN || github.token }}
+          files: |
+            .vsix$
+
+  npm-package:
+    if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "${TAG%%@*}" in
+            x4-script-core) WORKSPACE=packages/core ;;
+            x4-script-language-server) WORKSPACE=packages/server ;;
+            x4-script-check) WORKSPACE=packages/cli ;;
+            *) echo "Unknown component in tag ${TAG}" >&2; exit 1 ;;
+          esac
+          npm publish --workspace "${WORKSPACE}" --access public --provenance

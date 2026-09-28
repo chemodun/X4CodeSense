@@ -1,0 +1,110 @@
+{
+  "name": "x4codesense",
+  "displayName": "X4CodeSense",
+  "description": "Language support for X4: Foundations scripts (AI scripts and Mission Director scripts): completion, hover, navigation and diagnostics, powered by a language server.",
+  "version": "0.0.0",
+  "private": true,
+  "publisher": "X4DevTools",
+  "author": {
+    "name": "Chem O'Dun",
+    "email": "chemodun@gmail.com"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chemodun/X4CodeSense.git",
+    "directory": "client"
+  },
+  "homepage": "https://github.com/chemodun/X4CodeSense#readme",
+  "bugs": {
+    "url": "https://github.com/chemodun/X4CodeSense/issues"
+  },
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "x4",
+    "x4 foundations",
+    "egosoft",
+    "modding",
+    "mission director",
+    "aiscript",
+    "xml",
+    "language server"
+  ],
+  "activationEvents": [
+    "onLanguage:xml"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "x4CodeSense.restartServer",
+        "title": "Restart Language Server",
+        "category": "X4CodeSense"
+      }
+    ],
+    "configuration": {
+      "title": "X4CodeSense",
+      "properties": {
+        "x4CodeSense.unpackedFileLocation": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the extracted vanilla game files (the folder holding aiscripts, md, libraries and t)."
+        },
+        "x4CodeSense.extensionsFolder": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a folder with other extensions whose scripts and texts should be visible."
+        },
+        "x4CodeSense.languageNumber": {
+          "type": "string",
+          "default": "44",
+          "description": "Preferred language number for text lookups, for example 44 for English."
+        },
+        "x4CodeSense.limitLanguageOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show only the preferred language in text hovers."
+        },
+        "x4CodeSense.validateXmlStructure": {
+          "type": "boolean",
+          "default": false,
+          "description": "Report elements that are not allowed at their position according to the XSD schemas."
+        },
+        "x4CodeSense.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Verbose language server logging in the X4CodeSense output channel."
+        },
+        "x4CodeSense.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the X4CodeSense language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.js --production",
+    "bundle": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.2",
+    "x4-script-core": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.104.0"
+  }
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<diff>
+  <add sel="/mdscript/cues/cue[@name='Start']/actions">
+    <debug_text text="'patched'" />
+  </add>
+</diff>

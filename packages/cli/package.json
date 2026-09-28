@@ -1,0 +1,49 @@
+{
+  "name": "x4-script-check",
+  "version": "0.0.0",
+  "description": "Command line checker for X4: Foundations scripts (AI scripts and Mission Director scripts).",
+  "main": "out/cli.js",
+  "bin": {
+    "x4-script-check": "out/cli.js"
+  },
+  "files": [
+    "out/**/*.js",
+    "out/**/*.d.ts",
+    "out/**/*.map",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Chem O'Dun",
+    "email": "chemodun@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chemodun/X4CodeSense.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/chemodun/X4CodeSense#readme",
+  "bugs": {
+    "url": "https://github.com/chemodun/X4CodeSense/issues"
+  },
+  "keywords": [
+    "x4",
+    "x4-foundations",
+    "egosoft",
+    "modding",
+    "mission-director",
+    "aiscript",
+    "xml",
+    "lint",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "x4-script-core": "0.0.0"
+  }
+}
