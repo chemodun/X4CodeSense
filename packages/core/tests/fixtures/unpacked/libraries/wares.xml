@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test data for X4CodeSense: a small stand-in for the game's wares.xml. -->
+<wares>
+  <ware id="energycells" name="{20201,701}" transport="container" volume="1" tags="economy minimal">
+    <price min="10" average="16" max="22" />
+  </ware>
+  <ware id="ore" name="{20201,3701}" transport="solid" volume="10" />
+  <ware id="secret" name="Secret" hidden="1" />
+</wares>

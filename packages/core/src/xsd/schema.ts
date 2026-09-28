@@ -5,15 +5,12 @@
  * types with restriction facets, unions and lists. Everything is compiled lazily and cached, so a schema
  * loads in milliseconds and only the parts a document touches get resolved.
  */
+import type { SourceLocation } from '../sourceLocation';
 import { attributeNamed, decodeAttributeValue, parseXml, type XmlElement } from '../xml/xmlStructure';
 import { compileContentModel, type ContentModel, type ElementParticle, type GroupParticle, type Particle } from './contentModel';
 
 /** Where a declaration lives: the start tag of its node in a schema file. */
-export interface XsdLocation {
-  file: string;
-  start: number;
-  end: number;
-}
+export type XsdLocation = SourceLocation;
 
 export interface XsdFile {
   /** Absolute path, used in locations. */
@@ -345,6 +342,8 @@ export class XsdSchema {
   readonly problems: XsdProblem[] = [];
   private readonly fileOfNode = new WeakMap<XmlElement, ParsedFile>();
   private readonly globalElements = new Map<string, XmlElement>();
+  /** Every element declaration by name, global or nested, in file order. */
+  private readonly elementNodesByName = new Map<string, XmlElement[]>();
   private readonly complexTypeNodes = new Map<string, XmlElement>();
   private readonly simpleTypeNodes = new Map<string, XmlElement>();
   private readonly groupNodes = new Map<string, XmlElement>();
@@ -359,7 +358,8 @@ export class XsdSchema {
 
   constructor(
     readonly name: string,
-    files: XsdFile[]
+    /** The schema file and the files it includes, in load order. */
+    readonly files: readonly XsdFile[]
   ) {
     for (const file of files) {
       const parsed: ParsedFile = { path: file.path, text: file.text };
@@ -369,6 +369,17 @@ export class XsdSchema {
       }
       for (const element of structure.elements) {
         this.fileOfNode.set(element, parsed);
+        if (localName(element.name) === 'element') {
+          const elementName = attributeNamed(element, 'name')?.value;
+          if (elementName !== undefined) {
+            const nodes = this.elementNodesByName.get(elementName);
+            if (nodes) {
+              nodes.push(element);
+            } else {
+              this.elementNodesByName.set(elementName, [element]);
+            }
+          }
+        }
       }
       const root = structure.roots[0];
       if (!root || localName(root.name) !== 'schema') {
@@ -409,6 +420,16 @@ export class XsdSchema {
   /** Declaration of a global element, the document root. */
   root(name: string): XsdElement | undefined {
     const node = this.globalElements.get(name);
+    return node ? this.declaration(node) : undefined;
+  }
+
+  /**
+   * Some declaration of an element with this name, wherever it appears in the schema: the first one in
+   * file order. For a document whose structure is broken around an element, it is the best guess for
+   * the element's attributes and children while the user is still typing.
+   */
+  anyDeclaration(name: string): XsdElement | undefined {
+    const node = this.elementNodesByName.get(name)?.[0];
     return node ? this.declaration(node) : undefined;
   }
 

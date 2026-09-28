@@ -1,0 +1,72 @@
+import type { Location } from 'vscode-languageserver-types';
+import type { DocumentAnalysis } from '../analysis/analyzeDocument';
+import { positionContext, schemaOf } from '../analysis/positionContext';
+import { isInsideString, tokenize } from '../expressions/lexer';
+import { chainAtToken, resolveChain } from '../expressions/propertyChain';
+import type { GameData } from '../gameData';
+import type { SourceLocation } from '../sourceLocation';
+import type { XmlAttribute } from '../xml/xmlStructure';
+import { enumerationsOf, type XsdAttribute } from '../xsd/schema';
+import { isExpressionAttribute } from './completion';
+
+function locations(game: GameData, sources: (SourceLocation | undefined)[]): Location[] {
+  const result: Location[] = [];
+  for (const source of sources) {
+    const location = source && game.locationOf(source);
+    if (location) {
+      result.push(location);
+    }
+  }
+  return result;
+}
+
+function definitionInValue(analysis: DocumentAnalysis, attribute: XmlAttribute, declared: XsdAttribute | undefined, index: number, game: GameData): Location[] {
+  if (!declared) {
+    return [];
+  }
+  const value = attribute.value;
+  const enumeration = enumerationsOf(declared.type).find((candidate) => candidate.value === value.trim());
+  if (enumeration) {
+    return locations(game, [enumeration.location]);
+  }
+  const properties = game.properties;
+  const schema = analysis.detection.script?.schema;
+  if (!properties || !schema || !isExpressionAttribute(declared) || isInsideString(tokenize(value), index)) {
+    return [];
+  }
+  const found = chainAtToken(value, index);
+  if (!found) {
+    return [];
+  }
+  const step = resolveChain(found.chain, properties, schema).steps[found.stepIndex];
+  if (step.keyword) {
+    return locations(game, [step.keyword.location]);
+  }
+  if (step.property) {
+    return locations(game, [step.property.location]);
+  }
+  return locations(
+    game,
+    (step.candidates ?? []).map((candidate) => candidate.location)
+  );
+}
+
+/** Where the thing at an offset is declared in the game data: an element or attribute in a schema, a keyword or property in scriptproperties.xml, an enumeration value. */
+export function definitionAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined): Location[] {
+  if (!game) {
+    return [];
+  }
+  const context = positionContext(analysis, offset, schemaOf(game, analysis));
+  switch (context.kind) {
+    case 'element-name':
+      return locations(game, [context.declaration?.location]);
+    case 'end-tag-name':
+      return locations(game, [context.declaration?.location]);
+    case 'attribute-name':
+      return locations(game, [context.declaration?.attributes.get(context.attribute.name)?.location]);
+    case 'attribute-value':
+      return definitionInValue(analysis, context.attribute, context.declared, context.index, game);
+    default:
+      return [];
+  }
+}

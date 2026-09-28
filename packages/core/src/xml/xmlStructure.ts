@@ -240,6 +240,25 @@ export function offsetInValue(attribute: XmlAttribute, decodedIndex: number): nu
   return attribute.valueStart + decodedIndex + shift;
 }
 
+/**
+ * Index into the decoded value of an attribute for a text offset inside its raw value.
+ * An offset inside a reference maps to the start of its replacement.
+ */
+export function indexInValue(attribute: XmlAttribute, offset: number): number {
+  const raw = offset - attribute.valueStart;
+  let shift = 0;
+  for (const reference of attribute.references) {
+    if (raw < reference.rawStart) {
+      break;
+    }
+    if (raw < reference.rawStart + reference.rawLength) {
+      return reference.decodedStart;
+    }
+    shift += reference.rawLength - reference.decodedLength;
+  }
+  return raw - shift;
+}
+
 /** Text offsets of a range inside the decoded value of an attribute. */
 export function rangeInValue(attribute: XmlAttribute, decodedStart: number, decodedEnd: number): XmlRegion {
   return { start: offsetInValue(attribute, decodedStart), end: offsetInValue(attribute, decodedEnd) };

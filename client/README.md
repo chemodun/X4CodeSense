@@ -6,9 +6,17 @@ X4CodeSense is the successor of X4CodeComplete. It is rebuilt around a language 
 
 ## Status
 
-Preview. The current build recognises script and patch documents, shows the script type and name in the status bar, reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type, and validates scripts against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes and invalid attribute values. Completion, hover, navigation and further diagnostics are being ported and rebuilt in this order:
+Preview. The current build:
 
-- Property completion, hover and go to definition from `scriptproperties.xml`
+- recognises script and patch documents and shows the script type and name in the status bar;
+- reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type;
+- validates scripts against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes and invalid attribute values;
+- completes child elements allowed at the caret, attribute names, attribute values from the schema enumerations, and property chains in expressions from `scriptproperties.xml` (`player.ship.cargo.{$ware}.count`), with keywords and the values of lookups such as `class` or `ware`;
+- shows hover documentation for elements, attributes, enumeration values, keywords and properties;
+- goes to the definition of an element or attribute in the schema, of a keyword or property in `scriptproperties.xml`, and of a lookup value in the game file it comes from.
+
+Being ported and rebuilt next, in this order:
+
 - A real parser for the expression language with syntax diagnostics
 - Variables with scopes and inferred types
 - Labels, actions, handlers, cues, libraries and script names across files
@@ -17,7 +25,7 @@ Preview. The current build recognises script and patch documents, shows the scri
 
 ## Requirements
 
-- The extracted vanilla game files (`aiscripts`, `md`, `libraries`, `t`), set in `x4CodeSense.unpackedFileLocation`. The schemas `md.xsd`, `aiscripts.xsd` and `common.xsd` are read from its `libraries` folder; without it scripts are only checked for well-formedness.
+- The extracted vanilla game files (`aiscripts`, `md`, `libraries`, `t`), set in `x4CodeSense.unpackedFileLocation`. The schemas `md.xsd`, `aiscripts.xsd` and `common.xsd` and `scriptproperties.xml` with the files it imports are read from its `libraries` folder; without it scripts are only checked for well-formedness.
 - Optionally a folder with other extensions whose scripts should be visible, set in `x4CodeSense.extensionsFolder`.
 
 ## Settings
@@ -44,6 +52,7 @@ Preview. The current build recognises script and patch documents, shows the scri
 
 ### Unreleased
 
+- Completion, hover and go to definition from the schemas and `scriptproperties.xml`: child elements allowed at the caret, attribute names, enumeration values, keywords, property chains with placeholders and lookup values. Lookups the game evaluates but `scriptproperties.xml` does not list (relation ranges, licence types, component states, input functions and more) come from the game's own data files.
 - Schema validation of scripts against the game's XSD files, on by default: unknown elements and attributes, misplaced and missing child elements, missing required attributes, invalid attribute values with the expected values in the message. The schemas load in well under a second and the largest vanilla script validates in tens of milliseconds.
 - XML well-formedness diagnostics for scripts and patches: unclosed start and end tags, missing or unquoted attribute values, missing closing quotes, duplicate attributes, missing end tags, unclosed comments.
 - Initial scaffold: language server, client and command-line checker with script detection.

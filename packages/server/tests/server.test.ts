@@ -2,7 +2,7 @@
  * End-to-end test: bundle the server, start it over stdio and talk LSP to it.
  * Self-contained: it does not need a previous `tsc -b` or client bundle.
  * The test client answers `workspace/configuration` with the settings below, so the server loads the
- * fixture schemas of the core package.
+ * fixture schemas and script properties of the core package.
  */
 import { build } from 'esbuild';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -12,13 +12,16 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  CompletionRequest,
   ConfigurationRequest,
   createProtocolConnection,
+  DefinitionRequest,
   DidChangeConfigurationNotification,
   DidChangeTextDocumentNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   ExitNotification,
+  HoverRequest,
   InitializedNotification,
   InitializeRequest,
   PublishDiagnosticsNotification,
@@ -27,6 +30,7 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
+  type Location,
   type ProtocolConnection,
   type PublishDiagnosticsParams,
 } from 'vscode-languageserver/node';
@@ -71,6 +75,12 @@ function summarize(params: PublishDiagnosticsParams): string[] {
   return params.diagnostics.map((diagnostic) => `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} ${diagnostic.code}`);
 }
 
+async function open(uri: string, text: string): Promise<PublishDiagnosticsParams> {
+  const published = nextDiagnostics(uri);
+  await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'xml', version: 1, text } });
+  return published;
+}
+
 beforeAll(async () => {
   workDir = mkdtempSync(path.join(tmpdir(), 'x4codesense-server-'));
   const bundle = path.join(workDir, 'server.js');
@@ -91,9 +101,12 @@ beforeAll(async () => {
   const result = await connection.sendRequest(InitializeRequest.type, {
     processId: process.pid,
     rootUri: null,
-    capabilities: { workspace: { configuration: true } },
+    capabilities: { workspace: { configuration: true }, textDocument: { completion: { completionItem: { snippetSupport: true } } } },
   });
   expect(result.capabilities.textDocumentSync).toBe(TextDocumentSyncKind.Incremental);
+  expect(result.capabilities.completionProvider?.triggerCharacters).toContain('<');
+  expect(result.capabilities.hoverProvider).toBe(true);
+  expect(result.capabilities.definitionProvider).toBe(true);
   await connection.sendNotification(InitializedNotification.type, {});
 }, 30_000);
 
@@ -111,11 +124,7 @@ afterAll(async () => {
 describe('language server over stdio', () => {
   it('reports metadata for an opened Mission Director script', async () => {
     const uri = 'file:///mod/md/Sample.xml';
-    const published = nextDiagnostics(uri);
-    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId: 'xml', version: 1, text: mdText },
-    });
-    expect((await published).diagnostics).toEqual([]);
+    expect((await open(uri, mdText)).diagnostics).toEqual([]);
     const info = await documentInfo(uri);
     expect(info.metadata).toMatchObject({ schema: 'md', name: 'Sample', schemaLocation: 'md.xsd' });
   });
@@ -148,20 +157,14 @@ describe('language server over stdio', () => {
 
   it('returns no metadata for XML that is not a script', async () => {
     const uri = 'file:///mod/libraries/wares.xml';
-    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId: 'xml', version: 1, text: '<wares><ware id="x" /></wares>' },
-    });
-    const info = await documentInfo(uri);
-    expect(info).toEqual({ isDiff: false, rootElement: 'wares' });
+    await open(uri, '<wares><ware id="x" /></wares>');
+    expect(await documentInfo(uri)).toEqual({ isDiff: false, rootElement: 'wares' });
   });
 
   it('recognises a patch document', async () => {
     const uri = 'file:///mod/md/patch.xml';
-    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId: 'xml', version: 1, text: '<diff><add sel="/mdscript/cues"><cue name="X" /></add></diff>' },
-    });
-    const info = await documentInfo(uri);
-    expect(info).toEqual({ isDiff: true, rootElement: 'diff' });
+    await open(uri, '<diff><add sel="/mdscript/cues"><cue name="X" /></add></diff>');
+    expect(await documentInfo(uri)).toEqual({ isDiff: true, rootElement: 'diff' });
   });
 
   it('returns no metadata for a document it has never seen', async () => {
@@ -175,11 +178,7 @@ describe('diagnostics', () => {
   const brokenText = '<mdscript name="Broken">\n  <cues>\n    <cue name="A>\n      <actions/>\n    </cue>\n  </cues>\n</mdscript>\n';
 
   it('publishes well-formedness problems of a script with positions', async () => {
-    const published = nextDiagnostics(uri);
-    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId: 'xml', version: 1, text: brokenText },
-    });
-    const params = await published;
+    const params = await open(uri, brokenText);
     expect(params.version).toBe(1);
     expect(params.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.source, diagnostic.range.start.line])).toEqual([
       ['unclosed-attribute', 'X4CodeSense', 2],
@@ -222,15 +221,16 @@ describe('diagnostics', () => {
     const withoutSchemas = nextDiagnostics(uri);
     await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
     expect(summarize(await withoutSchemas)).toEqual([]);
+
+    clientSettings.unpackedFileLocation = unpacked;
+    const restored = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    expect(summarize(await restored).length).toBe(3);
   });
 
   it('publishes nothing for XML that is not a script', async () => {
     const otherUri = 'file:///mod/libraries/broken.xml';
-    const published = nextDiagnostics(otherUri);
-    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<wares><ware id="x></wares>' },
-    });
-    expect((await published).diagnostics).toEqual([]);
+    expect((await open(otherUri, '<wares><ware id="x></wares>')).diagnostics).toEqual([]);
   });
 
   it('clears diagnostics when the document closes', async () => {
@@ -238,5 +238,59 @@ describe('diagnostics', () => {
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
     expect((await published).diagnostics).toEqual([]);
     expect((await documentInfo(uri)).metadata).toBeUndefined();
+  });
+});
+
+describe('completion, hover and definition', () => {
+  const uri = 'file:///mod/md/Complete.xml';
+  const lines = [
+    '<mdscript name="C">',
+    '  <cues>',
+    '    <cue name="A">',
+    '      <actions>',
+    '        <set_value name="$x" exact="player.ship."/>',
+    '        <',
+    '      </actions>',
+    '    </cue>',
+    '  </cues>',
+    '</mdscript>',
+    '',
+  ];
+  const text = lines.join('\n');
+  const chainLine = 4;
+  const chainEnd = lines[chainLine].indexOf('player.ship.') + 'player.ship.'.length;
+
+  it('completes property chains, elements and attribute values', async () => {
+    await open(uri, text);
+    const chain = await connection.sendRequest(CompletionRequest.type, { textDocument: { uri }, position: { line: chainLine, character: chainEnd } });
+    const chainLabels = Array.isArray(chain) ? chain.map((item) => item.label) : (chain?.items.map((item) => item.label) ?? []);
+    expect(chainLabels).toContain('pilot');
+    expect(chainLabels).toContain('cargo');
+
+    const elements = await connection.sendRequest(CompletionRequest.type, { textDocument: { uri }, position: { line: 5, character: lines[5].length } });
+    const elementLabels = Array.isArray(elements) ? elements.map((item) => item.label) : (elements?.items.map((item) => item.label) ?? []);
+    expect(elementLabels).toContain('set_value');
+    expect(elementLabels).toContain('debug_text');
+  });
+
+  it('hovers keywords and properties', async () => {
+    const hover = await connection.sendRequest(HoverRequest.type, {
+      textDocument: { uri },
+      position: { line: chainLine, character: lines[chainLine].indexOf('player') + 2 },
+    });
+    const value = hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '';
+    expect(value).toContain('**player** *(keyword)*');
+    const none = await connection.sendRequest(HoverRequest.type, { textDocument: { uri }, position: { line: 1, character: 0 } });
+    expect(none).toBeNull();
+  });
+
+  it('goes to the definition of a property', async () => {
+    const result = await connection.sendRequest(DefinitionRequest.type, {
+      textDocument: { uri },
+      position: { line: chainLine, character: lines[chainLine].indexOf('ship.') + 1 },
+    });
+    const locations = (Array.isArray(result) ? result : result ? [result] : []) as Location[];
+    expect(locations.map((location) => path.basename(location.uri))).toEqual(['scriptproperties.xml']);
+    expect(locations[0].range.start.line).toBeGreaterThan(0);
   });
 });

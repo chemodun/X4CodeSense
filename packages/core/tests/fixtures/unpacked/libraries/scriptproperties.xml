@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Test data for X4CodeSense: a small stand-in for the game's scriptproperties.xml, using the same constructs. -->
+<scriptproperties>
+  <datatype name="component">
+    <property name="exists" result="true iff the component exists" type="boolean" />
+    <property name="name" result="Name of the component" type="string" />
+    <property name="isclass.{$class}" result="true iff the component is of the given class" type="boolean" />
+    <property name="isclass.{$list}" result="true iff the component is of one of the classes in the list" type="boolean" />
+    <property name="sector" result="Sector the component is in" type="sector" />
+  </datatype>
+  <datatype name="object" type="component">
+    <property name="owner" result="Owning faction" type="faction" />
+  </datatype>
+  <datatype name="container" type="object">
+    <property name="cargo.{$ware}.count" result="Amount of the ware in cargo" type="integer" />
+    <property name="cargo.list" result="List of wares in cargo" type="list" />
+  </datatype>
+  <datatype name="ship" type="container">
+    <property name="pilot" result="Pilot of the ship" type="entity" />
+    <property name="speed" result="Current speed" type="length" />
+  </datatype>
+  <datatype name="station" type="container" />
+  <datatype name="entity" type="component">
+    <property name="skill.{$skilltype}" result="Skill level" type="integer" />
+    <property name="controlled" result="Object controlled by the entity" type="object" />
+  </datatype>
+  <datatype name="sector" type="component">
+    <property name="ships" result="Ships in the sector" type="list" />
+  </datatype>
+  <datatype name="faction" type="component" />
+  <datatype name="numeric" />
+  <datatype name="integer" type="numeric" suffix="i" />
+  <datatype name="length" type="numeric" suffix="m" />
+  <datatype name="time" type="numeric" suffix="s">
+    <property name="ms" result="Milliseconds" type="integer" />
+  </datatype>
+  <datatype name="boolean" />
+  <datatype name="string">
+    <property name="len" result="Length of the string" type="integer" />
+  </datatype>
+  <datatype name="list">
+    <property name="count" result="Number of elements" type="integer" />
+    <property name="{$numeric}" result="Element at the index (1-based)" />
+    <property name="random" result="A random element" />
+  </datatype>
+  <datatype name="enum" />
+  <datatype name="class" type="enum" />
+  <datatype name="ware" type="enum" />
+  <datatype name="skilltype" type="enum" />
+  <datatype name="npctemplateentry" pseudo="true" />
+  <datatype name="cue">
+    <property name="name" result="Name of the cue" type="string" />
+  </datatype>
+
+  <keyword name="player" description="Access to player-specific data">
+    <property name="ship" result="The player ship" type="ship" />
+    <property name="entity" result="The player entity" type="entity" />
+    <property name="money" result="Player money" type="integer" />
+  </keyword>
+  <keyword name="true" description="Same as 1" type="boolean" />
+  <keyword name="this" description="The current MD cue" type="cue" script="md" />
+  <keyword name="this" description="The entity on which the AI script is running" type="entity" script="ai" />
+  <keyword name="class" description="Class lookup">
+    <import source="common.xsd" select="/xs:schema/xs:simpleType[@name='classlookup']//xs:enumeration">
+      <property name="@value" result="xs:annotation/xs:documentation/text()" type="class" />
+    </import>
+  </keyword>
+  <keyword name="ware" description="Ware lookup">
+    <import source="wares.xml" select="/wares/ware[not(@hidden)]">
+      <property name="@id" result="@name" type="ware" />
+    </import>
+  </keyword>
+  <keyword name="skilltype" description="Skill type lookup">
+    <property name="piloting" result="Piloting skill" type="skilltype" />
+    <property name="boarding" result="Boarding skill" type="skilltype" />
+  </keyword>
+</scriptproperties>

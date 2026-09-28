@@ -1,23 +1,29 @@
-import * as path from 'node:path';
 import {
   createConnection,
   DidChangeConfigurationNotification,
   ProposedFeatures,
   TextDocuments,
   TextDocumentSyncKind,
+  type CompletionItem,
+  type CompletionList,
+  type Hover,
   type InitializeParams,
   type InitializeResult,
+  type Location,
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   analyzeDocument,
+  completionAt,
+  definitionAt,
   DocumentInfoRequestMethod,
-  loadSchemas,
+  hoverAt,
+  loadGameData,
   type AnalysisContext,
   type DocumentAnalysis,
   type DocumentInfoParams,
   type DocumentInfoResult,
-  type SchemaSet,
+  type GameData,
 } from 'x4-script-core';
 
 /** Settings under the `x4CodeSense` section, mirrored from the client's package.json. */
@@ -39,12 +45,16 @@ const defaultSettings: X4CodeSenseSettings = {
   debug: false,
 };
 
+/** Characters after which the client asks for completion without being told to. */
+const completionTriggerCharacters = ['<', '.', '"', ' ', '$', '{'];
+
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
 let settings: X4CodeSenseSettings = defaultSettings;
 let hasConfigurationCapability = false;
-let schemas: SchemaSet | undefined;
+let snippetSupport = false;
+let game: GameData | undefined;
 
 /** The latest analysis of each open document. */
 const analysisByUri = new Map<string, DocumentAnalysis>();
@@ -65,9 +75,13 @@ function debug(message: string): void {
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   hasConfigurationCapability = params.capabilities.workspace?.configuration === true;
+  snippetSupport = params.capabilities.textDocument?.completion?.completionItem?.snippetSupport === true;
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
+      completionProvider: { triggerCharacters: completionTriggerCharacters },
+      hoverProvider: true,
+      definitionProvider: true,
     },
     serverInfo: {
       name: 'X4CodeSense language server',
@@ -75,27 +89,29 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   };
 });
 
-/** Loads the game schemas from the `libraries` folder of the unpacked game files, once per folder. */
-function refreshSchemas(): void {
-  const folder = settings.unpackedFileLocation.trim() === '' ? undefined : path.join(settings.unpackedFileLocation, 'libraries');
-  if (folder === schemas?.folder || (folder === undefined && schemas === undefined)) {
+/** Loads the schemas and script properties of the unpacked game files, once per folder. */
+function refreshGameData(): void {
+  const folder = settings.unpackedFileLocation.trim() === '' ? undefined : settings.unpackedFileLocation;
+  if (folder === game?.folder || (folder === undefined && game === undefined)) {
     return;
   }
   if (folder === undefined) {
-    schemas = undefined;
-    warn('x4CodeSense.unpackedFileLocation is not set: scripts are not validated against the game schemas');
+    game = undefined;
+    warn('x4CodeSense.unpackedFileLocation is not set: scripts are not validated against the game schemas and have no property completion');
     return;
   }
   const started = performance.now();
-  schemas = loadSchemas(folder);
-  const loaded = Object.keys(schemas.schemas);
-  if (loaded.length === 0) {
-    warn(`no schemas found in ${folder}: scripts are not validated against the game schemas`);
-  } else {
-    log(`loaded schemas ${loaded.join(', ')} from ${folder} in ${(performance.now() - started).toFixed(0)} ms`);
+  game = loadGameData(folder);
+  const schemas = Object.keys(game.schemas.schemas);
+  const properties = game.properties;
+  log(
+    `loaded ${schemas.length > 0 ? `schemas ${schemas.join(', ')}` : 'no schemas'}${properties ? `, ${properties.datatypes.size} datatypes and ${properties.keywords.length} keywords` : ', no script properties'} from ${folder} in ${(performance.now() - started).toFixed(0)} ms`
+  );
+  for (const problem of game.problems.slice(0, 50)) {
+    warn(problem);
   }
-  for (const problem of schemas.problems) {
-    warn(`${problem.file}: ${problem.message}`);
+  if (game.problems.length > 50) {
+    warn(`${game.problems.length - 50} more problems not shown`);
   }
 }
 
@@ -108,7 +124,7 @@ async function refreshSettings(): Promise<void> {
   log(
     `settings: unpackedFileLocation='${settings.unpackedFileLocation}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} validateXmlStructure=${settings.validateXmlStructure} debug=${settings.debug}`
   );
-  refreshSchemas();
+  refreshGameData();
 }
 
 connection.onInitialized(async () => {
@@ -116,7 +132,7 @@ connection.onInitialized(async () => {
     await connection.client.register(DidChangeConfigurationNotification.type, { section: 'x4CodeSense' });
     await refreshSettings();
   } else {
-    refreshSchemas();
+    refreshGameData();
   }
   log('server initialized');
 });
@@ -130,8 +146,8 @@ connection.onDidChangeConfiguration(async () => {
 
 function analysisContext(): AnalysisContext {
   const context: AnalysisContext = { validateStructure: settings.validateXmlStructure };
-  if (schemas) {
-    context.schemas = schemas;
+  if (game) {
+    context.schemas = game.schemas;
   }
   return context;
 }
@@ -158,6 +174,37 @@ documents.onDidChangeContent((event) => {
 documents.onDidClose((event) => {
   analysisByUri.delete(event.document.uri);
   void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
+});
+
+/** The analysis and caret offset behind a request, when the document is open and analysed. */
+function locate(uri: string, position: { line: number; character: number }): { analysis: DocumentAnalysis; offset: number } | undefined {
+  const analysis = analysisByUri.get(uri);
+  const document = documents.get(uri);
+  if (!analysis || !document) {
+    return undefined;
+  }
+  return { analysis, offset: document.offsetAt(position) };
+}
+
+connection.onCompletion((params): CompletionList | CompletionItem[] => {
+  const located = locate(params.textDocument.uri, params.position);
+  if (!located) {
+    return [];
+  }
+  const started = performance.now();
+  const items = completionAt(located.analysis, located.offset, game, { snippetSupport });
+  debug(`${params.textDocument.uri}: ${items.length} completion(s) in ${(performance.now() - started).toFixed(1)} ms`);
+  return { isIncomplete: false, items };
+});
+
+connection.onHover((params): Hover | null => {
+  const located = locate(params.textDocument.uri, params.position);
+  return located ? (hoverAt(located.analysis, located.offset, game) ?? null) : null;
+});
+
+connection.onDefinition((params): Location[] => {
+  const located = locate(params.textDocument.uri, params.position);
+  return located ? definitionAt(located.analysis, located.offset, game) : [];
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {
