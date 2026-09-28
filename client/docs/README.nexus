@@ -12,14 +12,14 @@ Preview. The current build:
 [*] reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type;
 [*] validates scripts against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes and invalid attribute values;
 [*] parses every expression and reports syntax errors the way the game would reject them, plus [b]@[/b] combined with `?`, text references that are not [b]{page, id}[/b] literals, and [b]%d[/b] in format strings;
+[*] checks property chains against `scriptproperties.xml`: a property that does not exist on the type at hand (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword are reported as warnings;
 [*] completes child elements allowed at the caret, attribute names, attribute values from the schema enumerations, and property chains in expressions from [b]scriptproperties.xml[/b] (`player.ship.cargo.{$ware}.count`), with keywords and the values of lookups such as [b]class[/b] or `ware`;
 [*] shows hover documentation for elements, attributes, enumeration values, keywords and properties;
 [*] goes to the definition of an element or attribute in the schema, of a keyword or property in `scriptproperties.xml`, and of a lookup value in the game file it comes from.
 [/list]
 Being ported and rebuilt next, in this order:
 [list]
-[*] Types of expressions, unknown properties and keywords as diagnostics
-[*] Variables with scopes and inferred types
+[*] Variables with scopes and inferred types, following the cue namespace rules of the Mission Director guide
 [*] Labels, actions, handlers, cues, libraries and script names across files
 [*] Text file (`t/*.xml`) lookups: hover and completion for [b]{page, id}[/b] references, also in other game XML such as macros, wares and libraries
 [*] Patch documents (`<diff>`) checked in the context of the file they patch
@@ -53,6 +53,7 @@ Being ported and rebuilt next, in this order:
 
 [size=3][u][i]Unreleased[/i][/u][/size]
 [list]
+[*] Property chains are checked against `scriptproperties.xml`: unknown properties on a known type and, in AI scripts, unknown chain heads are reported as warnings. Lookup values (`class`, `faction`, `ware`, ...) are not checked because their lists lag behind the game and its DLCs. All placeholder forms of the game data are understood now: `<cuename>`, `<tagname>`, `$<variable>`, `[$x, $y, $z]`, bare values and list literals for `{$type}`, and a chain that stops inside a pattern. Keywords the game has but the file lacks (`component`, `chairtype`, `datatype.macroslot`) are added.
 [*] Expression diagnostics: every attribute that takes an expression is parsed with the game's operator precedence; syntax errors, [b]@[/b] combined with `?`, text references without numeric literals and [b]%d[/b] in a format string are reported at their position. All 247,000 expressions of the vanilla scripts parse cleanly in about a second.
 [*] Completion, hover and go to definition from the schemas and `scriptproperties.xml`: child elements allowed at the caret, attribute names, enumeration values, keywords, property chains with placeholders and lookup values. Lookups the game evaluates but [b]scriptproperties.xml[/b] does not list (relation ranges, licence types, component states, input functions and more) come from the game's own data files. Everything keeps working while a tag, an attribute or a quote is still being typed.
 [*] Schema validation of scripts against the game's XSD files, on by default: unknown elements and attributes, misplaced and missing child elements, missing required attributes, invalid attribute values with the expected values in the message. The schemas load in well under a second and the largest vanilla script validates in tens of milliseconds.
