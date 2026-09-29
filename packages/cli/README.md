@@ -6,23 +6,92 @@ Command line checker for X4: Foundations scripts (AI scripts and Mission Directo
 npx x4-script-check --unpacked C:\X4\extracted path\to\extension
 npx x4-script-check --unpacked C:\X4\extracted path\to\folder\with\many\extensions
 npx x4-script-check path\to\extension        # well-formedness only, no schemas
+npx x4-script-check --format json --unpacked C:\X4\extracted path\to\extension
 ```
 
-It looks for `md` and `aiscripts` folders directly under each given path and one level deeper, checks every `*.xml` file in them, prints one line per finding and exits with 1 when there are findings (2 on a usage error).
+It looks for `md` and `aiscripts` folders directly under each given path and one level deeper, and for the patches of other extensions in `extensions/<folder>/md` and `.../aiscripts`. It checks every `*.xml` file in them, in the order of their names, and exits with 1 when there are findings (2 on a usage error).
 
 Options:
 
 - `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd` and `common.xsd`, and scripts are validated against them. Also read from the `X4_UNPACKED` environment variable.
+- `--extensions <folder>` - other extensions the checked ones refer to: their texts and scripts are read, they are not checked. May be given several times.
 - `--no-structure` - report unknown elements, attributes and values only, not the order and completeness of child elements.
+- `--format <format>` - `text` (default), `json` or `github`, see below.
+- `--fail-on <severity>` - the least severe finding that fails the check: `error`, `warning`, `info` or `hint`. The default, `hint`, fails on any finding; with `--fail-on error`, warnings are reported and the exit code is 0.
 - `-h`, `--help` - usage.
 
-Findings about a place in a file carry a 1-based line and column:
+## Text
+
+One line per finding: the file, for a place in it the 1-based line and column, the severity, the message and its code. A finding with a quick fix, the fix the editor offers, has a line per fix below it. The last line counts what was checked and found.
 
 ```text
-C:\mods\my_extension\md\Broken.xml:3:15: Value of attribute 'name' is not closed [unclosed-attribute]
-C:\mods\my_extension\md\Invalid.xml:5:8: Element 'conditions' is not allowed after 'actions' in 'cue'. Expected 'cues' [invalid-child-element]
-C:\mods\my_extension\aiscripts\Misplaced.xml: is a md script but lies in the aiscripts folder
-4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 3 finding(s)
+C:\mods\my_extension\aiscripts\Misplaced.xml: error: is a md script but lies in the aiscripts folder [script-in-wrong-folder]
+C:\mods\my_extension\md\Broken.xml:3:15: error: Value of attribute 'name' is not closed [unclosed-attribute]
+C:\mods\my_extension\md\Invalid.xml:4:17: error: Missing required attribute 'name' in 'set_value' [missing-required-attribute]
+  fix: Add the required attribute 'name'
+C:\mods\my_extension\md\Texts.xml:5:50: warning: Text 2 does not exist on page 90001 [text-undefined]
+6 file(s) in 2 folder(s): 5 script(s), 1 patch(es), 4 finding(s) (3 error(s), 1 warning(s))
 ```
+
+## JSON
+
+`--format json` prints one JSON object: the findings, the counts, and the problems met while reading the game files (they also go to standard error, as in the other formats).
+
+```json
+{
+  "findings": [
+    {
+      "file": "C:\\mods\\my_extension\\md\\Invalid.xml",
+      "line": 4,
+      "column": 17,
+      "range": { "start": { "line": 3, "character": 16 }, "end": { "line": 3, "character": 25 } },
+      "severity": "error",
+      "code": "missing-required-attribute",
+      "message": "Missing required attribute 'name' in 'set_value'",
+      "fixes": [
+        {
+          "title": "Add the required attribute 'name'",
+          "preferred": true,
+          "edits": [{ "range": { "start": { "line": 3, "character": 35 }, "end": { "line": 3, "character": 35 } }, "newText": " name=\"\"" }]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "files": 6,
+    "folders": 2,
+    "scripts": 5,
+    "patches": 1,
+    "findings": 1,
+    "errors": 1,
+    "warnings": 0,
+    "info": 0,
+    "hints": 0,
+    "schemaValidation": true
+  },
+  "problems": []
+}
+```
+
+- `line` and `column` count from 1, as in the text; they and `range` are absent for a finding about the whole file.
+- `range` and the ranges of the edits are LSP ranges: lines and characters count from 0, characters in UTF-16 code units, and the end is not included.
+- A fix is a list of edits to its file that do not overlap. `preferred` marks the fix an editor applies on its own: the only one, or clearly the closest name.
+
+## GitHub Actions
+
+`--format github` prints each finding as a workflow command, so GitHub shows it on the line of the file, in the run and in the pull request. Errors are errors, warnings warnings, and information notices; the quick fixes follow the message. Files are named relative to the current folder, which is the checked-out repository in a workflow.
+
+```yaml
+- uses: actions/setup-node@v4
+  with:
+    node-version: 22
+- run: npx x4-script-check --format github .
+```
+
+```text
+::error file=md/Invalid.xml,line=4,endLine=4,col=17,endColumn=26,title=missing-required-attribute::Missing required attribute 'name' in 'set_value'%0AFix: Add the required attribute 'name'
+```
+
+Without the game files on the runner, only well-formedness is checked.
 
 Part of [X4CodeSense](https://github.com/chemodun/X4CodeSense). Apache License 2.0.
