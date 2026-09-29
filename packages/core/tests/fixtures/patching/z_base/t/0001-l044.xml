@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test texts for X4CodeSense: the dependency changes the same text; the dependent's change wins. -->
+<diff>
+  <replace sel="/language/page[@id='1001']/t[@id='1']/text()">Base hull</replace>
+  <add sel="/language">
+    <page id="90003" title="Base page">
+      <t id="1">From the base</t>
+    </page>
+  </add>
+</diff>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test extension for X4CodeSense: sorts before its dependency by name, loads after it by dependency. -->
+<content
+  id="dependent"
+  name="Dependent"
+  version="100">
+  <dependency version="900" />
+  <dependency id="ws_base" optional="false" name="Base" />
+  <dependency id="not_installed" optional="true" name="Missing" />
+</content>

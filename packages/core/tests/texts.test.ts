@@ -90,6 +90,54 @@ describe('text files', () => {
   });
 });
 
+describe('text patches of extensions', () => {
+  const patching = fileURLToPath(new URL('./fixtures/patching', import.meta.url));
+  const patched = loadTexts(unpacked, { extensionFolders: [patching] });
+  const shown = (page: number, id: number): string | undefined => patched.pick(page, id, '44')?.text;
+
+  it('applies the patches in load order: a dependency before the extension that needs it', () => {
+    expect(textFolders(unpacked, [patching]).map((folder) => path.basename(path.dirname(folder)))).toEqual(['unpacked', 'z_base', 'a_dependent']);
+    expect(shown(1001, 1)).toBe('Dependent hull');
+    expect(patched.texts(1001, 1).map((text) => `${text.language}: ${text.text}`)).toEqual(['49: Hülle', '44: Dependent hull']);
+    expect(shown(90003, 1)).toBe('From the base');
+  });
+
+  it('adds texts to a page and pages to the language, also as siblings', () => {
+    expect(shown(1001, 100)).toBe('Added to a game page');
+    expect(shown(1001, 101)).toBe('Added after a text');
+    expect(shown(90002, 1)).toBe('A page before another');
+    expect(patched.page(90002)?.title).toBe('Sibling page');
+  });
+
+  it('replaces and removes texts and their text', () => {
+    expect(shown(1001, 5)).toBe('Replaced whole');
+    expect(shown(1001, 4)).toBe('Found with // and double quotes');
+    expect(shown(1001, 6)).toBe('');
+    expect(patched.has(1002, 10)).toBe(false);
+    expect(patched.hasPage(1002)).toBe(false);
+    expect(patched.page(1001)?.title).toBe('Interface');
+    const replaced = patched.pick(1001, 1, '44');
+    expect(path.basename(path.dirname(path.dirname(replaced?.file ?? '')))).toBe('a_dependent');
+    expect(replaced).toMatchObject({ line: 3, character: 2 });
+  });
+
+  it('lists the patches it cannot apply', () => {
+    expect(patched.problems.map((problem) => problem.slice(problem.indexOf('0001-l044.xml')))).toEqual([
+      `0001-l044.xml:24: <add sel="/language/page[@id='1001']/t[@id='3']"> is not applied: a text holds no elements`,
+      `0001-l044.xml:27: <replace sel="/language/page[@id='1001']/t[2]"> is not applied: only the language, a page and a text addressed by @id are understood`,
+    ]);
+  });
+
+  it('keeps a file where it was read when an editor replaces it', () => {
+    const database = loadTexts(unpacked, { extensionFolders: [patching] });
+    const dependent = path.join(patching, 'a_dependent', 't', '0001-l044.xml');
+    database.setFile(dependent, '<diff><add sel="/language/page[@id=\'1001\']"><t id="200">New</t></add></diff>');
+    expect(database.pick(1001, 1, '44')?.text).toBe('Base hull');
+    expect(database.has(1001, 200)).toBe(true);
+    expect(database.problems).toEqual([]);
+  });
+});
+
 describe('text references', () => {
   it('finds every reference in a value', () => {
     expect(textReferencesIn("'{1001,1}' + {1001, 2} + { 20101 , 3 } + {1001,$x}")).toEqual([

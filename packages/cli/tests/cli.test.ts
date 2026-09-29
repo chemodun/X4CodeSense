@@ -77,7 +77,8 @@ afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe('x4-script-check', () => {
+// Each test starts the checker, which reads the schemas; under a full parallel run that takes seconds.
+describe('x4-script-check', { timeout: 30_000 }, () => {
   it('passes a clean extension and says that schemas were not used', async () => {
     const result = await run(extension);
     expect(result.code).toBe(0);

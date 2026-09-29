@@ -16,7 +16,8 @@ function xmlFilesIn(folder: string): string[] {
     .map((name) => path.join(folder, name));
 }
 
-describe.skipIf(!extracted)('schema validation on the vanilla corpus', () => {
+// Whole-corpus runs share the machine with the other corpus gates: time is checked by the tests, not the runner.
+describe.skipIf(!extracted)('schema validation on the vanilla corpus', { timeout: 60_000 }, () => {
   const root = extracted ?? '';
   let schemas: SchemaSet;
 

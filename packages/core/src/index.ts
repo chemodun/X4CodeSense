@@ -20,6 +20,7 @@ export * from './variables/variables';
 export * from './variables/validateVariables';
 export * from './names/namedItems';
 export * from './names/validateNames';
+export * from './extensions/extensions';
 export * from './texts/textDatabase';
 export * from './texts/validateTexts';
 export * from './gameData';

@@ -6,10 +6,10 @@
  */
 import { build } from 'esbuild';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   CompletionRequest,
@@ -18,6 +18,7 @@ import {
   DefinitionRequest,
   DidChangeConfigurationNotification,
   DidChangeTextDocumentNotification,
+  DidChangeWorkspaceFoldersNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   ExitNotification,
@@ -104,7 +105,7 @@ beforeAll(async () => {
   const result = await connection.sendRequest(InitializeRequest.type, {
     processId: process.pid,
     rootUri: null,
-    capabilities: { workspace: { configuration: true }, textDocument: { completion: { completionItem: { snippetSupport: true } } } },
+    capabilities: { workspace: { configuration: true, workspaceFolders: true }, textDocument: { completion: { completionItem: { snippetSupport: true } } } },
   });
   expect(result.capabilities.textDocumentSync).toBe(TextDocumentSyncKind.Incremental);
   expect(result.capabilities.completionProvider?.triggerCharacters).toContain('<');
@@ -392,6 +393,43 @@ describe('texts', () => {
       position: { line: 4, character: scriptLines[4].indexOf('{1001,1}') + 2 },
     });
     expect(hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '').toContain('Hull');
+  });
+
+  it('reads the workspace mod, and its neighbours when extensionsFolder is ..', async () => {
+    const mods = path.join(workDir, 'mods');
+    const mine = path.join(mods, 'mine');
+    for (const [folder, page] of [
+      [mine, 91000],
+      [path.join(mods, 'other'), 91001],
+    ] as const) {
+      mkdirSync(path.join(folder, 't'), { recursive: true });
+      writeFileSync(path.join(folder, 't', '0001-l044.xml'), `<language><page id="${page}"><t id="1">Text</t></page></language>`);
+    }
+    const workspace = { uri: pathToFileURL(mine).toString(), name: 'mine' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+
+    const uri = pathToFileURL(path.join(mine, 'md', 'Mine.xml')).toString();
+    const lines = [...scriptLines];
+    lines[4] = lines[4].replace('{1001,1} + {1001,50}', '{91000,1} + {91001,1}');
+    // The workspace is the mod: its own text resolves, the neighbour's does not.
+    expect(summarize(await open(uri, lines.join('\n')))).toEqual([`5:${lines[4].indexOf('{91001,1}') + 1} text-undefined`]);
+
+    clientSettings.extensionsFolder = '..';
+    const withNeighbours = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    expect(summarize(await withNeighbours)).toEqual([]);
+
+    clientSettings.extensionsFolder = '';
+    const restored = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    expect(summarize(await restored)).toHaveLength(1);
+    // Clean up, and wait until the server has published everything that causes, so no later test sees it.
+    const reanalysed = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+    await reanalysed;
+    const closed = nextDiagnostics(uri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    expect((await closed).diagnostics).toEqual([]);
   });
 
   it('follows a text file while it is edited, and forgets unsaved texts on close', async () => {

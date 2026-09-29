@@ -56,7 +56,9 @@ export function loadGameData(unpackedFolder: string, textOptions: TextLoadOption
     }
     return Location.create(document.uri, Range.create(document.positionAt(location.start), document.positionAt(location.end)));
   };
-  const data: GameData = { folder: unpackedFolder, schemas, problems, locationOf, texts: loadTexts(unpackedFolder, textOptions) };
+  const gameTexts = loadTexts(unpackedFolder, textOptions);
+  problems.push(...gameTexts.problems);
+  const data: GameData = { folder: unpackedFolder, schemas, problems, locationOf, texts: gameTexts };
   if (properties) {
     data.properties = properties;
   }

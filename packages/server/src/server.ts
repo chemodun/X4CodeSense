@@ -67,7 +67,7 @@ let hasConfigurationCapability = false;
 let snippetSupport = false;
 let workspaceFolderSupport = false;
 let game: GameData | undefined;
-/** Workspace folders on disk: their texts are read like those of the extensions folder. */
+/** Workspace folders on disk: extensions themselves or holders of extensions, and the base of a relative `extensionsFolder`. */
 let workspaceFolders: string[] = [];
 /** What the loaded texts were read with, so they are read again only when that changes. */
 let textSources: string | undefined;
@@ -156,9 +156,28 @@ function refreshGameData(): void {
   }
 }
 
-/** Which text files to read: the game's, the extensions folder's and the workspace folders', in the configured languages. */
+/**
+ * The folders that hold the extensions scripts and texts may refer to, besides the game's own. The
+ * `extensionsFolder` setting is resolved against each workspace folder: empty or `.` is the workspace
+ * folder itself (a workspace of several mods, or of one), `..` the folder above it (one workspace per
+ * mod, the mods side by side); an absolute path is taken as is. The workspace folders always count.
+ * Each folder may be an extension or hold extensions; see `findExtensions`.
+ */
+function extensionFolders(): string[] {
+  const setting = settings.extensionsFolder.trim();
+  const folders: string[] = [];
+  if (path.isAbsolute(setting)) {
+    folders.push(setting);
+  } else if (setting !== '' && setting !== '.') {
+    folders.push(...workspaceFolders.map((folder) => path.resolve(folder, setting)));
+  }
+  folders.push(...workspaceFolders);
+  return folders;
+}
+
+/** Which text files to read: the game's and those of the extension folders, in the configured languages. */
 function textOptions(): TextLoadOptions {
-  const options: TextLoadOptions = { extensionFolders: [settings.extensionsFolder.trim(), ...workspaceFolders].filter((folder) => folder !== '') };
+  const options: TextLoadOptions = { extensionFolders: extensionFolders() };
   if (settings.limitLanguageOutput) {
     options.languages = new Set([settings.languageNumber || '44', '44']);
   }
@@ -180,6 +199,10 @@ function refreshTexts(): void {
   textSources = sources;
   overlayOpenTextFiles();
   log(`loaded ${game.texts.textCount} texts from ${game.texts.fileCount} files in ${(performance.now() - started).toFixed(0)} ms`);
+  debug(`text folders, in load order: ${game.texts.folders.join(', ')}`);
+  for (const problem of game.texts.problems.slice(0, 50)) {
+    warn(problem);
+  }
 }
 
 /** How hover, definition and completion show texts. */

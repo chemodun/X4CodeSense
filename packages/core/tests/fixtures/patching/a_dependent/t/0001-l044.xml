@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test texts for X4CodeSense: every patch form text files use, and two that are not applied. -->
+<diff>
+  <replace sel="/language/page[@id='1001']/t[@id='1']/text()">Dependent hull</replace>
+  <add sel="/language/page[@id='1001']">
+    <t id="100">Added to a game page</t>
+  </add>
+  <add sel="/language/page[@id='1001']/t[@id='2']" pos="after">
+    <t id="101">Added after a text</t>
+  </add>
+  <add sel="/language/page[@id='1002']" pos="before">
+    <page id="90002" title="Sibling page">
+      <t id="1">A page before another</t>
+    </page>
+  </add>
+  <remove sel="/language/page[@id='1002']/t[@id='10']" />
+  <replace sel="/language/page[@id='1001']/t[@id='5']">
+    <t id="5">Replaced whole</t>
+  </replace>
+  <replace sel="//page[@id=&quot;1001&quot;]/t[@id=&quot;4&quot;]/text()">Found with // and double quotes</replace>
+  <remove sel="/language/page[@id='1001']/t[@id='6']/text()" />
+  <add sel="/language/page[@id='1001']" type="@voice">yes</add>
+  <replace sel="/language/page[@id='1001']/@title">Renamed</replace>
+  <add sel="/language/page[@id='1001']/t[@id='3']">
+    <t id="102">Inside a text</t>
+  </add>
+  <replace sel="/language/page[@id='1001']/t[2]">Second by position</replace>
+</diff>

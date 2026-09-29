@@ -134,7 +134,8 @@ function checkFiles(root: string, files: string[]): string[] {
   return failures;
 }
 
-describe.skipIf(!extracted)('XML scanner on the vanilla corpus', () => {
+// Whole-corpus runs share the machine with the other corpus gates: time is checked by the tests, not the runner.
+describe.skipIf(!extracted)('XML scanner on the vanilla corpus', { timeout: 60_000 }, () => {
   const root = extracted ?? '';
   for (const schema of scriptSchemas) {
     it(`matches the strict parser on every ${schema} file`, () => {

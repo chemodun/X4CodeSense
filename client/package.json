@@ -59,7 +59,7 @@
         "x4CodeSense.extensionsFolder": {
           "type": "string",
           "default": "",
-          "description": "Path to a folder with other extensions whose scripts and texts should be visible."
+          "description": "Where the other extensions are whose texts and scripts yours refer to. Relative to each workspace folder: empty or '.' is the workspace folder itself (a workspace of several mods, or of one mod), '..' the folder above it (one workspace per mod, the mods side by side). An absolute path is taken as is. The folder may be an extension or hold extensions; they are read in the order their content.xml dependencies give."
         },
         "x4CodeSense.languageNumber": {
           "type": "string",

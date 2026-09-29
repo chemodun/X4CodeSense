@@ -1,14 +1,21 @@
 /**
  * The game's texts. Each language has a file `t/0001-l<language>.xml` (also written `0001-L044.xml`);
  * `0001.xml` serves every language. A file holds `<page id="…">` elements with numbered `<t id="…">`
- * texts; an extension's file may instead be a `<diff>` that adds pages, which is read the same way.
- * Scripts and game data refer to a text as `{page, id}`, and some actions as `page="…" line="…"`.
+ * texts. Scripts and game data refer to a text as `{page, id}`, and some actions as `page="…" line="…"`.
+ *
+ * An extension's text file is either such a file, whose pages are added, or a `<diff>` that patches the
+ * texts of its language: `add` pages to the language or texts to a page (`pos="before|after"` makes
+ * them siblings of the target), `replace` a page, a text or a text's `text()`, `remove` a page or a
+ * text. Targets are the language, a page and a text addressed by `@id`, which is how text patches are
+ * written; any other `sel` is not applied and is listed in `problems`. Extensions are read in the order
+ * the game loads them (see `findExtensions`), and what is read later wins.
  *
  * A text may contain references to other texts, resolved when the game shows it; text in round
  * brackets is a comment the game hides, `\(` and `\)` are literal brackets and `\n` is a line break.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
+import { findExtensions } from '../extensions/extensions';
 import { attributeNamed, decodeAttributeValue, parseXml, type XmlElement } from '../xml/xmlStructure';
 
 /** One text in one language. */
@@ -21,7 +28,7 @@ export interface GameText {
   text: string;
   /** Absolute path of the file. */
   file: string;
-  /** Zero-based position of the `<t>` start tag. */
+  /** Zero-based position of the `<t>` start tag, or of the patch that set the text. */
   line: number;
   character: number;
 }
@@ -32,10 +39,20 @@ export interface TextPage {
   description?: string;
 }
 
+/** What a file does to the texts of its language, in order. */
+type TextChange = { kind: 'add'; texts: GameText[]; pages: TextPage[] } | { kind: 'remove'; page: number; id?: number };
+
 interface TextFile {
   language: string;
-  texts: GameText[];
-  pages: TextPage[];
+  changes: TextChange[];
+  problems: string[];
+}
+
+/** A patch target: the language, one of its pages, or a text of a page; `node` when the patch addresses its text or an attribute. */
+interface TextTarget {
+  page?: number;
+  id?: number;
+  node?: 'text' | 'attribute';
 }
 
 /** A reference to a text, with its offsets in the searched string. */
@@ -89,12 +106,17 @@ export function textReferenceAt(text: string, offset: number): TextReference | u
   return undefined;
 }
 
-/** Zero-based line and character of offsets that are visited in increasing order. */
+/** Zero-based line and character of offsets; fastest when they are asked for in increasing order. */
 function positionCounter(text: string): (offset: number) => { line: number; character: number } {
   let line = 0;
   let lineStart = 0;
   let scanned = 0;
   return (offset) => {
+    if (offset < scanned) {
+      line = 0;
+      lineStart = 0;
+      scanned = 0;
+    }
     for (; scanned < offset; scanned++) {
       if (text.charCodeAt(scanned) === 10) {
         line++;
@@ -113,43 +135,176 @@ function contentOf(text: string, element: XmlElement): string {
   return decodeAttributeValue(text.slice(element.startTagEnd, element.endTag.start), []);
 }
 
-function parseTextFile(file: string, text: string, language: string): TextFile {
-  const structure = parseXml(text);
-  const position = positionCounter(text);
-  const texts: GameText[] = [];
-  const pages: TextPage[] = [];
-  for (const element of structure.elements) {
-    if (element.name === 'page') {
-      const id = Number(attributeNamed(element, 'id')?.value);
-      if (Number.isInteger(id)) {
-        const page: TextPage = { id };
-        const title = attributeNamed(element, 'title')?.value;
-        const description = attributeNamed(element, 'descr')?.value;
-        if (title) {
-          page.title = title;
-        }
-        if (description && description !== '0') {
-          page.description = description;
-        }
-        pages.push(page);
-      }
-      continue;
-    }
-    if (element.name !== 't' || element.parent?.name !== 'page') {
-      continue;
-    }
-    const page = Number(attributeNamed(element.parent, 'id')?.value);
-    const id = Number(attributeNamed(element, 'id')?.value);
-    if (!Number.isInteger(page) || !Number.isInteger(id)) {
-      continue;
-    }
-    texts.push({ page, id, language, text: contentOf(text, element), file, ...position(element.start) });
+function integerAttribute(element: XmlElement, name: string): number | undefined {
+  const value = attributeNamed(element, name)?.value.trim();
+  return value !== undefined && /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+/**
+ * The target of a patch `sel`: `/language`, `/language/page[@id='N']`, `/language/page[@id='N']/t[@id='M']`,
+ * the same searched with `//`, and `/text()` or `/@attribute` after a text or a page. Undefined for others.
+ */
+function parseTarget(sel: string): TextTarget | undefined {
+  let rest = sel.replace(/\s+/g, '');
+  const language = /^\/\/?language/.exec(rest);
+  if (language) {
+    rest = rest.slice(language[0].length);
+  } else if (!rest.startsWith('//')) {
+    return undefined;
   }
-  return { language, texts, pages };
+  const match = /^(?:\/\/?page\[@id=(?:'(\d+)'|"(\d+)")\])?(?:\/\/?t\[@id=(?:'(\d+)'|"(\d+)")\])?(\/text\(\)|\/@[\w.-]+)?$/.exec(rest);
+  if (!match) {
+    return undefined;
+  }
+  const page = match[1] ?? match[2];
+  const id = match[3] ?? match[4];
+  if ((id !== undefined && page === undefined) || (!language && page === undefined)) {
+    return undefined;
+  }
+  const target: TextTarget = {};
+  if (page !== undefined) {
+    target.page = Number(page);
+  }
+  if (id !== undefined) {
+    target.id = Number(id);
+  }
+  if (match[5]) {
+    target.node = match[5] === '/text()' ? 'text' : 'attribute';
+  }
+  return target;
+}
+
+class TextFileReader {
+  readonly changes: TextChange[] = [];
+  readonly problems: string[] = [];
+  private readonly position: (offset: number) => { line: number; character: number };
+
+  constructor(
+    private readonly file: string,
+    private readonly text: string,
+    private readonly language: string
+  ) {
+    this.position = positionCounter(text);
+  }
+
+  private gameText(page: number, id: number, text: string, offset: number): GameText {
+    return { page, id, language: this.language, text, file: this.file, ...this.position(offset) };
+  }
+
+  /** The texts of `<t>` elements of a page. */
+  private textsOf(page: number, elements: readonly XmlElement[]): GameText[] {
+    const texts: GameText[] = [];
+    for (const element of elements) {
+      const id = element.name === 't' ? integerAttribute(element, 'id') : undefined;
+      if (id !== undefined) {
+        texts.push(this.gameText(page, id, contentOf(this.text, element), element.start));
+      }
+    }
+    return texts;
+  }
+
+  /** Adds `<page>` elements with their texts. */
+  private addPages(elements: readonly XmlElement[]): void {
+    const change: TextChange = { kind: 'add', texts: [], pages: [] };
+    for (const element of elements) {
+      const id = element.name === 'page' ? integerAttribute(element, 'id') : undefined;
+      if (id === undefined) {
+        continue;
+      }
+      const page: TextPage = { id };
+      const title = attributeNamed(element, 'title')?.value;
+      const description = attributeNamed(element, 'descr')?.value;
+      if (title) {
+        page.title = title;
+      }
+      if (description && description !== '0') {
+        page.description = description;
+      }
+      change.pages.push(page);
+      change.texts.push(...this.textsOf(id, element.children));
+    }
+    this.changes.push(change);
+  }
+
+  read(): TextFile {
+    const structure = parseXml(this.text);
+    const root = structure.roots[0];
+    if (root?.name === 'diff') {
+      for (const operation of root.children) {
+        this.apply(operation);
+      }
+    } else {
+      // A language file, or anything else that holds pages.
+      this.addPages(structure.elements.filter((element) => element.name === 'page'));
+    }
+    return { language: this.language, changes: this.changes, problems: this.problems };
+  }
+
+  private apply(operation: XmlElement): void {
+    const sel = attributeNamed(operation, 'sel')?.value ?? '';
+    const where = `${this.file}:${this.position(operation.start).line + 1}`;
+    const skip = (why: string): void => {
+      this.problems.push(`${where}: <${operation.name} sel="${sel}"> is not applied: ${why}`);
+    };
+    if (operation.name !== 'add' && operation.name !== 'replace' && operation.name !== 'remove') {
+      skip('not a patch operation');
+      return;
+    }
+    const target = parseTarget(sel);
+    if (!target) {
+      skip('only the language, a page and a text addressed by @id are understood');
+      return;
+    }
+    if (target.node === 'attribute' || attributeNamed(operation, 'type')) {
+      // Attributes of pages and texts do not change what the texts say.
+      return;
+    }
+    const { page, id } = target;
+    switch (operation.name) {
+      case 'add': {
+        const pos = attributeNamed(operation, 'pos')?.value;
+        const sibling = pos === 'before' || pos === 'after';
+        if (target.node === 'text' || (id !== undefined && !sibling) || (page === undefined && sibling)) {
+          skip('a text holds no elements');
+        } else if (page === undefined || (sibling && id === undefined)) {
+          this.addPages(operation.children);
+        } else {
+          this.changes.push({ kind: 'add', texts: this.textsOf(page, operation.children), pages: [] });
+        }
+        return;
+      }
+      case 'replace':
+        if (page === undefined || (target.node === 'text' && id === undefined)) {
+          skip('only a page, a text or its text() can be replaced');
+        } else if (target.node === 'text' && id !== undefined) {
+          this.changes.push({ kind: 'remove', page, id });
+          this.changes.push({ kind: 'add', texts: [this.gameText(page, id, contentOf(this.text, operation), operation.start)], pages: [] });
+        } else if (id !== undefined) {
+          this.changes.push({ kind: 'remove', page, id });
+          this.changes.push({ kind: 'add', texts: this.textsOf(page, operation.children), pages: [] });
+        } else {
+          this.changes.push({ kind: 'remove', page });
+          this.addPages(operation.children);
+        }
+        return;
+      case 'remove':
+        if (page === undefined) {
+          skip('only a page or a text can be removed');
+        } else if (target.node === 'text' && id !== undefined) {
+          this.changes.push({ kind: 'remove', page, id });
+          this.changes.push({ kind: 'add', texts: [this.gameText(page, id, '', operation.start)], pages: [] });
+        } else if (target.node === 'text') {
+          skip('a page has no text of its own');
+        } else {
+          this.changes.push(id === undefined ? { kind: 'remove', page } : { kind: 'remove', page, id });
+        }
+        return;
+    }
+  }
 }
 
 export interface TextLoadOptions {
-  /** Extension folders: the `t` folder of each and of each folder inside is read after the game's. */
+  /** Extension folders: each counts as an extension and holds extensions in its subfolders; their `t` folders are read after the game's. */
   extensionFolders?: readonly string[];
   /** Only these languages, besides `0001.xml`; all when absent. */
   languages?: ReadonlySet<string>;
@@ -163,50 +318,32 @@ function isDirectory(folder: string): boolean {
   }
 }
 
-function subfolders(folder: string): string[] {
-  try {
-    return readdirSync(folder, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => path.join(folder, entry.name));
-  } catch {
-    return [];
-  }
-}
-
-/** The `t` folders of the game (with its bundled extensions) and of extension folders, in reading order, each once. */
+/** The `t` folders of the game and of its and the given extensions, in the order the game loads them. */
 export function textFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = []): string[] {
-  const candidates: string[] = [];
-  if (gameFolder) {
-    candidates.push(path.join(gameFolder, 't'), ...subfolders(path.join(gameFolder, 'extensions')).map((folder) => path.join(folder, 't')));
-  }
-  for (const folder of extensionFolders) {
-    candidates.push(path.join(folder, 't'), ...subfolders(folder).map((sub) => path.join(sub, 't')));
-  }
-  const seen = new Set<string>();
-  return candidates.filter((folder) => {
-    const key = path.resolve(folder).toLowerCase();
-    if (seen.has(key) || !isDirectory(folder)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
+  const candidates = gameFolder ? [path.join(gameFolder, 't')] : [];
+  candidates.push(...findExtensions(gameFolder, extensionFolders).map((extension) => path.join(extension.folder, 't')));
+  return candidates.filter(isDirectory);
 }
 
-/** Texts of every language, with lookups by page and id. Files read later override earlier ones. */
+/** Texts of every language, with lookups by page and id, built by applying the files in reading order. */
 export class TextDatabase {
   /** Language names by id, from the game's `libraries/languages.xml`. */
   readonly languageNames = new Map<string, string>();
+  /** The `t` folders `loadTexts` read, in order. */
+  readonly folders: string[] = [];
   private readonly files = new Map<string, TextFile>();
   private byPage: Map<number, Map<number, GameText[]>> | undefined;
   private pagesById: Map<number, TextPage> | undefined;
 
-  /** Adds or replaces a file; `language` defaults to the one its name tells. Returns false for a file that is no text file. */
+  /**
+   * Adds a file after the others, or replaces a file where it was read; `language` defaults to the one
+   * its name tells. Returns false for a file that is no text file.
+   */
   setFile(file: string, text: string, language = languageOfTextFile(path.basename(file))): boolean {
     if (language === undefined) {
       return false;
     }
-    this.files.set(path.resolve(file), parseTextFile(file, text, language));
+    this.files.set(path.resolve(file), new TextFileReader(file, text, language).read());
     this.byPage = undefined;
     this.pagesById = undefined;
     return true;
@@ -228,29 +365,41 @@ export class TextDatabase {
     return this.files.size;
   }
 
+  /** Patch operations that were not applied, with file and line. */
+  get problems(): string[] {
+    return [...this.files.values()].flatMap((file) => file.problems);
+  }
+
   private lookup(): Map<number, Map<number, GameText[]>> {
     if (!this.byPage) {
-      this.byPage = new Map();
-      this.pagesById = new Map();
+      const byPage = new Map<number, Map<number, GameText[]>>();
+      const pagesById = new Map<number, TextPage>();
       for (const file of this.files.values()) {
-        for (const page of file.pages) {
-          const known = this.pagesById.get(page.id);
-          this.pagesById.set(page.id, { ...known, ...page });
-        }
-        for (const text of file.texts) {
-          let ids = this.byPage.get(text.page);
-          if (!ids) {
-            ids = new Map();
-            this.byPage.set(text.page, ids);
+        for (const change of file.changes) {
+          if (change.kind === 'remove') {
+            removeTexts(byPage, change.page, change.id, file.language);
+            continue;
           }
-          const entries = ids.get(text.id);
-          if (entries) {
-            entries.push(text);
-          } else {
-            ids.set(text.id, [text]);
+          for (const page of change.pages) {
+            pagesById.set(page.id, { ...pagesById.get(page.id), ...page });
+          }
+          for (const text of change.texts) {
+            let ids = byPage.get(text.page);
+            if (!ids) {
+              ids = new Map();
+              byPage.set(text.page, ids);
+            }
+            const entries = ids.get(text.id);
+            if (entries) {
+              entries.push(text);
+            } else {
+              ids.set(text.id, [text]);
+            }
           }
         }
       }
+      this.byPage = byPage;
+      this.pagesById = pagesById;
     }
     return this.byPage;
   }
@@ -264,7 +413,7 @@ export class TextDatabase {
     return count;
   }
 
-  /** Every definition of a text, in every language, in reading order. */
+  /** Every definition of a text, in every language, in reading order; what a patch removed or replaced is gone. */
   texts(page: number, id: number): readonly GameText[] {
     return this.lookup().get(page)?.get(id) ?? [];
   }
@@ -352,6 +501,25 @@ export class TextDatabase {
   }
 }
 
+/** Removes the texts of one language from a page, or one text of it. */
+function removeTexts(byPage: Map<number, Map<number, GameText[]>>, page: number, id: number | undefined, language: string): void {
+  const ids = byPage.get(page);
+  if (!ids) {
+    return;
+  }
+  for (const textId of id === undefined ? [...ids.keys()] : [id]) {
+    const kept = (ids.get(textId) ?? []).filter((text) => text.language !== language);
+    if (kept.length > 0) {
+      ids.set(textId, kept);
+    } else {
+      ids.delete(textId);
+    }
+  }
+  if (ids.size === 0) {
+    byPage.delete(page);
+  }
+}
+
 function readLanguageNames(gameFolder: string, into: Map<string, string>): void {
   const file = path.join(gameFolder, 'libraries', 'languages.xml');
   if (!existsSync(file)) {
@@ -366,7 +534,7 @@ function readLanguageNames(gameFolder: string, into: Map<string, string>): void 
   }
 }
 
-/** Reads the text files of the game and of extension folders. Never throws; unreadable files are skipped. */
+/** Reads the text files of the game and of extension folders, in load order. Never throws; unreadable files are skipped. */
 export function loadTexts(gameFolder: string | undefined, options: TextLoadOptions = {}): TextDatabase {
   const database = new TextDatabase();
   if (gameFolder) {
@@ -379,6 +547,7 @@ export function loadTexts(gameFolder: string | undefined, options: TextLoadOptio
     } catch {
       continue;
     }
+    database.folders.push(folder);
     for (const name of names) {
       const language = languageOfTextFile(name);
       if (language === undefined || (options.languages && language !== '*' && !options.languages.has(language))) {
