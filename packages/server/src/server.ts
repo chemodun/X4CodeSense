@@ -7,6 +7,7 @@ import {
   FileChangeType,
   ProposedFeatures,
   ResponseError,
+  SemanticTokensBuilder,
   TextDocuments,
   TextDocumentSyncKind,
   type CodeAction,
@@ -17,6 +18,9 @@ import {
   type InitializeParams,
   type InitializeResult,
   type Location,
+  type Range,
+  type SemanticTokens,
+  type SemanticTokensDelta,
   type WorkDoneProgressServerReporter,
   type WorkspaceEdit,
 } from 'vscode-languageserver/node';
@@ -37,6 +41,7 @@ import {
   loadTexts,
   parseXml,
   PatchComparisonRequestMethod,
+  positionTokens,
   prepareRenameAt,
   quickFixes,
   referencesAt,
@@ -44,6 +49,8 @@ import {
   ScriptIndex,
   scriptFiles,
   scriptFolders,
+  semanticTokens,
+  semanticTokensLegend,
   sourcesOf,
   StatusNotificationMethod,
   type AnalysisContext,
@@ -89,6 +96,7 @@ let settings: X4CodeSenseSettings = defaultSettings;
 let hasConfigurationCapability = false;
 let snippetSupport = false;
 let workspaceFolderSupport = false;
+let semanticTokensRefreshSupport = false;
 let game: GameData | undefined;
 /** Workspace folders on disk: extensions themselves or holders of extensions, and the base of a relative `extensionsFolder`. */
 let workspaceFolders: string[] = [];
@@ -109,6 +117,8 @@ let sentStatus: string | undefined;
 
 /** The latest analysis of each open document. */
 const analysisByUri = new Map<string, DocumentAnalysis>();
+/** The semantic tokens builder of each open document: it keeps the last result, which a delta request refers to. */
+const tokenBuilders = new Map<string, SemanticTokensBuilder>();
 
 function log(message: string): void {
   connection.console.log(`[X4CodeSense] ${message}`);
@@ -172,6 +182,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   hasConfigurationCapability = params.capabilities.workspace?.configuration === true;
   snippetSupport = params.capabilities.textDocument?.completion?.completionItem?.snippetSupport === true;
   workspaceFolderSupport = params.capabilities.workspace?.workspaceFolders === true;
+  semanticTokensRefreshSupport = params.capabilities.workspace?.semanticTokens?.refreshSupport === true;
   const folders = params.workspaceFolders?.map((folder) => folder.uri) ?? (params.rootUri ? [params.rootUri] : []);
   workspaceFolders = folders.map(filePathOf).filter((folder): folder is string => folder !== undefined);
   return {
@@ -185,6 +196,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       renameProvider: { prepareProvider: true },
       documentSymbolProvider: { label: 'X4CodeSense' },
       codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+      semanticTokensProvider: { legend: semanticTokensLegend, full: { delta: true }, range: true },
     },
     serverInfo: {
       name: 'X4CodeSense language server',
@@ -509,6 +521,14 @@ function reanalyzeAll(except?: string): void {
       analyze(document);
     }
   }
+  refreshSemanticTokens();
+}
+
+/** Asks the client for the semantic tokens of the open documents again: their analyses changed, not only their text. */
+function refreshSemanticTokens(): void {
+  if (semanticTokensRefreshSupport) {
+    connection.languages.semanticTokens.refresh().catch((error: unknown) => debug(`semantic tokens refresh: ${String(error)}`));
+  }
 }
 
 function analysisContext(): AnalysisContext {
@@ -553,11 +573,16 @@ function analyze(document: TextDocument): void {
 function reanalyzePatchesOf(file: string, except?: string): void {
   const key = path.resolve(file).toLowerCase();
   const affected = (candidate: string | undefined): boolean => candidate !== undefined && path.resolve(candidate).toLowerCase() === key;
+  let reanalyzed = false;
   for (const document of documents.all()) {
     const patch = document.uri === except ? undefined : analysisByUri.get(document.uri)?.patch;
     if (patch && (affected(patch.target.file) || patch.earlier.some(affected))) {
       analyze(document);
+      reanalyzed = true;
     }
+  }
+  if (reanalyzed) {
+    refreshSemanticTokens();
   }
 }
 
@@ -574,6 +599,7 @@ documents.onDidChangeContent((event) => {
 
 documents.onDidClose((event) => {
   analysisByUri.delete(event.document.uri);
+  tokenBuilders.delete(event.document.uri);
   void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
   // Back to the file on disk, which may not have the unsaved changes.
   const file = filePathOf(event.document.uri);
@@ -656,6 +682,53 @@ connection.onCodeAction((params): CodeAction[] => {
   const actions = quickFixes(analysis, params.context.diagnostics, game);
   debug(`${params.textDocument.uri}: ${actions.length} quick fix(es) in ${(performance.now() - started).toFixed(1)} ms`);
   return actions;
+});
+
+/** Fills a builder with the semantic tokens of an open document; false for a document other XML tooling colours. */
+function buildTokens(uri: string, builder: SemanticTokensBuilder, range?: Range): boolean {
+  const analysis = analysisByUri.get(uri);
+  const document = documents.get(uri);
+  if (!analysis || !document) {
+    return false;
+  }
+  const started = performance.now();
+  const tokens = semanticTokens(analysis, game, range && { start: document.offsetAt(range.start), end: document.offsetAt(range.end) });
+  if (!tokens) {
+    return false;
+  }
+  for (const token of positionTokens(document, tokens)) {
+    builder.push(token.line, token.character, token.length, token.tokenType, token.tokenModifiers);
+  }
+  debug(`${uri}: ${tokens.length} semantic token(s)${range ? ' in a range' : ''} in ${(performance.now() - started).toFixed(1)} ms`);
+  return true;
+}
+
+connection.languages.semanticTokens.on((params): SemanticTokens | null => {
+  const uri = params.textDocument.uri;
+  const builder = new SemanticTokensBuilder();
+  if (!buildTokens(uri, builder)) {
+    tokenBuilders.delete(uri);
+    return null;
+  }
+  tokenBuilders.set(uri, builder);
+  return builder.build();
+});
+
+connection.languages.semanticTokens.onDelta((params): SemanticTokens | SemanticTokensDelta | null => {
+  const uri = params.textDocument.uri;
+  const builder = tokenBuilders.get(uri) ?? new SemanticTokensBuilder();
+  builder.previousResult(params.previousResultId);
+  if (!buildTokens(uri, builder)) {
+    tokenBuilders.delete(uri);
+    return null;
+  }
+  tokenBuilders.set(uri, builder);
+  return builder.buildEdits();
+});
+
+connection.languages.semanticTokens.onRange((params): SemanticTokens | null => {
+  const builder = new SemanticTokensBuilder();
+  return buildTokens(params.textDocument.uri, builder, params.range) ? builder.build() : null;
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {

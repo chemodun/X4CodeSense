@@ -34,6 +34,17 @@ All of it keeps working while a tag, an attribute or a quote is still being type
 - Find all references and rename, across scripts: variables, labels, cues and libraries (also as `md.Script.Cue` in other scripts and in the paths of patches), Mission Director script names, and interrupt library items. A rename edits the files of your workspace only; when the game or an extension outside the workspace uses the same name, it is refused, with the reason.
 - The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path.
 
+### Semantic highlighting
+
+VS Code colours XML attribute values as strings, so a whole expression is one colour. X4CodeSense colours what an expression holds, as the analysis understands it:
+
+- variables (`$ship`), the game's keywords (`this`, `player`, `event`, `faction`, `md`), and properties (`$ship.owner`);
+- the values of lookups (`faction.argon`, `class.ship`, `isclass.ship`) and the ids an attribute takes as they are, such as a macro or a sound;
+- cues and libraries, also in `md.Script.Cue`, labels and interrupt library items, where they are defined and where they are used;
+- numbers with their units (`5km`, `10s`), strings, `if`, `then`, `else`, and the operators and punctuation.
+
+In a patch, what an `add` or `replace` brings in is coloured as where it lands. The colours come from your theme, as for other languages. Plain values such as `operation="add"` keep the colour of XML strings.
+
 ### Quick fixes
 
 The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item or variable is changed to the known names closest in spelling.
@@ -64,7 +75,7 @@ npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
 - Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
 - XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
 - AI scripts, Mission Director scripts and their patches are checked. Text files are read for the texts; other files of the game, such as Lua scripts or the `libraries`, are not checked.
-- No semantic highlighting yet: the colours are those of VS Code's XML support.
+- Semantic highlighting needs the extracted game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
 
 ## 🚀 Getting started
 
@@ -136,6 +147,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [0.2.0] - unreleased
+
+- Added
+  - Semantic highlighting of the expressions in AI scripts, Mission Director scripts and what patches bring in: variables, keywords, properties, lookup values, cues, labels, interrupt library items, numbers, strings and operators.
 
 ### [0.1.0] - 2026-09-29
 

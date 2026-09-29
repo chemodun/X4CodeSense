@@ -32,6 +32,10 @@ import {
   ReferencesRequest,
   RegistrationRequest,
   RenameRequest,
+  SemanticTokensDeltaRequest,
+  SemanticTokensRangeRequest,
+  SemanticTokensRefreshRequest,
+  SemanticTokensRequest,
   ShutdownRequest,
   StreamMessageReader,
   StreamMessageWriter,
@@ -48,6 +52,7 @@ import {
   DocumentInfoRequestMethod,
   loadGameData,
   PatchComparisonRequestMethod,
+  semanticTokensLegend,
   StatusNotificationMethod,
   type DocumentInfoResult,
   type PatchComparisonResult,
@@ -78,6 +83,8 @@ const statuses: ServerStatus[] = [];
 const progress: string[] = [];
 /** Waiting for a status: each returns true once it took one. The connection has one handler per method. */
 const statusWaiters = new Set<(status: ServerStatus) => boolean>();
+/** How often the server asked for the semantic tokens of the open documents again. */
+let semanticTokensRefreshes = 0;
 
 async function documentInfo(uri: string): Promise<DocumentInfoResult> {
   return connection.sendRequest<DocumentInfoResult>(DocumentInfoRequestMethod, { uri });
@@ -157,12 +164,15 @@ beforeAll(async () => {
   connection.onRequest(WorkDoneProgressCreateRequest.type, ({ token }) => {
     connection.onProgress(WorkDoneProgress.type, token, (value) => progress.push(value.kind === 'end' ? 'end' : `${value.kind}: ${value.message}`));
   });
+  connection.onRequest(SemanticTokensRefreshRequest.type, () => {
+    semanticTokensRefreshes++;
+  });
   connection.listen();
   const result = await connection.sendRequest(InitializeRequest.type, {
     processId: process.pid,
     rootUri: null,
     capabilities: {
-      workspace: { configuration: true, workspaceFolders: true },
+      workspace: { configuration: true, workspaceFolders: true, semanticTokens: { refreshSupport: true } },
       textDocument: { completion: { completionItem: { snippetSupport: true } } },
       window: { workDoneProgress: true },
     },
@@ -175,6 +185,7 @@ beforeAll(async () => {
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
   expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
   expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix'] });
+  expect(result.capabilities.semanticTokensProvider).toEqual({ legend: semanticTokensLegend, full: { delta: true }, range: true });
   await connection.sendNotification(InitializedNotification.type, {});
 }, 30_000);
 
@@ -517,6 +528,88 @@ describe('quick fixes', () => {
     expect(actions.map((action) => `${action.kind} ${action.title}`)).toEqual(["quickfix Change to 'set_value'"]);
     expect(actions[0].edit?.changes?.[uri]).toEqual([{ range: diagnostic!.range, newText: 'set_value' }]);
     expect(await connection.sendRequest(CodeActionRequest.type, { ...request, context: { ...request.context, only: ['refactor'] } })).toEqual([]);
+  });
+});
+
+describe('semantic tokens', () => {
+  /** `line text=type[.modifier]` of each token of the protocol's relative encoding; the text is cut from its line. */
+  function decode(data: readonly number[], lines: readonly string[]): string[] {
+    const result: string[] = [];
+    let line = 0;
+    let character = 0;
+    for (let index = 0; index < data.length; index += 5) {
+      character = data[index] === 0 ? character + data[index + 1] : data[index + 1];
+      line += data[index];
+      const modifiers = semanticTokensLegend.tokenModifiers.filter((_modifier, bit) => (data[index + 4] & (1 << bit)) !== 0);
+      const text = lines[line].slice(character, character + data[index + 2]);
+      result.push(`${line} ${text}=${[semanticTokensLegend.tokenTypes[data[index + 3]], ...modifiers].join('.')}`);
+    }
+    return result;
+  }
+
+  it('classifies expressions, follows an edit with a delta, answers a range, and leaves other XML to other tooling', async () => {
+    const uri = 'file:///mod/md/Tokens.xml';
+    const lines = [
+      '<mdscript name="T">',
+      '  <cues>',
+      '    <cue name="A">',
+      '      <actions>',
+      '        <set_value name="$x" exact="player.money + 1"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    await open(uri, lines.join('\n'));
+    const full = await connection.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+    expect(decode(full?.data ?? [], lines)).toEqual([
+      '0 T=namespace.declaration',
+      '2 A=namespace.declaration',
+      '4 $x=variable.modification',
+      '4 player=keyword',
+      '4 .=operator',
+      '4 money=property',
+      '4 +=operator',
+      '4 1=number',
+    ]);
+
+    // `1` becomes `$x * 2`: the delta against the first result gives the tokens of the new text.
+    const character = lines[4].indexOf('1"');
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri, version: 2 },
+      contentChanges: [{ range: { start: { line: 4, character }, end: { line: 4, character: character + 1 } }, text: '$x * 2' }],
+    });
+    const changed = [...lines];
+    changed[4] = `${lines[4].slice(0, character)}$x * 2${lines[4].slice(character + 1)}`;
+    const delta = await connection.sendRequest(SemanticTokensDeltaRequest.type, { textDocument: { uri }, previousResultId: full?.resultId ?? '' });
+    expect(delta && 'edits' in delta).toBe(true);
+    const data = [...(full?.data ?? [])];
+    for (const edit of delta && 'edits' in delta ? [...delta.edits].sort((a, b) => b.start - a.start) : []) {
+      data.splice(edit.start, edit.deleteCount, ...(edit.data ?? []));
+    }
+    expect(decode(data, changed).slice(-4)).toEqual(['4 +=operator', '4 $x=variable', '4 *=operator', '4 2=number']);
+    const fresh = await connection.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+    expect(fresh?.data).toEqual(data);
+    // A result the server no longer has: the whole tokens.
+    const unknown = await connection.sendRequest(SemanticTokensDeltaRequest.type, { textDocument: { uri }, previousResultId: 'gone' });
+    expect(unknown && 'data' in unknown ? unknown.data : undefined).toEqual(fresh?.data);
+
+    const range = await connection.sendRequest(SemanticTokensRangeRequest.type, {
+      textDocument: { uri },
+      range: { start: { line: 2, character: 0 }, end: { line: 3, character: 0 } },
+    });
+    expect(decode(range?.data ?? [], changed)).toEqual(['2 A=namespace.declaration']);
+
+    const otherUri = 'file:///mod/assets/tokens.xml';
+    await open(otherUri, '<macros>\n  <macro name="m" class="ship_s"/>\n</macros>\n');
+    expect(await connection.sendRequest(SemanticTokensRequest.type, { textDocument: { uri: otherUri } })).toBeNull();
+  });
+
+  it('asks the client for the tokens again when the analyses change without an edit', async () => {
+    const before = semanticTokensRefreshes;
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await vi.waitFor(() => expect(semanticTokensRefreshes).toBeGreaterThan(before));
   });
 });
 

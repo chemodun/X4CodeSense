@@ -2,7 +2,7 @@
 
 Language support for **X4: Foundations** scripts (AI scripts and Mission Director scripts), built as a Language Server Protocol server with a thin Visual Studio Code client and a command-line checker.
 
-Status: preview, 0.x. The npm packages are on npm; the extension's `.vsix` is attached to its GitHub releases and is not on the Visual Studio Marketplace yet. The Marketplace-facing description lives in [client/README.md](client/README.md).
+Status: preview, 0.x. The npm packages are on npm; the extension is on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=X4DevTools.x4codesense), and its `.vsix` is also attached to the GitHub releases. The Marketplace-facing description lives in [client/README.md](client/README.md).
 
 ## Layout
 
