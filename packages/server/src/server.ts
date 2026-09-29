@@ -1,4 +1,5 @@
 import {
+  CodeActionKind,
   createConnection,
   DidChangeConfigurationNotification,
   ErrorCodes,
@@ -7,6 +8,7 @@ import {
   ResponseError,
   TextDocuments,
   TextDocumentSyncKind,
+  type CodeAction,
   type CompletionItem,
   type CompletionList,
   type DocumentSymbol,
@@ -32,6 +34,7 @@ import {
   loadTexts,
   parseXml,
   prepareRenameAt,
+  quickFixes,
   referencesAt,
   renameAt,
   ScriptIndex,
@@ -136,6 +139,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
       documentSymbolProvider: { label: 'X4CodeSense' },
+      codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
     },
     serverInfo: {
       name: 'X4CodeSense language server',
@@ -535,6 +539,19 @@ connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
 connection.onDocumentSymbol((params): DocumentSymbol[] | null => {
   const analysis = analysisByUri.get(params.textDocument.uri);
   return analysis?.structure ? documentSymbols(analysis) : null;
+});
+
+// Quick fixes for the diagnostics the editor sends along, as far as the current analysis still has them.
+connection.onCodeAction((params): CodeAction[] => {
+  const analysis = analysisByUri.get(params.textDocument.uri);
+  const only = params.context.only;
+  if (!analysis || (only && !only.some((kind) => CodeActionKind.QuickFix.startsWith(kind)))) {
+    return [];
+  }
+  const started = performance.now();
+  const actions = quickFixes(analysis, params.context.diagnostics, game);
+  debug(`${params.textDocument.uri}: ${actions.length} quick fix(es) in ${(performance.now() - started).toFixed(1)} ms`);
+  return actions;
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {

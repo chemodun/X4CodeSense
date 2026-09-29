@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  CodeActionRequest,
   CompletionRequest,
   ConfigurationRequest,
   createProtocolConnection,
@@ -35,6 +36,7 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
+  type CodeAction,
   type DocumentSymbol,
   type Location,
   type ProtocolConnection,
@@ -124,6 +126,7 @@ beforeAll(async () => {
   expect(result.capabilities.referencesProvider).toBe(true);
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
   expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
+  expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix'] });
   await connection.sendNotification(InitializedNotification.type, {});
 }, 30_000);
 
@@ -405,6 +408,32 @@ describe('outline', () => {
       textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<macros>\n  <macro name="m"/>\n</macros>\n' },
     });
     expect(await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri: otherUri } })).toBeNull();
+  });
+});
+
+describe('quick fixes', () => {
+  it('fixes the diagnostics the request sends along, and only when quick fixes are asked for', async () => {
+    const uri = 'file:///mod/md/Fixes.xml';
+    const lines = [
+      '<mdscript name="F">',
+      '  <cues>',
+      '    <cue name="A">',
+      '      <actions>',
+      '        <set_valeu name="$x" exact="1"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    const published = await open(uri, lines.join('\n'));
+    const diagnostic = published.diagnostics.find((candidate) => candidate.code === 'unknown-element');
+    expect(diagnostic).toBeDefined();
+    const request = { textDocument: { uri }, range: diagnostic!.range, context: { diagnostics: [diagnostic!] } };
+    const actions = (await connection.sendRequest(CodeActionRequest.type, request)) as CodeAction[];
+    expect(actions.map((action) => `${action.kind} ${action.title}`)).toEqual(["quickfix Change to 'set_value'"]);
+    expect(actions[0].edit?.changes?.[uri]).toEqual([{ range: diagnostic!.range, newText: 'set_value' }]);
+    expect(await connection.sendRequest(CodeActionRequest.type, { ...request, context: { ...request.context, only: ['refactor'] } })).toEqual([]);
   });
 });
 
