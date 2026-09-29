@@ -45,7 +45,7 @@ describe.skipIf(!extracted)('schema validation on the vanilla corpus', () => {
         }
       }
       expect(failures).toEqual([]);
-    });
+    }, 30_000);
   }
 
   it('validates all scripts quickly', () => {

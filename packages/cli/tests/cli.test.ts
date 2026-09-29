@@ -120,7 +120,7 @@ describe('x4-script-check', () => {
       expect(lines(result)).toEqual([
         `${invalid}:3:19: Unknown attribute 'bogus' in 'cue' [unknown-attribute]`,
         `${invalid}:4:17: Missing required attribute 'name' in 'set_value' [missing-required-attribute]`,
-        `${invalid}:5:8: Element 'conditions' is not allowed after 'actions' in 'cue'. Expected 'cues' [invalid-child-element]`,
+        `${invalid}:5:8: Element 'conditions' is not allowed after 'actions' in 'cue'. Expected 'cues', 'patch' [invalid-child-element]`,
         '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 3 finding(s)',
       ]);
 

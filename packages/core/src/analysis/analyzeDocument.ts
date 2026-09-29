@@ -8,6 +8,8 @@ import { rootElementName, type SchemaSet } from '../xsd/loadSchemas';
 import type { XsdElement } from '../xsd/schema';
 import { validateStructure } from '../xsd/validateStructure';
 import { validateExpressions } from '../expressions/validateExpressions';
+import { collectVariables, type DocumentVariables } from '../variables/variables';
+import { validateVariables } from '../variables/validateVariables';
 
 /** `source` of every diagnostic this library produces. */
 export const diagnosticSource = 'X4CodeSense';
@@ -22,6 +24,12 @@ export interface AnalysisContext {
   validateExpressions?: boolean;
   /** Script properties; with them expressions are also checked for unknown keywords and properties. */
   properties?: ScriptProperties;
+  /**
+   * Report variables that are read but never set in the document. Off by default: AI scripts include
+   * named actions of library scripts and Mission Director scripts write into each other's cues, so a
+   * single document cannot tell until scripts are indexed across files.
+   */
+  validateVariables?: boolean;
 }
 
 /** Names of the cues and libraries of a script: they may start a chain like a keyword. */
@@ -46,6 +54,8 @@ export interface DocumentAnalysis {
   structure?: XmlStructure;
   /** Schema declaration of each element that could be resolved; empty without schemas. */
   declarations: Map<XmlElement, XsdElement>;
+  /** The script's variables and their tables; present for scripts analysed with schemas, collected on first access. */
+  readonly variables?: DocumentVariables;
   /** Diagnostics in document order of discovery. */
   diagnostics: Diagnostic[];
 }
@@ -89,6 +99,16 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
           knownHeads: cueNames(structure),
         })
       );
+    }
+    // Collected on first use: most analyses are keystrokes that never ask for variables.
+    const scriptSchema = detection.script.schema;
+    let variables: DocumentVariables | undefined;
+    Object.defineProperty(analysis, 'variables', {
+      enumerable: true,
+      get: () => (variables ??= collectVariables(analysis, scriptSchema, schema, context.properties)),
+    });
+    if (context.validateVariables ?? false) {
+      analysis.diagnostics.push(...validateVariables(analysis.variables as DocumentVariables, document, diagnosticSource));
     }
   }
   return analysis;

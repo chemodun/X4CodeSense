@@ -7,6 +7,7 @@ import type { GameData } from '../gameData';
 import type { SourceLocation } from '../sourceLocation';
 import type { XmlAttribute } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
+import { variableAt, variableDefinitions } from './variables';
 
 function locations(game: GameData, sources: (SourceLocation | undefined)[]): Location[] {
   const result: Location[] = [];
@@ -52,6 +53,10 @@ function definitionInValue(analysis: DocumentAnalysis, attribute: XmlAttribute, 
 
 /** Where the thing at an offset is declared in the game data: an element or attribute in a schema, a keyword or property in scriptproperties.xml, an enumeration value. */
 export function definitionAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined): Location[] {
+  const variable = variableAt(analysis, offset);
+  if (variable) {
+    return variableDefinitions(variable.variable, analysis.document);
+  }
   if (!game) {
     return [];
   }

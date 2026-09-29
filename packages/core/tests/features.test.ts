@@ -1,7 +1,18 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { analyzeText, completionAt, definitionAt, hoverAt, loadGameData, positionContext, type DocumentAnalysis } from '../src';
+import {
+  analyzeText,
+  completionAt,
+  definitionAt,
+  hoverAt,
+  loadGameData,
+  positionContext,
+  prepareRenameAt,
+  referencesAt,
+  renameAt,
+  type DocumentAnalysis,
+} from '../src';
 
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
 const game = loadGameData(unpacked);
@@ -13,7 +24,7 @@ function at(marked: string): { analysis: DocumentAnalysis; offset: number } {
     throw new Error('no caret marker');
   }
   const text = marked.slice(0, offset) + marked.slice(offset + 1);
-  return { analysis: analyzeText(text, { schemas: game.schemas }), offset };
+  return { analysis: analyzeText(text, { schemas: game.schemas, properties: game.properties }), offset };
 }
 
 function labels(marked: string): string[] {
@@ -84,10 +95,19 @@ describe('positionContext', () => {
 
 describe('completion', () => {
   it('offers child elements allowed after the previous siblings', () => {
-    expect(labels(cue('<|'))).toEqual(['actions', 'conditions', 'cues', 'delay']);
-    expect(labels(cue('<actions/>\n      <|'))).toEqual(['cues']);
+    expect(labels(cue('<|'))).toEqual(['actions', 'conditions', 'cues', 'delay', 'param', 'patch']);
+    expect(labels(cue('<actions/>\n      <|'))).toEqual(['cues', 'patch']);
     expect(labels(cue('<ac|\n'))).toEqual(['actions']);
-    expect(labels(cue('<actions>\n        <|\n      </actions>'))).toEqual(['create_ship', 'debug_text', 'deliver', 'do_if', 'find_ship', 'set_value']);
+    expect(labels(cue('<actions>\n        <|\n      </actions>'))).toEqual([
+      'create_ship',
+      'debug_text',
+      'deliver',
+      'do_if',
+      'find_ship',
+      'include_actions',
+      'remove_value',
+      'set_value',
+    ]);
     expect(labels(actions('<do_if value="1"><|</do_if>'))).toContain('set_value');
   });
 
@@ -239,5 +259,66 @@ describe('while typing', () => {
     const withoutSchema = positionContext(analysis, offset);
     expect(withoutSchema.kind).toBe('attribute-value');
     expect((withoutSchema as { declared?: unknown }).declared).toBeUndefined();
+  });
+});
+
+describe('variables', () => {
+  /** Two variables set in cue A before the body: `$foo` (a ship) on line 5 and `$fob` on line 6; the body is line 7. */
+  const script = (body: string): string => actions(`<set_value name="$foo" exact="player.ship"/>\n        <set_value name="$fob" exact="1"/>\n        ${body}`);
+  const positions = (locations: { range: { start: { line: number; character: number } } }[]): string[] =>
+    locations.map((location) => `${location.range.start.line + 1}:${location.range.start.character + 1}`);
+
+  it('completes the variables of the table at the caret', () => {
+    expect(labels(script('<set_value name="$bar" exact="$|"/>'))).toEqual(['$bar', '$fob', '$foo']);
+    expect(labels(script('<set_value name="$bar" exact="$fo|"/>'))).toEqual(['$fob', '$foo']);
+    expect(labels(script('<set_value name="$bar" exact="1 + $fo|"/>'))).toEqual(['$fob', '$foo']);
+    expect(labels(script('<set_value name="$bar" exact="this.$|"/>'))).toEqual(['$bar', '$fob', '$foo']);
+    expect(labels(script('<set_value name="$bar" exact="global.$|"/>'))).toEqual([]);
+    expect(labels(script('<set_value name="$bar" exact="$foo.$|"/>'))).toEqual([]);
+    expect(labels(script('<set_value name="$bar" exact="$nowhere + $|"/>'))).toEqual(['$bar', '$fob', '$foo']);
+    expect(labels(script('<set_value name="$bar" exact="$fo|\n'))).toEqual(['$fob', '$foo']);
+    const { analysis, offset } = at(script('<set_value name="$bar" exact="$fo|"/>'));
+    const foo = completionAt(analysis, offset, game).find((item) => item.label === '$foo');
+    expect(foo?.detail).toBe('ship');
+    expect(foo?.textEdit).toMatchObject({ newText: '$foo', range: { start: { line: 6, character: 38 }, end: { line: 6, character: 41 } } });
+  });
+
+  it('describes the variable under the caret', () => {
+    const text = hoverText(script('<set_value name="$bar" exact="$fo|o"/>'));
+    expect(text).toContain('**$foo** *(variable of cue `A`)*');
+    expect(text).toContain('Type: `ship`');
+    expect(text).toContain('Set 1 time · Read 1 time');
+    expect(text).toContain('First set in \\<set\\_value\\> at line 5');
+    expect(hoverText(script('<set_value name="$bar" exact="$nowh|ere"/>'))).toContain('Never set here');
+    expect(hoverText(script('<set_value name="$bar" exact="$foo.$ke|y"/>') ?? '')).not.toContain('(variable of');
+    expect(hoverText(script('<set_value name="$bar" exact="$foo.sp|eed"/>'))).toContain('**ship.speed**');
+  });
+
+  it('goes to the definitions of the variable under the caret', () => {
+    const { analysis, offset } = at(script('<set_value name="$bar" exact="$fo|o"/>'));
+    const locations = definitionAt(analysis, offset, game);
+    expect(positions(locations)).toEqual(['5:26']);
+    expect(locations[0].uri).toBe(analysis.document.uri);
+    expect(definitionAt(analysis, offset, undefined)).toEqual(locations);
+    expect(definitionFiles(script('<set_value name="$bar" exact="$nowh|ere"/>'))).toEqual([]);
+  });
+
+  it('lists references and renames every occurrence', () => {
+    const { analysis, offset } = at(script('<set_value name="$bar" exact="$fo|o + this.$foo"/>\n        <remove_value name="$foo"/>'));
+    expect(positions(referencesAt(analysis, offset))).toEqual(['5:26', '7:39', '7:51', '8:29']);
+    expect(prepareRenameAt(analysis, offset)).toMatchObject({ placeholder: '$foo', range: { start: { line: 6, character: 38 } } });
+    expect(renameAt(analysis, offset, '$baz').map((edit) => edit.newText)).toEqual(['$baz', '$baz', '$baz', '$baz']);
+    expect(renameAt(analysis, offset, 'qux')[0].newText).toBe('$qux');
+    expect(referencesAt(analysis, 0)).toEqual([]);
+    expect(prepareRenameAt(analysis, 0)).toBeUndefined();
+    expect(renameAt(analysis, 0, '$z')).toEqual([]);
+  });
+
+  it('renames a parameter without the dollar sign', () => {
+    const ai = at(
+      '<aiscript name="a">\n  <params>\n    <param name="foo"/>\n  </params>\n  <attention min="1">\n    <actions>\n      <set_value name="$n" exact="$f|oo"/>\n    </actions>\n  </attention>\n</aiscript>\n'
+    );
+    expect(positions(referencesAt(ai.analysis, ai.offset))).toEqual(['3:18', '7:35']);
+    expect(renameAt(ai.analysis, ai.offset, '$baz').map((edit) => edit.newText)).toEqual(['baz', '$baz']);
   });
 });

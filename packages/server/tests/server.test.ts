@@ -24,8 +24,11 @@ import {
   HoverRequest,
   InitializedNotification,
   InitializeRequest,
+  PrepareRenameRequest,
   PublishDiagnosticsNotification,
+  ReferencesRequest,
   RegistrationRequest,
+  RenameRequest,
   ShutdownRequest,
   StreamMessageReader,
   StreamMessageWriter,
@@ -107,6 +110,8 @@ beforeAll(async () => {
   expect(result.capabilities.completionProvider?.triggerCharacters).toContain('<');
   expect(result.capabilities.hoverProvider).toBe(true);
   expect(result.capabilities.definitionProvider).toBe(true);
+  expect(result.capabilities.referencesProvider).toBe(true);
+  expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
   await connection.sendNotification(InitializedNotification.type, {});
 }, 30_000);
 
@@ -292,5 +297,47 @@ describe('completion, hover and definition', () => {
     const locations = (Array.isArray(result) ? result : result ? [result] : []) as Location[];
     expect(locations.map((location) => path.basename(location.uri))).toEqual(['scriptproperties.xml']);
     expect(locations[0].range.start.line).toBeGreaterThan(0);
+  });
+});
+
+describe('references and rename', () => {
+  const uri = 'file:///mod/md/Rename.xml';
+  const lines = [
+    '<mdscript name="R">',
+    '  <cues>',
+    '    <cue name="A">',
+    '      <actions>',
+    '        <set_value name="$x" exact="1"/>',
+    '        <set_value name="$y" exact="$x + 1"/>',
+    '      </actions>',
+    '    </cue>',
+    '  </cues>',
+    '</mdscript>',
+    '',
+  ];
+  const position = { line: 5, character: lines[5].indexOf('$x') + 1 };
+
+  it('lists every occurrence of the variable under the caret', async () => {
+    await open(uri, lines.join('\n'));
+    const locations = await connection.sendRequest(ReferencesRequest.type, { textDocument: { uri }, position, context: { includeDeclaration: true } });
+    expect((locations ?? []).map((location) => `${location.range.start.line}:${location.range.start.character}`)).toEqual([
+      `4:${lines[4].indexOf('$x')}`,
+      `5:${lines[5].indexOf('$x')}`,
+    ]);
+    expect(
+      await connection.sendRequest(ReferencesRequest.type, {
+        textDocument: { uri },
+        position: { line: 1, character: 3 },
+        context: { includeDeclaration: true },
+      })
+    ).toEqual([]);
+  });
+
+  it('prepares and applies a rename', async () => {
+    const prepared = await connection.sendRequest(PrepareRenameRequest.type, { textDocument: { uri }, position });
+    expect(prepared).toMatchObject({ placeholder: '$x', range: { start: { line: 5, character: lines[5].indexOf('$x') } } });
+    const edit = await connection.sendRequest(RenameRequest.type, { textDocument: { uri }, position, newName: '$counter' });
+    expect(edit?.changes?.[uri].map((change) => change.newText)).toEqual(['$counter', '$counter']);
+    expect(await connection.sendRequest(RenameRequest.type, { textDocument: { uri }, position: { line: 1, character: 3 }, newName: '$z' })).toBeNull();
   });
 });

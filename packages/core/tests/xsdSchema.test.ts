@@ -41,10 +41,10 @@ describe('loadSchemas', () => {
 
 describe('element declarations', () => {
   it('resolves attributes and children through named types, groups and extensions', () => {
-    expect([...cue.attributes.keys()]).toEqual(['name', 'instantiate', 'namespace']);
+    expect([...cue.attributes.keys()]).toEqual(['name', 'ref', 'instantiate', 'namespace']);
     expect(cue.attributes.get('name')).toMatchObject({ required: true, typeName: 'cuename' });
     expect(cue.documentation).toBe('A cue.');
-    expect([...cue.contentModel.declarations.keys()]).toEqual(['conditions', 'delay', 'actions', 'cues']);
+    expect([...cue.contentModel.declarations.keys()]).toEqual(['param', 'conditions', 'delay', 'actions', 'patch', 'cues']);
 
     const conditions = cue.child('conditions') as XsdElement;
     expect([...conditions.attributes.keys()]).toEqual(['ref']);
@@ -63,6 +63,14 @@ describe('element declarations', () => {
     expect(doIf.child('do_if')).toBe(doIf);
     expect(doIf.child('set_value')).toBe(setValue);
     expect(md.root('mdscript')?.documentation).toBe('Root of a Mission Director script.');
+  });
+
+  it('keeps the occurrence of a group model that a reference wraps', () => {
+    // `mdactions` is a choice with minOccurs="0" maxOccurs="unbounded", referenced once: any number of actions in any order.
+    const model = actions.contentModel;
+    expect([...model.declarations.keys()]).toContain('include_actions');
+    expect(model.validate([])).toEqual([]);
+    expect(model.validate(['set_value', 'include_actions', 'set_value', 'remove_value'])).toEqual([]);
   });
 
   it('resolves the aiscript root and an extended type', () => {
@@ -211,7 +219,7 @@ describe('structure validation', () => {
       "4:19 unknown-attribute: Unknown attribute 'bogus' in 'cue'",
       "5:17 missing-required-attribute: Missing required attribute 'name' in 'set_value'",
       "5:39 unknown-element: Unknown element 'frobnicate' in 'actions'",
-      "6:8 invalid-child-element: Element 'conditions' is not allowed after 'actions' in 'cue'. Expected 'cues'",
+      "6:8 invalid-child-element: Element 'conditions' is not allowed after 'actions' in 'cue'. Expected 'cues', 'patch'",
       "9:4 unknown-element: Unknown element 'extra' in 'mdscript'",
     ]);
   });

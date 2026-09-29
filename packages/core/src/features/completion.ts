@@ -8,7 +8,9 @@ import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute, type XsdElement } from '../xsd/schema';
+import type { VariableTable } from '../variables/variables';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
+import { variableCompletionItems } from './variables';
 
 export interface CompletionOptions {
   /** The client understands snippet syntax in inserted text. */
@@ -167,6 +169,9 @@ class Completer {
     if (isInsideString(tokens, index)) {
       return;
     }
+    if (this.variables(tokens, expression, index, element, attribute)) {
+      return;
+    }
     const chain = chainAtCaret(expression, index);
     if (chain?.partial) {
       const partial = chain.partial;
@@ -198,6 +203,37 @@ class Completer {
       return;
     }
     this.keywords(tokens, expression, index, attribute, properties, schema);
+  }
+
+  /** Variables, when the caret is on a `$name` token: of the element's table, or of the cue named before the dot. */
+  private variables(tokens: ReturnType<typeof tokenize>, expression: string, index: number, element: XmlElement, attribute: XmlAttribute): boolean {
+    const variables = this.analysis.variables;
+    if (!variables) {
+      return false;
+    }
+    let tokenIndex = tokenIndexAt(tokens, index);
+    if (tokenIndex < 0) {
+      tokenIndex = tokens.findIndex((token) => token.end === index && token.kind === 'variable');
+    }
+    if (tokenIndex < 0 || tokens[tokenIndex].kind !== 'variable') {
+      return false;
+    }
+    const token = tokens[tokenIndex];
+    const afterDot = tokenIndex > 0 && tokens[tokenIndex - 1].kind === 'dot';
+    let table: VariableTable | undefined;
+    if (afterDot) {
+      const object = chainAtCaret(expression, index);
+      table = object && variables.tableForObjectText(object.steps.map((step) => step.text).join('.'), element);
+    } else {
+      table = variables.tableOf(element);
+    }
+    if (table) {
+      const range = this.range(offsetInValue(attribute, token.start), offsetInValue(attribute, token.end));
+      for (const item of variableCompletionItems(variables, table, this.analysis.document, range, expression.slice(token.start, index))) {
+        this.add(item);
+      }
+    }
+    return true;
   }
 
   /** Keywords, where an expression or a chain head may start. */

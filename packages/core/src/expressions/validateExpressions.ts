@@ -4,8 +4,9 @@ import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlElement } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdElement } from '../xsd/schema';
+import { isChainNode, stepsOf, type ChainNode } from './astChain';
 import { parseExpression, walkExpression, type Expression } from './parser';
-import { resolveChain, type ChainStep } from './propertyChain';
+import { resolveChain } from './propertyChain';
 
 export type ExpressionDiagnosticCode =
   | 'expression-syntax'
@@ -22,47 +23,6 @@ export interface ExpressionValidationOptions {
   schema?: ScriptSchema;
   /** Names that may start a chain besides keywords: the cues and libraries of the document. */
   knownHeads?: ReadonlySet<string>;
-}
-
-type ChainNode = Extract<Expression, { kind: 'property' | 'dynamic' | 'args' }>;
-
-function isChainNode(node: Expression): node is ChainNode {
-  return node.kind === 'property' || node.kind === 'dynamic' || node.kind === 'args';
-}
-
-/** The chain steps of an outermost chain node, head first, in the form the resolver takes. */
-function stepsOf(outer: ChainNode, text: string): { head: Expression; steps: ChainStep[] } {
-  const steps: ChainStep[] = [];
-  let current: Expression = outer;
-  while (isChainNode(current)) {
-    const kind = current.kind === 'property' ? (current.name.startsWith('$') ? 'variable' : 'identifier') : current.kind === 'dynamic' ? 'braces' : 'brackets';
-    const start = current.kind === 'property' ? current.nameStart : current.object.end + 1;
-    steps.unshift({ kind, start, end: current.end, text: text.slice(start, current.end), suffix: '' });
-    current = current.object;
-  }
-  const head = current;
-  const headKind: ChainStep['kind'] =
-    head.kind === 'name'
-      ? 'identifier'
-      : head.kind === 'variable'
-        ? 'variable'
-        : head.kind === 'string'
-          ? 'string'
-          : head.kind === 'number'
-            ? 'number'
-            : head.kind === 'list'
-              ? 'brackets'
-              : head.kind === 'textref'
-                ? 'braces'
-                : 'parens';
-  steps.unshift({
-    kind: headKind,
-    start: head.start,
-    end: head.end,
-    text: text.slice(head.start, head.end),
-    suffix: head.kind === 'number' ? head.suffix : '',
-  });
-  return { head, steps };
 }
 
 /**

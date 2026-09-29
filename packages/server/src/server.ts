@@ -10,6 +10,7 @@ import {
   type InitializeParams,
   type InitializeResult,
   type Location,
+  type WorkspaceEdit,
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
@@ -19,6 +20,9 @@ import {
   DocumentInfoRequestMethod,
   hoverAt,
   loadGameData,
+  prepareRenameAt,
+  referencesAt,
+  renameAt,
   type AnalysisContext,
   type DocumentAnalysis,
   type DocumentInfoParams,
@@ -82,6 +86,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       completionProvider: { triggerCharacters: completionTriggerCharacters },
       hoverProvider: true,
       definitionProvider: true,
+      referencesProvider: true,
+      renameProvider: { prepareProvider: true },
     },
     serverInfo: {
       name: 'X4CodeSense language server',
@@ -208,6 +214,25 @@ connection.onHover((params): Hover | null => {
 connection.onDefinition((params): Location[] => {
   const located = locate(params.textDocument.uri, params.position);
   return located ? definitionAt(located.analysis, located.offset, game) : [];
+});
+
+connection.onReferences((params): Location[] => {
+  const located = locate(params.textDocument.uri, params.position);
+  return located ? referencesAt(located.analysis, located.offset) : [];
+});
+
+connection.onPrepareRename((params) => {
+  const located = locate(params.textDocument.uri, params.position);
+  return located ? (prepareRenameAt(located.analysis, located.offset) ?? null) : null;
+});
+
+connection.onRenameRequest((params): WorkspaceEdit | null => {
+  const located = locate(params.textDocument.uri, params.position);
+  if (!located) {
+    return null;
+  }
+  const edits = renameAt(located.analysis, located.offset, params.newName);
+  return edits.length > 0 ? { changes: { [params.textDocument.uri]: edits } } : null;
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {

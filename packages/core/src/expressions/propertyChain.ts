@@ -208,12 +208,7 @@ function literalDatatype(step: ChainStep, properties: ScriptProperties): ScriptD
       return properties.datatype('list');
     case 'number': {
       const suffix = step.suffix === '' ? 'i' : step.suffix;
-      for (const datatype of properties.datatypes.values()) {
-        if (datatype.suffix === suffix) {
-          return datatype;
-        }
-      }
-      return step.suffix === '' ? properties.datatype('numeric') : undefined;
+      return indexOf(properties).datatypeBySuffix(suffix) ?? (step.suffix === '' ? properties.datatype('numeric') : undefined);
     }
     default:
       return undefined;
@@ -237,7 +232,7 @@ export function segmentMatches(segment: PropertySegment, step: ChainStep, proper
       if (step.kind !== 'identifier') {
         return false;
       }
-      const keyword = properties.keyword(segment.type, schema);
+      const keyword = indexOf(properties).keyword(segment.type, schema);
       return keyword ? keyword.properties.has(step.text) : lenient;
     }
     case 'variable':
@@ -311,6 +306,117 @@ const matchPasses: readonly (readonly [boolean, boolean])[] = [
   [true, true],
 ];
 
+interface IndexedProperty {
+  property: ScriptProperty;
+  /** Position in the owner's property order, which decides ties between equal matches. */
+  order: number;
+}
+
+interface OwnerIndex {
+  /** Properties whose name starts with a literal segment, by that text. */
+  literal: Map<string, IndexedProperty[]>;
+  /** Properties whose first segment is a placeholder: they may match any step. */
+  wildcard: IndexedProperty[];
+}
+
+/**
+ * Lookup structures over one properties model, built on demand: the subtypes of each datatype, keywords
+ * by name, datatypes by unit suffix, and per owner its properties by their first literal segment, so
+ * that a step is only tried against the properties that can match it. Without this, every `$var.x`
+ * step scanned all properties of all datatypes, a second per keystroke on the largest vanilla scripts.
+ */
+class ResolverIndex {
+  private readonly owners = new Map<ScriptKeyword | ScriptDatatype | null, OwnerIndex>();
+  private readonly subtypes = new Map<ScriptDatatype, ScriptDatatype[]>();
+  private readonly keywords = new Map<string, ScriptKeyword | undefined>();
+  private suffixes: Map<string, ScriptDatatype> | undefined;
+
+  constructor(private readonly properties: ScriptProperties) {}
+
+  /** Every datatype that derives from the given one, in declaration order. */
+  subtypesOf(datatype: ScriptDatatype): ScriptDatatype[] {
+    let result = this.subtypes.get(datatype);
+    if (!result) {
+      result = [...this.properties.datatypes.values()].filter((candidate) => candidate !== datatype && candidate.isA(datatype.name));
+      this.subtypes.set(datatype, result);
+    }
+    return result;
+  }
+
+  keyword(name: string, schema: ScriptSchema | undefined): ScriptKeyword | undefined {
+    const key = `${schema ?? ''}\n${name}`;
+    if (!this.keywords.has(key)) {
+      this.keywords.set(key, this.properties.keyword(name, schema));
+    }
+    return this.keywords.get(key);
+  }
+
+  /** The first datatype declared with the unit suffix. */
+  datatypeBySuffix(suffix: string): ScriptDatatype | undefined {
+    if (!this.suffixes) {
+      this.suffixes = new Map();
+      for (const datatype of this.properties.datatypes.values()) {
+        if (datatype.suffix !== undefined && !this.suffixes.has(datatype.suffix)) {
+          this.suffixes.set(datatype.suffix, datatype);
+        }
+      }
+    }
+    return this.suffixes.get(suffix);
+  }
+
+  private ownerIndex(owner: ChainOwner): OwnerIndex {
+    const key = owner.kind === 'keyword' ? owner.keyword : owner.kind === 'datatype' ? owner.datatype : null;
+    let index = this.owners.get(key);
+    if (!index) {
+      index = { literal: new Map(), wildcard: [] };
+      let order = 0;
+      for (const property of propertiesOf(owner, this.properties)) {
+        const entry: IndexedProperty = { property, order: order++ };
+        const first = property.segments[0];
+        if (first?.kind === 'literal') {
+          const bucket = index.literal.get(first.text);
+          if (bucket) {
+            bucket.push(entry);
+          } else {
+            index.literal.set(first.text, [entry]);
+          }
+        } else {
+          index.wildcard.push(entry);
+        }
+      }
+      this.owners.set(key, index);
+    }
+    return index;
+  }
+
+  /** The owner's properties whose first segment can match the step, in the owner's order. */
+  *candidates(owner: ChainOwner, step: ChainStep): IterableIterator<ScriptProperty> {
+    const index = this.ownerIndex(owner);
+    const literal = step.kind === 'identifier' ? (index.literal.get(step.text) ?? []) : [];
+    const wildcard = index.wildcard;
+    let atLiteral = 0;
+    let atWildcard = 0;
+    while (atLiteral < literal.length || atWildcard < wildcard.length) {
+      if (atWildcard >= wildcard.length || (atLiteral < literal.length && literal[atLiteral].order < wildcard[atWildcard].order)) {
+        yield literal[atLiteral++].property;
+      } else {
+        yield wildcard[atWildcard++].property;
+      }
+    }
+  }
+}
+
+const indexes = new WeakMap<ScriptProperties, ResolverIndex>();
+
+function indexOf(properties: ScriptProperties): ResolverIndex {
+  let index = indexes.get(properties);
+  if (!index) {
+    index = new ResolverIndex(properties);
+    indexes.set(properties, index);
+  }
+  return index;
+}
+
 /**
  * Properties an owner offers: its own and inherited ones, then those of its subtypes, because a value of
  * a static type is often a more specific object at run time (`this.assignedcontrolled.cargo` works on a
@@ -338,10 +444,8 @@ export function* propertiesOf(owner: ChainOwner, properties: ScriptProperties): 
 
 /** Own properties of every datatype that derives from the given one. */
 function* subtypeProperties(datatype: ScriptDatatype, properties: ScriptProperties): IterableIterator<ScriptProperty> {
-  for (const candidate of properties.datatypes.values()) {
-    if (candidate !== datatype && candidate.isA(datatype.name)) {
-      yield* candidate.properties.values();
-    }
+  for (const candidate of indexOf(properties).subtypesOf(datatype)) {
+    yield* candidate.properties.values();
   }
 }
 
@@ -363,10 +467,11 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
   if (steps.length === 0) {
     return { steps: resolved, owners };
   }
+  const resolver = indexOf(properties);
   const head = steps[0];
   let owner: ChainOwner = unknownOwner;
   if (head.kind === 'identifier') {
-    const keyword = properties.keyword(head.text, schema);
+    const keyword = resolver.keyword(head.text, schema);
     if (keyword) {
       resolved[0].keyword = keyword;
       resolved[0].datatype = keyword.type;
@@ -386,7 +491,7 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
     // Strict matches first, then bare names for free placeholders, then a chain that ends inside a pattern.
     for (const [lenient, prefix] of matchPasses) {
       candidates = [];
-      for (const property of propertiesOf(owner, properties)) {
+      for (const property of resolver.candidates(owner, steps[index])) {
         const length = matchLength(property, steps, index, properties, schema, lenient, prefix);
         if (length < 0) {
           continue;

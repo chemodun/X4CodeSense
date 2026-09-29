@@ -5,10 +5,30 @@
   <xs:simpleType name="cuename">
     <xs:restriction base="name" />
   </xs:simpleType>
-  <xs:complexType name="cue">
+  <xs:group name="mdactions">
     <xs:annotation>
-      <xs:documentation>A cue.</xs:documentation>
+      <xs:documentation>The common actions and the ones only the Mission Director has.</xs:documentation>
     </xs:annotation>
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:group ref="actions" />
+      <xs:element name="include_actions">
+        <xs:annotation>
+          <xs:documentation>Perform actions of the referenced library in the context of this cue</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:attribute name="ref" type="expression" use="required" />
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+  </xs:group>
+  <xs:complexType name="cuepatch">
+    <xs:annotation>
+      <xs:documentation>Actions for saved games created with an older version of the cue.</xs:documentation>
+    </xs:annotation>
+    <xs:group ref="mdactions" />
+    <xs:attribute name="sinceversion" type="xs:integer" use="required" />
+  </xs:complexType>
+  <xs:group name="cuebody">
     <xs:sequence>
       <xs:element name="conditions" type="conditions_withref" minOccurs="0" />
       <xs:element name="delay" minOccurs="0">
@@ -18,12 +38,31 @@
       </xs:element>
       <xs:element name="actions" minOccurs="0">
         <xs:complexType>
-          <xs:group ref="actions" />
+          <xs:group ref="mdactions" />
         </xs:complexType>
       </xs:element>
+      <xs:element name="patch" type="cuepatch" minOccurs="0" maxOccurs="unbounded" />
       <xs:element name="cues" type="cues" minOccurs="0" />
     </xs:sequence>
+  </xs:group>
+  <xs:complexType name="cue">
+    <xs:annotation>
+      <xs:documentation>A cue.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="param" minOccurs="0" maxOccurs="unbounded">
+        <xs:annotation>
+          <xs:documentation>Cue parameter (only used if cue is a reference)</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:attribute name="name" type="paramname" use="required" />
+          <xs:attribute name="value" type="expression" use="required" />
+        </xs:complexType>
+      </xs:element>
+      <xs:group ref="cuebody" />
+    </xs:sequence>
     <xs:attribute name="name" type="cuename" use="required" />
+    <xs:attribute name="ref" type="cuename" />
     <xs:attribute name="instantiate" type="boolean" />
     <xs:attribute name="namespace">
       <xs:simpleType>
@@ -34,10 +73,34 @@
       </xs:simpleType>
     </xs:attribute>
   </xs:complexType>
+  <xs:complexType name="library">
+    <xs:annotation>
+      <xs:documentation>A library cue.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="params" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="param" minOccurs="0" maxOccurs="unbounded">
+              <xs:annotation>
+                <xs:documentation>Library parameter</xs:documentation>
+              </xs:annotation>
+              <xs:complexType>
+                <xs:attribute name="name" type="paramname" use="required" />
+                <xs:attribute name="default" type="expression" />
+              </xs:complexType>
+            </xs:element>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:group ref="cuebody" />
+    </xs:sequence>
+    <xs:attribute name="name" type="cuename" use="required" />
+  </xs:complexType>
   <xs:complexType name="cues">
     <xs:sequence>
       <xs:element name="cue" type="cue" minOccurs="0" maxOccurs="unbounded" />
-      <xs:element name="library" type="cue" minOccurs="0" maxOccurs="unbounded" />
+      <xs:element name="library" type="library" minOccurs="0" maxOccurs="unbounded" />
     </xs:sequence>
   </xs:complexType>
   <xs:element name="mdscript">

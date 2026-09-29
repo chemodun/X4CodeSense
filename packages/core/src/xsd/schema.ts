@@ -671,7 +671,9 @@ export class XsdSchema {
       this.problem(reference, `unknown group '${name}'`);
       return { kind: 'sequence', particles: [], min, max };
     }
-    return { ...this.particle(model), min, max };
+    const inner = this.particle(model);
+    // The reference's occurrence wraps the group's model, which may carry its own (`<xs:choice minOccurs="0" maxOccurs="unbounded">`).
+    return min === 1 && max === 1 ? inner : { kind: 'sequence', particles: [inner], min, max };
   }
 
   private builtinType(typeName: string): XsdSimpleType {
