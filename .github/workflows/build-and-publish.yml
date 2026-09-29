@@ -19,12 +19,13 @@ jobs:
       RELEASE_PLEASE_TOKEN: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci
@@ -42,14 +43,14 @@ jobs:
           echo "package_path=client/${PACKAGE_PATH#./}" >> "$GITHUB_OUTPUT"
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: ${{ steps.package.outputs.package_path }}
 
       - name: Attach Extension .vsix to Release
         if: ${{ github.event_name == 'release' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           token: ${{ env.RELEASE_PLEASE_TOKEN != '' && env.RELEASE_PLEASE_TOKEN || github.token }}
           tag_name: ${{ github.event.release.tag_name }}
@@ -57,7 +58,7 @@ jobs:
 
       - name: VirusTotal scan
         if: ${{ github.event_name == 'release' && env.VT_API_KEY != '' }}
-        uses: crazy-max/ghaction-virustotal@v4
+        uses: crazy-max/ghaction-virustotal@v5
         with:
           update_release_body: true
           request_rate: 4
@@ -74,13 +75,14 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci

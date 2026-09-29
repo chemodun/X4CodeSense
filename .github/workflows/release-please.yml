@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Release Please Action
         uses: googleapis/release-please-action@v5
