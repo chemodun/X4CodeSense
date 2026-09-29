@@ -2,7 +2,7 @@
 
 Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`) and Mission Director scripts (`md/*.xml`).
 
-X4CodeSense is the successor of X4CodeComplete. It is rebuilt around a language server, so the same analysis also runs from the command line and in CI.
+X4CodeSense is the successor of X4CodeComplete, written anew around a language server, so the same analysis also runs from the command line and in CI.
 
 ## Status
 
@@ -29,9 +29,10 @@ Preview. The current build:
 - offers quick fixes (the light bulb, `Ctrl+.`) where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. An unknown element (with its end tag), attribute, enumeration value, keyword, property, cue or script, label, interrupt library item, or a variable that is never set, is changed to the known names closest in spelling, the ones completion offers there; a variable is only offered when something sets it. This works in what a patch brings in as well;
 - checks scripts from the command line and in CI with the same analysis: `x4-script-check` prints each finding with its severity and quick fixes, as text, as JSON for tools (ranges and fixes as edits), or as annotations of the files in GitHub Actions.
 
-Being ported and rebuilt next:
+Next:
 
-- Semantic highlighting and the first release
+- Semantic highlighting
+- Publication on the Visual Studio Marketplace
 
 ## Requirements
 
@@ -62,13 +63,14 @@ Also in the menu the status bar item opens.
 ## Credits
 
 - [Egosoft](https://www.egosoft.com) for the game.
-- Cgetty and archenovalis for X4CodeComplete, the starting point of this extension.
+- Cgetty, who started X4CodeComplete, and archenovalis, who continued it with Chem O'Dun: this extension builds on its ideas and the experience gained with it.
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## Changelog
 
 ### Unreleased
 
+- Releases: the extension and its three npm packages are released together, the first time as 0.1.0. The command-line checker, the language server and the core library go to npm as `x4-script-check`, `x4-script-language-server` and `x4-script-core`; after the first version, which is published by hand, GitHub Actions publishes them by trusted publishing, with provenance. The extension's `.vsix` is attached to its GitHub release until it is on the Marketplace.
 - Command-line checker: `x4-script-check` prints the severity of each finding (`file:line:column: error: message [code]`) and, below it, the quick fixes the editor offers for it (`fix: Change to 'faction'`). Findings about a whole file have codes now, and files are checked in the order of their names, so the output is the same on every system. `--format json` prints the findings with their LSP ranges and their fixes as edits, the counts, and the problems met reading the game files, for tools; `--format github` prints workflow commands, so GitHub Actions shows each finding on its line in the run and the pull request. `--fail-on error` reports warnings without failing the check. On the mods folder (141 scripts and patches in 69 folders), the three formats give the same 104 findings as before, 62 errors and 42 warnings, 3 of them with a fix.
 - Status bar and commands: the status bar item shows a spinner while the language server reads the game files and indexes the scripts, and the server reports its progress (for any editor that shows it). A warning shows when the game files are not set or hold no schemas; the tooltip tells which folder was read, the schemas and the number of texts, how many scripts were indexed, of the game, its DLCs and which extensions, and links to the commands. A click on the item opens a menu of the commands instead of restarting the server. New commands select the extracted game files with a folder picker (warning when the folder holds no schemas), show the output, open the settings, open the file a patch changes, and show what a patch changes: a diff of that file as the game loads it without the patch and with it, after the patches loaded before it, which follows the patch as it is edited. For that the patched file is written out more faithfully: what a patch brings in comes with the line breaks and indentation it has in the patch, the file's own lines keep theirs, a changed self-closing element stays self-closing, and the XML declaration is kept. On the game's DLCs and 65 mods, for the 54 patches the game applies first to their file, that file comes out without the patch exactly as it is on disk, every patched file is well-formed, and none of the 78 patches that only add elements loses a line of the file; the slowest comparison takes about 14 ms.
 - Quick fixes: the light bulb offers a fix for the diagnostics that have an obvious one. An unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added (empty, to be filled in). An unknown element, attribute, enumeration value, keyword, property, cue or script (in `md.Script.Cue` too), label or interrupt library item, and a variable that is never set, can be changed to one of the three known names closest in spelling: the names completion offers at that place, of the kind the diagnostic is about, and for a variable only those that something sets. A change of case comes first; an element's end tag is renamed with it; the closest name is preferred when no other is as close. What a patch brings in gets the fixes it would get where it lands. In a sample of 23 scripts of the game and the mods, a typo in any of 44,532 names completion knows there (two letters swapped, one missing, doubled or changed, a change of case) brings the name back first in 99.1% of cases; another name comes first only in 8 ties between two equally close names (`wase`: `base` or `ware`), where none is preferred, and what is missed are names of three letters with one letter missing, too short to tell. On the game with its DLCs and 65 mods, 30 of the 371 findings get a fix, among them the game's own `$DeliberyNPC` for `$DeliveryNPC`, `$feedbackvalue` for `$FeedbackValue` and `factin` for `faction`, and each of the 40 fixes offered, applied, removes its finding and brings no new one; a fix takes a few milliseconds.

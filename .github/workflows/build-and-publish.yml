@@ -6,14 +6,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   extension:
     if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'x4codesense@') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
       VT_API_KEY: ${{ secrets.VT_API_KEY }}
       RELEASE_PLEASE_TOKEN: ${{ secrets.MY_RELEASE_PLEASE_TOKEN }}
     steps:
@@ -24,7 +25,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -40,11 +40,6 @@ jobs:
           npx --yes @vscode/vsce package --no-dependencies --out ./artifacts
           PACKAGE_PATH="$(find ./artifacts -maxdepth 1 -name '*.vsix' -print -quit)"
           echo "package_path=client/${PACKAGE_PATH#./}" >> "$GITHUB_OUTPUT"
-
-      - name: Publish to Visual Studio Marketplace
-        if: ${{ github.event_name == 'release' && env.VSCE_PAT != '' }}
-        working-directory: client
-        run: npx --yes @vscode/vsce publish --no-dependencies
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
@@ -84,8 +79,7 @@ jobs:
       - name: Setup Node.js environment
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: npm
+          node-version: '24'
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
@@ -94,15 +88,38 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test
+        run: npm test
+
       - name: Publish to npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
+          DIRECT_PUBLISH: ${{ vars.NPM_DIRECT_PUBLISH }}
         run: |
           case "${TAG%%@*}" in
             x4-script-core) WORKSPACE=packages/core ;;
             x4-script-language-server) WORKSPACE=packages/server ;;
             x4-script-check) WORKSPACE=packages/cli ;;
-            *) echo "Unknown component in tag ${TAG}" >&2; exit 1 ;;
+            *) echo "::error::Unknown component in tag ${TAG}"; exit 1 ;;
           esac
-          npm publish --workspace "${WORKSPACE}" --access public --provenance
+          NAME="$(node -p "require('./${WORKSPACE}/package.json').name")"
+          VERSION="$(node -p "require('./${WORKSPACE}/package.json').version")"
+          if [ "${TAG}" != "${NAME}@v${VERSION}" ]; then
+            echo "::error::Tag ${TAG} does not match ${NAME} ${VERSION} in ${WORKSPACE}"
+            exit 1
+          fi
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${NAME}")" = 404 ]; then
+            echo "::warning::${NAME} is not on npm yet: its first version is published by hand, see Releases in README.md"
+            exit 0
+          fi
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${NAME}/${VERSION}")" = 200 ]; then
+            echo "::notice::${NAME}@${VERSION} is on npm already"
+            exit 0
+          fi
+          npm --version
+          if [ "${DIRECT_PUBLISH}" = true ]; then
+            npm publish --workspace "${WORKSPACE}"
+          else
+            npm stage publish --workspace "${WORKSPACE}"
+            echo "::notice::${NAME}@${VERSION} is staged: approve it on npmjs.com or with npm stage approve"
+          fi

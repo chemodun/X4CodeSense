@@ -1,10 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "pull-request-title-pattern": "build${scope}: release${component} ${version}",
+  "group-pull-request-title-pattern": "build: release ${branch}",
   "include-component-in-tag": true,
   "include-v-in-tag": true,
   "tag-separator": "@",
-  "separate-pull-requests": true,
+  "initial-version": "0.1.0",
+  "bump-minor-pre-major": true,
   "plugins": ["node-workspace"],
   "changelog-sections": [
     { "type": "feat", "section": "Features", "hidden": false },
@@ -23,6 +25,6 @@
     "packages/core": { "release-type": "node", "component": "x4-script-core" },
     "packages/server": { "release-type": "node", "component": "x4-script-language-server" },
     "packages/cli": { "release-type": "node", "component": "x4-script-check" },
-    "client": { "release-type": "node", "component": "x4codesense" }
+    "client": { "release-type": "node", "component": "x4codesense", "exclude-paths": ["client/docs"] }
   }
 }
