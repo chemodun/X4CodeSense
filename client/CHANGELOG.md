@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.1](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.1.0...x4codesense@v0.1.1) (2026-09-29)
+
+
+### Documentation
+
+* **client:** the Marketplace README, an icon and a prepared publishing job ([a0b2f37](https://github.com/chemodun/X4CodeSense/commit/a0b2f37785bd9d967637b629ca5dfc4fced8917c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.1.0 to 0.1.1
+
 ## 0.1.0 (2026-09-29)
 
 

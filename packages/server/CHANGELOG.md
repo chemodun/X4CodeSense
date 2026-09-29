@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.1.0...x4-script-language-server@v0.1.1) (2026-09-29)
+
+
+### Documentation
+
+* **readme:** drop the first-publication instructions ([3cd1368](https://github.com/chemodun/X4CodeSense/commit/3cd1368860974ecf5f25cf5725fbebd1c237de95))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.1.0 to 0.1.1
+
 ## 0.1.0 (2026-09-29)
 
 
