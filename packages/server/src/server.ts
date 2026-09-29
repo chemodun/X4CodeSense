@@ -9,6 +9,7 @@ import {
   TextDocumentSyncKind,
   type CompletionItem,
   type CompletionList,
+  type DocumentSymbol,
   type Hover,
   type InitializeParams,
   type InitializeResult,
@@ -24,6 +25,7 @@ import {
   completionAt,
   definitionAt,
   DocumentInfoRequestMethod,
+  documentSymbols,
   hoverAt,
   languageOfTextFile,
   loadGameData,
@@ -133,6 +135,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       definitionProvider: true,
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
+      documentSymbolProvider: { label: 'X4CodeSense' },
     },
     serverInfo: {
       name: 'X4CodeSense language server',
@@ -526,6 +529,12 @@ connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
     return new ResponseError(ErrorCodes.InvalidRequest, renamed.refused);
   }
   return renamed ?? null;
+});
+
+// Other XML gets no outline from here, so other XML tooling gives it one.
+connection.onDocumentSymbol((params): DocumentSymbol[] | null => {
+  const analysis = analysisByUri.get(params.textDocument.uri);
+  return analysis?.structure ? documentSymbols(analysis) : null;
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {

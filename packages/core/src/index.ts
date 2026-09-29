@@ -46,3 +46,4 @@ export * from './features/texts';
 export * from './features/project';
 export * from './features/patchContent';
 export * from './features/patchPaths';
+export * from './features/symbols';

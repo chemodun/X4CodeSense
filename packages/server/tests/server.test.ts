@@ -21,6 +21,7 @@ import {
   DidChangeWorkspaceFoldersNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
+  DocumentSymbolRequest,
   ExitNotification,
   HoverRequest,
   InitializedNotification,
@@ -34,6 +35,7 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
+  type DocumentSymbol,
   type Location,
   type ProtocolConnection,
   type PublishDiagnosticsParams,
@@ -121,6 +123,7 @@ beforeAll(async () => {
   expect(result.capabilities.definitionProvider).toBe(true);
   expect(result.capabilities.referencesProvider).toBe(true);
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
+  expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
   await connection.sendNotification(InitializedNotification.type, {});
 }, 30_000);
 
@@ -374,6 +377,34 @@ describe('references and rename', () => {
     expect((locations ?? []).map((location) => location.range.start.line)).toEqual([3, 4]);
     const edit = await connection.sendRequest(RenameRequest.type, { textDocument: { uri: labelUri }, position: labelPosition, newName: 'begin' });
     expect(edit?.changes?.[labelUri].map((change) => change.newText)).toEqual(['begin', 'begin']);
+  });
+});
+
+describe('outline', () => {
+  it('outlines scripts and leaves other XML to other tooling', async () => {
+    const uri = 'file:///mod/md/Outline.xml';
+    const lines = [
+      '<mdscript name="O">',
+      '  <cues>',
+      '    <cue name="A">',
+      '      <actions>',
+      '        <set_value name="$x" exact="1"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    await open(uri, lines.join('\n'));
+    const symbols = (await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } })) as DocumentSymbol[] | null;
+    const flat = (list: DocumentSymbol[]): string[] =>
+      list.flatMap((symbol) => [`${symbol.name}@${symbol.selectionRange.start.line}`, ...flat(symbol.children ?? [])]);
+    expect(flat(symbols ?? [])).toEqual(['O@0', 'A@2', '$x@4']);
+    const otherUri = 'file:///mod/assets/ship.xml';
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<macros>\n  <macro name="m"/>\n</macros>\n' },
+    });
+    expect(await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri: otherUri } })).toBeNull();
   });
 });
 
