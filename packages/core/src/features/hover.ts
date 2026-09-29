@@ -66,7 +66,7 @@ function hoverInValue(
   if (game?.index && md) {
     const reference = md.reference;
     const [start, end] = md.part === 'script' ? [reference.scriptStart, reference.scriptEnd] : [reference.cueStart ?? 0, reference.cueEnd ?? 0];
-    return hover(analysis, describeMdReference(game.index, reference, md.part), start, end);
+    return hover(analysis, describeMdReference(game.index, reference, md.part, analysis.document.uri), start, end);
   }
   const found = chainAtToken(value, index);
   if (!found) {
@@ -94,7 +94,7 @@ export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameDa
   }
   const named = namedItemAt(analysis, offset);
   if (named) {
-    return hover(analysis, describeNamedItem(named, analysis.document, game?.index), named.start, named.end);
+    return hover(analysis, describeNamedItem(named, analysis.document, game?.index, analysis.detection.script?.name), named.start, named.end);
   }
   const context = positionContext(analysis, offset, schemaOf(game, analysis));
   switch (context.kind) {

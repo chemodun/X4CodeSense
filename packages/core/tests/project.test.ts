@@ -1,8 +1,21 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import type { Location } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
-import { analyzeText, loadGameData, loadScriptIndex, parseXml, ScriptIndex } from '../src';
+import {
+  analyzeText,
+  hoverAt,
+  loadGameData,
+  loadScriptIndex,
+  parseXml,
+  prepareRenameAt,
+  referencesAt,
+  renameAt,
+  ScriptIndex,
+  type DocumentAnalysis,
+  type GameData,
+} from '../src';
 
 const project = fileURLToPath(new URL('./fixtures/project', import.meta.url));
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
@@ -231,5 +244,247 @@ describe('checks against the index', () => {
 
   it('leaves references to the document itself to its own checks', () => {
     expect(report(md('<cancel_cue cue="md.S.Missing"/>'), true)).toEqual(["5:31 cue-undefined: 'Missing' is no keyword and no cue of this script"]);
+  });
+});
+
+describe('references and rename across scripts', () => {
+  const game = loadGameData(unpacked);
+  const root = path.join(project, 'cross');
+  const workspace = path.join(root, 'workspace');
+  const scripts = new ScriptIndex(game.schemas);
+  const withIndex: GameData = { ...game, folder: path.join(root, 'game'), index: scripts };
+  const options = { editableFolders: [workspace] };
+  const texts = new Map<string, string>();
+  const add = (file: string, source: string, lines: string[]): string => {
+    const text = `${lines.join('\n')}\n`;
+    texts.set(file, text);
+    scripts.setStructure(file, text, parseXml(text), source, true);
+    return file;
+  };
+  const base = add(path.join(root, 'game', 'md', 'base.xml'), 'game', [
+    '<mdscript name="Base">',
+    '  <cues>',
+    '    <cue name="Core"/>',
+    '  </cues>',
+    '</mdscript>',
+  ]);
+  const api = add(path.join(workspace, 'api_mod', 'md', 'api.xml'), 'api_mod', [
+    '<mdscript name="Api">',
+    '  <cues>',
+    '    <cue name="Register" instantiate="true">',
+    '      <actions>',
+    '        <set_value name="$count" exact="1"/>',
+    '        <signal_cue_instantly cue="Register"/>',
+    '        <debug_text text="md.Api.Register.$count"/>',
+    '      </actions>',
+    '    </cue>',
+    '    <library name="Counting">',
+    '      <actions>',
+    '        <set_value name="$total" exact="$tally + 1"/>',
+    '      </actions>',
+    '    </library>',
+    '  </cues>',
+    '</mdscript>',
+  ]);
+  const user = add(path.join(workspace, 'user_mod', 'md', 'user.xml'), 'user_mod', [
+    '<mdscript name="User">',
+    '  <cues>',
+    '    <cue name="Use">',
+    '      <actions>',
+    '        <signal_cue_instantly cue="md.Api.Register"/>',
+    '        <set_value name="$seen" exact="md.Api.Register.$count + md.Base.Core.$x"/>',
+    '        <set_value name="$tally" exact="1"/>',
+    '        <include_actions ref="md.Api.Counting"/>',
+    '      </actions>',
+    '    </cue>',
+    '  </cues>',
+    '</mdscript>',
+  ]);
+  const library = add(path.join(workspace, 'api_mod', 'aiscripts', 'lib.shared.xml'), 'api_mod', [
+    '<aiscript name="lib.shared">',
+    '  <interrupts>',
+    '    <library>',
+    '      <actions name="SharedActions">',
+    '        <set_value name="$shared" exact="$input"/>',
+    '      </actions>',
+    '    </library>',
+    '  </interrupts>',
+    '  <attention min="unknown">',
+    '    <actions/>',
+    '  </attention>',
+    '</aiscript>',
+  ]);
+  const order = add(path.join(workspace, 'user_mod', 'aiscripts', 'order.user.xml'), 'user_mod', [
+    '<aiscript name="order.user">',
+    '  <attention min="unknown">',
+    '    <actions>',
+    '      <set_value name="$input" exact="1"/>',
+    '      <include_interrupt_actions ref="SharedActions"/>',
+    '      <set_value name="$local" exact="$shared"/>',
+    '    </actions>',
+    '  </attention>',
+    '</aiscript>',
+  ]);
+  /** Where the nth `needle` of a line of a file starts, as `file:line:character` with zero-based numbers. */
+  const place = (file: string, line: number, needle: string, nth = 0): string => {
+    const text = (texts.get(file) ?? '').split('\n')[line];
+    let character = -1;
+    for (let found = 0; found <= nth; found++) {
+      character = text.indexOf(needle, character + 1);
+    }
+    return `${path.basename(file)}:${line}:${character}`;
+  };
+  /** The analysis of a file, with the caret inside the nth `needle` of a line. */
+  const at = (file: string, line: number, needle: string, nth = 0): { analysis: DocumentAnalysis; offset: number } => {
+    const text = texts.get(file) ?? '';
+    const analysis = analyzeText(text, { schemas: game.schemas, properties: game.properties, index: scripts }, pathToFileURL(file).toString());
+    const character = Number(place(file, line, needle, nth).split(':')[2]);
+    return { analysis, offset: analysis.document.offsetAt({ line, character: character + 1 }) };
+  };
+  const places = (locations: Location[]): string[] =>
+    locations.map((location) => `${path.basename(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}`).sort();
+  const references = (file: string, line: number, needle: string, nth = 0): string[] => {
+    const { analysis, offset } = at(file, line, needle, nth);
+    return places(referencesAt(analysis, offset, withIndex));
+  };
+  const rename = (file: string, line: number, needle: string, newName: string, nth = 0, renameOptions = options): string[] | string | undefined => {
+    const { analysis, offset } = at(file, line, needle, nth);
+    const renamed = renameAt(analysis, offset, newName, withIndex, renameOptions);
+    if (renamed && 'refused' in renamed) {
+      return renamed.refused;
+    }
+    return Object.entries(renamed?.changes ?? {})
+      .flatMap(([uri, edits]) =>
+        edits.map((edit) => `${path.basename(fileURLToPath(uri))}:${edit.range.start.line}:${edit.range.start.character}=${edit.newText}`)
+      )
+      .sort();
+  };
+  const refusal = (file: string, line: number, needle: string, renameOptions = options): string | undefined => {
+    const { analysis, offset } = at(file, line, needle);
+    const prepared = prepareRenameAt(analysis, offset, withIndex, renameOptions);
+    return prepared && 'refused' in prepared ? prepared.refused : undefined;
+  };
+
+  it('records the references each file makes to names other files define', () => {
+    expect(scripts.cueReferences('Api', 'Register').map((reference) => `${path.basename(reference.position.file)}:${reference.position.line}`)).toEqual([
+      'api.xml:6',
+      'user.xml:4',
+      'user.xml:5',
+    ]);
+    expect(scripts.cueVariableReferences('Api', 'Register', 'count')).toHaveLength(2);
+    expect(scripts.scriptReferences('Api')).toHaveLength(4);
+    expect(scripts.libraryReferences('actions', 'SharedActions').map((reference) => path.basename(reference.position.file))).toEqual(['order.user.xml']);
+    expect(scripts.cues('Api', 'Register')[0].namePosition).toEqual({ file: api, line: 2, character: 15 });
+    expect(scripts.scripts('md', 'Api')[0].namePosition).toEqual({ file: api, line: 0, character: 16 });
+    expect(scripts.libraryItems('actions', 'SharedActions')[0].namePosition).toEqual({ file: library, line: 3, character: 21 });
+    expect([...scripts.libraryItemUses(scripts.libraryItems('actions', 'SharedActions')[0])].sort()).toEqual(['input', 'shared']);
+    expect([...scripts.cueVariableUses('Api', 'Counting')].sort()).toEqual(['tally', 'total']);
+  });
+
+  it('finds a cue in every script and renames it everywhere', () => {
+    const expected = [
+      place(api, 2, 'Register'),
+      place(api, 5, 'Register'),
+      place(api, 6, 'Register'),
+      place(user, 4, 'Register'),
+      place(user, 5, 'Register'),
+    ].sort();
+    expect(references(api, 2, 'Register')).toEqual(expected);
+    expect(references(user, 4, 'Register')).toEqual(expected);
+    const { analysis, offset } = at(user, 5, 'Register');
+    expect(prepareRenameAt(analysis, offset, withIndex, options)).toMatchObject({ placeholder: 'Register', range: { start: { line: 5 } } });
+    expect(rename(user, 4, 'Register', 'Enrol')).toEqual(expected.map((found) => `${found}=Enrol`));
+  });
+
+  it('tells in the hover how often other files name a cue, a script or a library item', () => {
+    const hoverText = (file: string, line: number, needle: string): string => {
+      const { analysis, offset } = at(file, line, needle);
+      const found = hoverAt(analysis, offset, withIndex);
+      return found && typeof found.contents === 'object' && 'value' in found.contents ? found.contents.value : '';
+    };
+    expect(hoverText(api, 2, 'Register')).toContain('Referenced 2 times here, 2 times in 1 other file');
+    expect(hoverText(user, 4, 'Register')).toContain('Referenced 1 time in 1 other file');
+    expect(hoverText(user, 4, 'Api')).toContain('Referenced 1 time in 1 other file');
+    expect(hoverText(library, 3, 'SharedActions')).toContain('Referenced 0 times here, 1 time in 1 other file');
+    expect(hoverText(base, 2, 'Core')).toContain('Referenced 0 times here, 1 time in 1 other file');
+  });
+
+  it('renames a variable of a cue written md.Script.Cue.$x in other scripts', () => {
+    const expected = [place(api, 4, '$count'), place(api, 6, '$count'), place(user, 5, '$count')].sort();
+    expect(references(user, 5, '$count')).toEqual(expected);
+    expect(references(api, 4, '$count')).toEqual(expected);
+    expect(rename(api, 4, '$count', 'number')).toEqual(expected.map((found) => `${found}=$number`));
+  });
+
+  it('renames a Mission Director script wherever md.Script names it', () => {
+    const expected = [place(api, 0, 'Api'), place(api, 6, 'Api'), place(user, 4, 'Api'), place(user, 5, 'Api'), place(user, 7, 'Api')].sort();
+    expect(references(user, 7, 'Api')).toEqual(expected);
+    expect(references(api, 0, 'Api')).toEqual(expected);
+    const { analysis, offset } = at(api, 0, 'Api');
+    expect(prepareRenameAt(analysis, offset, withIndex, options)).toMatchObject({ placeholder: 'Api', range: { start: { line: 0, character: 16 } } });
+    expect(rename(user, 5, 'Api', 'Service')).toEqual(expected.map((found) => `${found}=Service`));
+  });
+
+  it('renames an interrupt library item in every AI script', () => {
+    const expected = [place(library, 3, 'SharedActions'), place(order, 4, 'SharedActions')].sort();
+    expect(references(order, 4, 'SharedActions')).toEqual(expected);
+    expect(rename(library, 3, 'SharedActions', 'Common')).toEqual(expected.map((found) => `${found}=Common`));
+  });
+
+  it('refuses a rename it cannot carry out everywhere', () => {
+    // A cue of the game is found, but not renamed.
+    expect(references(user, 5, 'Core')).toEqual([place(base, 2, 'Core'), place(user, 5, 'Core')].sort());
+    expect(refusal(user, 5, 'Core')).toBe('cue Core of Base is also written in base.xml of the game, which cannot be renamed');
+    expect(refusal(api, 2, 'Register', { editableFolders: [path.join(workspace, 'api_mod')] })).toBe(
+      'cue Register of Api is also written in user.xml (user_mod), outside the workspace'
+    );
+    expect(refusal(api, 2, 'Register', {})).toContain('outside the workspace');
+    expect(refusal(order, 5, '$shared')).toBe('$shared is also set by interrupt actions SharedActions in lib.shared.xml, which a rename here does not change');
+    expect(refusal(order, 3, '$input')).toBe('$input is also used by interrupt actions SharedActions in lib.shared.xml, which a rename here does not change');
+    expect(refusal(library, 4, '$input')).toBe(
+      '$input is used in the interrupt library, which runs in the scripts that use it, such as the one using actions SharedActions'
+    );
+    expect(refusal(user, 6, '$tally')).toBe('$tally is also used by library Counting of Api, included here, which a rename here does not change');
+    expect(refusal(api, 11, '$tally')).toBe('$tally is in library Counting, whose variables scripts elsewhere set');
+    // Without such ties a variable renames as before.
+    expect(refusal(order, 5, '$local')).toBeUndefined();
+    expect(rename(order, 5, '$local', '$mine')).toEqual([`${place(order, 5, '$local')}=$mine`]);
+  });
+
+  it('works while a script is being typed', () => {
+    const typing = add(path.join(workspace, 'user_mod', 'md', 'typing.xml'), 'user_mod', [
+      '<mdscript name="Typing">',
+      '  <cues>',
+      '    <cue name="T">',
+      '      <actions>',
+      '        <signal_cue_instantly cue="md.Api.Register',
+    ]);
+    const everywhere = [
+      place(api, 2, 'Register'),
+      place(api, 5, 'Register'),
+      place(api, 6, 'Register'),
+      place(user, 4, 'Register'),
+      place(user, 5, 'Register'),
+      place(typing, 4, 'Register'),
+    ].sort();
+    expect(references(typing, 4, 'Register')).toEqual(everywhere);
+    expect(references(api, 2, 'Register')).toEqual(everywhere);
+    expect(rename(typing, 4, 'Register', 'Enrol')).toEqual(everywhere.map((found) => `${found}=Enrol`));
+    scripts.removeFile(typing);
+  });
+
+  it('refuses when a script is defined twice or a file changed since it was indexed', () => {
+    const twice = add(path.join(workspace, 'other_mod', 'md', 'api.xml'), 'other_mod', ['<mdscript name="Api">', '  <cues/>', '</mdscript>']);
+    expect(refusal(user, 4, 'Register')).toBe(
+      'Mission Director script Api is defined 2 times (api.xml, api.xml): its references cannot tell which one they mean'
+    );
+    scripts.removeFile(twice);
+    const unsaved = path.join(workspace, 'user_mod', 'md', 'gone.xml');
+    const text =
+      '<mdscript name="Gone">\n  <cues>\n    <cue name="G">\n      <actions>\n        <cancel_cue cue="md.Api.Register"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    scripts.setText(unsaved, text, 'user_mod');
+    expect(refusal(user, 4, 'Register')).toBe('gone.xml changed since it was indexed; save it and try again');
+    scripts.removeFile(unsaved);
+    expect(refusal(user, 4, 'Register')).toBeUndefined();
   });
 });

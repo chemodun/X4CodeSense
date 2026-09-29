@@ -1,13 +1,29 @@
 import * as path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CompletionItemKind, Location, Range, type CompletionItem } from 'vscode-languageserver-types';
 import type { MdReference } from '../project/mdReferences';
-import type { IndexedCue, IndexedLibraryItem, IndexedPosition, IndexedScript, ScriptIndex } from '../project/scriptIndex';
+import type { IndexedCue, IndexedLibraryItem, IndexedPosition, IndexedReference, IndexedScript, ScriptIndex } from '../project/scriptIndex';
 import { escapeMarkdown, inlineCode } from './markdown';
 
 /** An LSP location for a place in an indexed file. */
 export function indexedLocation(position: IndexedPosition): Location {
   return Location.create(pathToFileURL(position.file).toString(), Range.create(position.line, position.character, position.line, position.character));
+}
+
+/** How often references of other files than the document's name something, for a hover; empty when none do. */
+export function describeReferencesElsewhere(references: readonly IndexedReference[], uri?: string): string {
+  let own: string | undefined;
+  try {
+    own = uri?.startsWith('file:') ? path.resolve(fileURLToPath(uri)).toLowerCase() : undefined;
+  } catch {
+    own = undefined;
+  }
+  const others = references.filter((reference) => path.resolve(reference.position.file).toLowerCase() !== own);
+  const files = new Set(others.map((reference) => path.resolve(reference.position.file).toLowerCase())).size;
+  if (others.length === 0) {
+    return '';
+  }
+  return `${others.length} time${others.length === 1 ? '' : 's'} in ${files} other file${files === 1 ? '' : 's'}`;
 }
 
 /** Where an indexed definition is, for a hover: the file, its source, the line, and the patch that adds it. */
@@ -42,8 +58,8 @@ function cueFacts(cue: IndexedCue): string[] {
   return facts;
 }
 
-/** Hover text for the script or the cue part of `md.<Script>.<Cue>`. */
-export function describeMdReference(index: ScriptIndex, reference: MdReference, part: 'script' | 'cue'): string {
+/** Hover text for the script or the cue part of `md.<Script>.<Cue>`, written in the document at the uri. */
+export function describeMdReference(index: ScriptIndex, reference: MdReference, part: 'script' | 'cue', uri?: string): string {
   const scripts = index.scripts('md', reference.script);
   const scriptName = escapeMarkdown(reference.script);
   if (part === 'script' || reference.cue === undefined) {
@@ -56,6 +72,10 @@ export function describeMdReference(index: ScriptIndex, reference: MdReference, 
     }
     if (scripts.length > 1) {
       lines.push('', `Defined ${scripts.length} times`);
+    }
+    const elsewhere = describeReferencesElsewhere(index.scriptReferences(reference.script), uri);
+    if (elsewhere) {
+      lines.push('', `Referenced ${elsewhere}`);
     }
     return lines.join('\n').trimEnd();
   }
@@ -71,6 +91,10 @@ export function describeMdReference(index: ScriptIndex, reference: MdReference, 
     lines.push('', facts.join(' · '));
   }
   lines.push('', ...cues.map((cue) => `${where(cue.position, sourceOf(index, cue.position), cue.patch)}  `));
+  const elsewhere = describeReferencesElsewhere(index.cueReferences(reference.script, reference.cue), uri);
+  if (elsewhere) {
+    lines.push('', `Referenced ${elsewhere}`);
+  }
   return lines.join('\n').trimEnd();
 }
 

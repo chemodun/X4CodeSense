@@ -1,8 +1,10 @@
 import {
   createConnection,
   DidChangeConfigurationNotification,
+  ErrorCodes,
   FileChangeType,
   ProposedFeatures,
+  ResponseError,
   TextDocuments,
   TextDocumentSyncKind,
   type CompletionItem,
@@ -484,21 +486,26 @@ connection.onDefinition((params): Location[] => {
 
 connection.onReferences((params): Location[] => {
   const located = locate(params.textDocument.uri, params.position);
-  return located ? referencesAt(located.analysis, located.offset) : [];
+  return located ? referencesAt(located.analysis, located.offset, game) : [];
 });
 
+// A rename may edit other files of the workspace, never the game's; a refusal is shown to the user.
 connection.onPrepareRename((params) => {
   const located = locate(params.textDocument.uri, params.position);
-  return located ? (prepareRenameAt(located.analysis, located.offset) ?? null) : null;
+  const prepared = located ? prepareRenameAt(located.analysis, located.offset, game, { editableFolders: workspaceFolders }) : undefined;
+  if (prepared && 'refused' in prepared) {
+    return new ResponseError(ErrorCodes.InvalidRequest, prepared.refused);
+  }
+  return prepared ?? null;
 });
 
-connection.onRenameRequest((params): WorkspaceEdit | null => {
+connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
   const located = locate(params.textDocument.uri, params.position);
-  if (!located) {
-    return null;
+  const renamed = located ? renameAt(located.analysis, located.offset, params.newName, game, { editableFolders: workspaceFolders }) : undefined;
+  if (renamed && 'refused' in renamed) {
+    return new ResponseError(ErrorCodes.InvalidRequest, renamed.refused);
   }
-  const edits = renameAt(located.analysis, located.offset, params.newName);
-  return edits.length > 0 ? { changes: { [params.textDocument.uri]: edits } } : null;
+  return renamed ?? null;
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {

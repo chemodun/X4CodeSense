@@ -20,6 +20,11 @@ export interface MdReference {
   cue?: string;
   cueStart?: number;
   cueEnd?: number;
+  /** The variable of the cue, when `.$x` follows the cue name; without `$`. */
+  variable?: string;
+  /** Text offsets of `$x`. */
+  variableStart?: number;
+  variableEnd?: number;
   /** True under `@` or tested with `?`: a missing cue does not fail there. */
   guarded: boolean;
 }
@@ -37,40 +42,66 @@ function guardedNodes(expression: Expression): Set<Expression> {
   return guarded;
 }
 
-/** The `md.<Script>[.<Cue>]` references of one attribute value. */
+type PropertyNode = Extract<Expression, { kind: 'property' }>;
+
+/** True for a named step that is no variable: a script or cue name. */
+function isNameStep(node: Expression): node is PropertyNode {
+  return node.kind === 'property' && node.name !== '' && !node.name.startsWith('$');
+}
+
+/** True for `md.<Script>`. */
+function isScriptNode(node: Expression): node is PropertyNode {
+  return isNameStep(node) && node.object.kind === 'name' && node.object.name === 'md';
+}
+
+/** The `md.<Script>[.<Cue>[.$x]]` references of one attribute value. */
 export function mdReferencesInAttribute(element: XmlElement, attribute: XmlAttribute): MdReference[] {
   const references = new Map<object, MdReference>();
   const whole = parsedValue(attribute).expression;
   let guarded: Set<Expression> | undefined;
   const isGuarded = (node: Expression): boolean => (guarded ??= guardedNodes(whole)).has(node);
-  walkExpression(whole, (node) => {
-    if (node.kind !== 'property' || node.name === '' || node.name.startsWith('$')) {
-      return;
-    }
-    const object = node.object;
-    if (object.kind === 'name' && object.name === 'md') {
-      if (!references.has(node)) {
-        references.set(node, {
-          element,
-          attribute,
-          script: node.name,
-          scriptStart: offsetInValue(attribute, node.nameStart),
-          scriptEnd: offsetInValue(attribute, node.nameEnd),
-          guarded: isGuarded(node),
-        });
-      }
-      return;
-    }
-    if (object.kind === 'property' && object.object.kind === 'name' && object.object.name === 'md' && object.name !== '' && !object.name.startsWith('$')) {
-      references.set(object, {
+  const cueReference = (node: PropertyNode, script: PropertyNode): MdReference => {
+    let reference = references.get(script);
+    if (!reference) {
+      reference = {
         element,
         attribute,
-        script: object.name,
-        scriptStart: offsetInValue(attribute, object.nameStart),
-        scriptEnd: offsetInValue(attribute, object.nameEnd),
+        script: script.name,
+        scriptStart: offsetInValue(attribute, script.nameStart),
+        scriptEnd: offsetInValue(attribute, script.nameEnd),
         cue: node.name,
         cueStart: offsetInValue(attribute, node.nameStart),
         cueEnd: offsetInValue(attribute, node.nameEnd),
+        guarded: isGuarded(node),
+      };
+      references.set(script, reference);
+    }
+    return reference;
+  };
+  // Outer nodes come first: `md.S.C.$x` is seen before `md.S.C`, and that before `md.S`.
+  walkExpression(whole, (node) => {
+    if (node.kind !== 'property' || node.name === '') {
+      return;
+    }
+    if (node.name.startsWith('$')) {
+      const cue = node.object;
+      if (isNameStep(cue) && isScriptNode(cue.object)) {
+        const reference = cueReference(cue, cue.object);
+        reference.variable = node.name.slice(1);
+        reference.variableStart = offsetInValue(attribute, node.nameStart);
+        reference.variableEnd = offsetInValue(attribute, node.nameEnd);
+      }
+      return;
+    }
+    if (isScriptNode(node.object)) {
+      cueReference(node, node.object);
+    } else if (isScriptNode(node) && !references.has(node)) {
+      references.set(node, {
+        element,
+        attribute,
+        script: node.name,
+        scriptStart: offsetInValue(attribute, node.nameStart),
+        scriptEnd: offsetInValue(attribute, node.nameEnd),
         guarded: isGuarded(node),
       });
     }
@@ -79,7 +110,7 @@ export function mdReferencesInAttribute(element: XmlElement, attribute: XmlAttri
 }
 
 /** Every `md.<Script>[.<Cue>]` reference in the expression attributes of an analysed script. */
-export function mdReferencesOf(analysis: DocumentAnalysis, xsd: XsdSchema | undefined): MdReference[] {
+export function mdReferencesOf(analysis: Pick<DocumentAnalysis, 'structure' | 'declarations'>, xsd: XsdSchema | undefined): MdReference[] {
   const references: MdReference[] = [];
   for (const element of analysis.structure?.elements ?? []) {
     const declaration = analysis.declarations.get(element) ?? xsd?.anyDeclaration(element.name);

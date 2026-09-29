@@ -17,15 +17,24 @@
  * every file would triple the time to build the index. From the scan alone come the libraries of other
  * scripts a Mission Director script includes, instantiates or runs, and, with the schemas, the
  * variables it writes into cues it gets as values (`$Cue.$x`, `event.param.$x`).
+ *
+ * References: with the schemas, each file records the names it uses that other files define, with the
+ * position of each: the parts of `md.<Script>.<Cue>.$x`, and interrupt library references. With where
+ * each script, cue and library item has its name, that is what find references and rename need across
+ * files. What a script refers to without naming the script (a cue's bare name, a variable in its cue) is
+ * worked out for a file when first asked for, like the variables of a cue.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { findExtensions } from '../extensions/extensions';
+import { collectNames, referenceKindOf, type DocumentNames } from '../names/namedItems';
+import { detectDocument } from '../scripts/scriptMetadata';
 import type { ScriptSchema } from '../types';
 import { collectVariables, receivesValue, type DocumentVariables } from '../variables/variables';
-import { attributeNamed, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
+import { attributeNamed, offsetInValue, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import type { SchemaSet } from '../xsd/loadSchemas';
-import type { XsdElement, XsdSchema } from '../xsd/schema';
+import { isExpressionAttribute, type XsdElement, type XsdSchema } from '../xsd/schema';
+import { mdReferencesInAttribute } from './mdReferences';
 
 /** Where something is defined: a file and a zero-based position. */
 export interface IndexedPosition {
@@ -48,6 +57,8 @@ export interface IndexedCue {
   /** `<param name>` of a library, or given to a cue that instantiates one. */
   params: string[];
   position: IndexedPosition;
+  /** Where the value of its `name` attribute starts. */
+  namePosition: IndexedPosition;
   /** The patch file that adds it, when it is not in the script's own file. */
   patch?: string;
 }
@@ -66,9 +77,27 @@ export interface IndexedLibraryItem {
   /** Name of the AI script that defines it. */
   script: string;
   position: IndexedPosition;
+  /** Where the value of its `name` attribute starts. */
+  namePosition: IndexedPosition;
   patch?: string;
   /** Variables it sets, which count as set in the script that uses it; empty when indexed without the schemas. */
   variables: IndexedVariable[];
+}
+
+/** What a reference names: a Mission Director script, a cue of one, a variable of that cue, or an interrupt library item. */
+export type IndexedReferenceKind = 'script' | 'cue' | 'variable' | IndexedLibraryKind;
+
+/** A name a file uses that may be defined in another file. */
+export interface IndexedReference {
+  kind: IndexedReferenceKind;
+  /** The script of `md.<Script>`, `md.<Script>.<Cue>` and `md.<Script>.<Cue>.$x`. */
+  script?: string;
+  /** The cue of `md.<Script>.<Cue>` and `md.<Script>.<Cue>.$x`. */
+  cue?: string;
+  /** The name itself: of the script, the cue, the variable (without `$`) or the library item. */
+  name: string;
+  /** Where the name starts; for a variable, where its `$` is. */
+  position: IndexedPosition;
 }
 
 export interface IndexedScript {
@@ -79,6 +108,8 @@ export interface IndexedScript {
   schema: ScriptSchema;
   name: string;
   position: IndexedPosition;
+  /** Where the value of the root's `name` attribute starts, when it has one. */
+  namePosition?: IndexedPosition;
   cues: IndexedCue[];
   libraryItems: IndexedLibraryItem[];
   /** `<param name>` of an AI script or order. */
@@ -89,6 +120,8 @@ export interface IndexedScript {
   includes: string[];
   /** Libraries of other scripts a Mission Director script instantiates (`<cue ref>`) or runs (`<run_actions ref>`). */
   instantiates: string[];
+  /** Names it uses that other files may define; empty when indexed without the schemas. */
+  references: IndexedReference[];
 }
 
 export interface IndexedPatch {
@@ -101,6 +134,7 @@ export interface IndexedPatch {
   writesThroughValues: string[];
   includes: string[];
   instantiates: string[];
+  references: IndexedReference[];
 }
 
 export type IndexedFile = IndexedScript | IndexedPatch;
@@ -117,30 +151,70 @@ function keyOf(file: string): string {
   return path.resolve(file).toLowerCase();
 }
 
-/** Zero-based line and character of offsets; fastest when asked in increasing order. */
+/** Zero-based line and character of offsets, in any order. */
 function positionCounter(text: string): (offset: number) => { line: number; character: number } {
-  let line = 0;
-  let lineStart = 0;
-  let scanned = 0;
+  let starts: number[] | undefined;
   return (offset) => {
-    if (offset < scanned) {
-      line = 0;
-      lineStart = 0;
-      scanned = 0;
-    }
-    for (; scanned < offset; scanned++) {
-      if (text.charCodeAt(scanned) === 10) {
-        line++;
-        lineStart = scanned + 1;
+    if (!starts) {
+      starts = [0];
+      for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) {
+        starts.push(at + 1);
       }
     }
-    return { line, character: offset - lineStart };
+    let low = 0;
+    let high = starts.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (starts[middle] <= offset) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return { line: low, character: offset - starts[low] };
   };
 }
 
 function nameOf(element: XmlElement): string | undefined {
   const name = attributeNamed(element, 'name')?.value.trim();
   return name ? name : undefined;
+}
+
+/** Text offset where the trimmed value of the element's `name` attribute starts. */
+function nameOffset(element: XmlElement): number {
+  const attribute = attributeNamed(element, 'name');
+  if (!attribute) {
+    return element.start;
+  }
+  const value = attribute.value;
+  return offsetInValue(attribute, value.length - value.trimStart().length);
+}
+
+/**
+ * The declaration of an element of a scanned script, by its place under its parent's declaration as
+ * validation finds it, else by its name; memoized in the map.
+ */
+function declarationIn(element: XmlElement, xsd: XsdSchema, known: Map<XmlElement, XsdElement | undefined>): XsdElement | undefined {
+  if (known.has(element)) {
+    return known.get(element);
+  }
+  const parent = element.parent ? declarationIn(element.parent, xsd, known) : undefined;
+  const declaration = (element.parent ? parent?.child(element.name) : xsd.root(element.name)) ?? xsd.anyDeclaration(element.name);
+  known.set(element, declaration);
+  return declaration;
+}
+
+/** The declarations of every element of a scanned script, as `declarationIn` finds them. */
+function declarationsOf(structure: XmlStructure, xsd: XsdSchema): Map<XmlElement, XsdElement> {
+  const known = new Map<XmlElement, XsdElement | undefined>();
+  const declarations = new Map<XmlElement, XsdElement>();
+  for (const element of structure.elements) {
+    const declaration = declarationIn(element, xsd, known);
+    if (declaration) {
+      declarations.set(element, declaration);
+    }
+  }
+  return declarations;
 }
 
 function paramNames(elements: readonly XmlElement[]): string[] {
@@ -214,10 +288,49 @@ function addWritesThroughValues(element: XmlElement, xsd: XsdSchema, into: Set<s
   }
 }
 
+/** Adds the references of an element's attributes to other files' names, going by what the schema says each attribute is. */
+function addReferences(
+  element: XmlElement,
+  schema: ScriptSchema,
+  xsd: XsdSchema,
+  declarations: Map<XmlElement, XsdElement | undefined>,
+  at: (offset: number) => IndexedPosition,
+  into: IndexedReference[]
+): void {
+  for (const attribute of element.attributes) {
+    if (attribute.quote === '') {
+      continue;
+    }
+    if (schema === 'md') {
+      if (!attribute.value.includes('md.') || !isExpressionAttribute(declarationIn(element, xsd, declarations)?.attributes.get(attribute.name))) {
+        continue;
+      }
+      for (const reference of mdReferencesInAttribute(element, attribute)) {
+        const script = reference.script;
+        into.push({ kind: 'script', name: script, position: at(reference.scriptStart) });
+        if (reference.cue !== undefined && reference.cueStart !== undefined) {
+          const cue = reference.cue;
+          into.push({ kind: 'cue', script, name: cue, position: at(reference.cueStart) });
+          if (reference.variable !== undefined && reference.variableStart !== undefined) {
+            into.push({ kind: 'variable', script, cue, name: reference.variable, position: at(reference.variableStart) });
+          }
+        }
+      }
+      continue;
+    }
+    const kind = referenceKindOf(element, attribute.name, declarationIn(element, xsd, declarations)?.attributes.get(attribute.name));
+    const name = attribute.value.trim();
+    if (kind && kind !== 'label' && kind !== 'cue' && name !== '') {
+      into.push({ kind, name, position: at(offsetInValue(attribute, attribute.value.indexOf(name))) });
+    }
+  }
+}
+
 /**
  * What a file contributes to the index, from its scanned structure; undefined for anything but a script
  * or a script patch. With the schemas, the variables of AI script interrupt library items and those
- * Mission Director scripts write through values are indexed too.
+ * Mission Director scripts write through values are indexed too, and so are the references to names
+ * other files may define.
  */
 export function indexStructure(
   file: string,
@@ -232,7 +345,8 @@ export function indexStructure(
     return undefined;
   }
   const position = positionCounter(text);
-  const at = (element: XmlElement): IndexedPosition => ({ file, ...position(element.start) });
+  const atOffset = (offset: number): IndexedPosition => ({ file, ...position(offset) });
+  const at = (element: XmlElement): IndexedPosition => atOffset(element.start);
   const patch = root.name === 'diff';
   const schema: ScriptSchema | undefined = patch ? schemaOfFolder(file) : root.name === 'mdscript' ? 'md' : root.name === 'aiscript' ? 'aiscripts' : undefined;
   if (!schema) {
@@ -266,13 +380,19 @@ export function indexStructure(
   const writes = new Set<string>();
   const includes = new Set<string>();
   const instantiates = new Set<string>();
+  const references: IndexedReference[] = [];
   const mdXsd = schema === 'md' ? schemas.md : undefined;
+  const ownXsd = schemas[schema];
+  const declarations = new Map<XmlElement, XsdElement | undefined>();
   for (const element of structure.elements) {
     if (!counts(element)) {
       continue;
     }
     if (mdXsd) {
       addWritesThroughValues(element, mdXsd, writes);
+    }
+    if (ownXsd) {
+      addReferences(element, schema, ownXsd, declarations, atOffset, references);
     }
     if (schema === 'md' && (element.name === 'include_actions' || element.name === 'cue' || element.name === 'run_actions')) {
       const ref = attributeNamed(element, 'ref')?.value.trim();
@@ -292,6 +412,7 @@ export function indexStructure(
         params:
           element.name === 'library' ? paramNames(element.children.find((child) => child.name === 'params')?.children ?? []) : paramNames(element.children),
         position: at(element),
+        namePosition: atOffset(nameOffset(element)),
       };
       for (let current = element.parent; current; current = current.parent) {
         if ((current.name === 'cue' || current.name === 'library') && nameOf(current)) {
@@ -316,7 +437,14 @@ export function indexStructure(
     } else if (schema === 'aiscripts' && libraryKinds.has(element.name) && element.parent?.name === 'library' && element.parent.parent?.name === 'interrupts') {
       const name = nameOf(element);
       if (name) {
-        const item: IndexedLibraryItem = { kind: element.name as IndexedLibraryKind, name, script: scriptName, position: at(element), variables: [] };
+        const item: IndexedLibraryItem = {
+          kind: element.name as IndexedLibraryKind,
+          name,
+          script: scriptName,
+          position: at(element),
+          namePosition: atOffset(nameOffset(element)),
+          variables: [],
+        };
         itemsWithElements.push([item, element]);
         if (patch) {
           item.patch = file;
@@ -332,11 +460,15 @@ export function indexStructure(
     item.variables = variablesOfItem(element);
   }
   const writesThroughValues = [...writes].sort();
-  const uses = { writesThroughValues, includes: [...includes].sort(), instantiates: [...instantiates].sort() };
+  const uses = { writesThroughValues, includes: [...includes].sort(), instantiates: [...instantiates].sort(), references };
   if (patch) {
     return { kind: 'patch', file, source, schema, cues, libraryItems, ...uses };
   }
-  return { kind: 'script', file, source, schema, name: scriptName, position: at(root), cues, libraryItems, params, ...uses };
+  const script: IndexedScript = { kind: 'script', file, source, schema, name: scriptName, position: at(root), cues, libraryItems, params, ...uses };
+  if (scriptName !== '') {
+    script.namePosition = atOffset(nameOffset(root));
+  }
+  return script;
 }
 
 /** What other scripts can see of a file: when it changes, scripts that refer to it are checked again. */
@@ -350,6 +482,32 @@ function signatureOf(entry: IndexedFile | undefined): string {
   return entry.kind === 'script'
     ? `${entry.schema}|${entry.name}|${cues}|${items}|${entry.params.join(',')}|${uses}`
     : `${entry.schema}|patch|${cues}|${items}|${uses}`;
+}
+
+/** A script file as the index works it out when first asked: its text, variables and named items. */
+export interface IndexedFileModel {
+  file: string;
+  schema: ScriptSchema;
+  /** The editor's text of an open file, else the text on disk when the model was made. */
+  text: string;
+  /** Zero-based line and character of a text offset. */
+  positionAt(offset: number): { line: number; character: number };
+  readonly variables: DocumentVariables;
+  readonly names: DocumentNames;
+}
+
+/** The lookup key of what a reference names. */
+function referenceKey(kind: IndexedReferenceKind, name: string, script = '', cue = ''): string {
+  switch (kind) {
+    case 'script':
+      return `script:${name}`;
+    case 'cue':
+      return `cue:${script}.${name}`;
+    case 'variable':
+      return `variable:${script}.${cue}.${name}`;
+    default:
+      return `${kind}:${name}`;
+  }
 }
 
 interface Lookups {
@@ -369,12 +527,11 @@ export class ScriptIndex {
   private readonly folders = new Map<string, string>();
   /** Texts of files an editor holds, which may differ from the disk. */
   private readonly texts = new Map<string, string>();
-  /** Variables of script files with a way to tell positions, worked out when first asked for. */
-  private readonly variables = new Map<
-    string,
-    { variables: DocumentVariables; position: (offset: number) => { line: number; character: number } } | undefined
-  >();
+  /** Models of script files, worked out when first asked for. */
+  private readonly models = new Map<string, IndexedFileModel | undefined>();
   private lookups: Lookups | undefined;
+  /** References of every file by what they name, built when first asked for. */
+  private referenceLookup: Map<string, IndexedReference[]> | undefined;
   /** Answers of `cueVariables` by `Script.Cue`, until any file changes. */
   private readonly cueVariableLists = new Map<string, IndexedVariable[]>();
 
@@ -405,9 +562,10 @@ export class ScriptIndex {
     } else {
       this.texts.delete(key);
     }
-    this.variables.delete(key);
+    this.models.delete(key);
     this.cueVariableLists.clear();
     this.lookups = undefined;
+    this.referenceLookup = undefined;
     return signatureOf(entry) !== before;
   }
 
@@ -416,35 +574,98 @@ export class ScriptIndex {
     const key = keyOf(file);
     const removed = this.files.delete(key);
     this.texts.delete(key);
-    this.variables.delete(key);
+    this.models.delete(key);
     this.cueVariableLists.clear();
     if (removed) {
       this.lookups = undefined;
+      this.referenceLookup = undefined;
     }
     return removed;
   }
 
-  /** The variables of an indexed script, from the editor's text or the disk; undefined without the schemas or the file. */
-  private variablesOfScript(
-    script: IndexedScript
-  ): { variables: DocumentVariables; position: (offset: number) => { line: number; character: number } } | undefined {
-    const key = keyOf(script.file);
-    if (!this.variables.has(key)) {
-      const xsd = this.schemas?.schemas[script.schema];
-      let text = this.texts.get(key);
-      if (text === undefined && xsd) {
-        try {
-          text = readFileSync(script.file, 'utf8');
-        } catch {
-          text = undefined;
+  /** The text of a file as it is now: the editor's for an open file, else read from the disk; undefined when it cannot be read. */
+  currentText(file: string): string | undefined {
+    const text = this.texts.get(keyOf(file));
+    if (text !== undefined) {
+      return text;
+    }
+    try {
+      return readFileSync(file, 'utf8');
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The model of an indexed script file, from the editor's text or the disk, with declarations found as
+   * validation finds them; undefined without the schemas, for a patch, or when the file cannot be read.
+   */
+  fileModel(file: string): IndexedFileModel | undefined {
+    const key = keyOf(file);
+    if (!this.models.has(key)) {
+      this.models.set(key, this.makeModel(key));
+    }
+    return this.models.get(key);
+  }
+
+  private makeModel(key: string): IndexedFileModel | undefined {
+    const entry = this.files.get(key);
+    const xsd = entry?.kind === 'script' ? this.schemas?.schemas[entry.schema] : undefined;
+    const text = entry && xsd ? this.currentText(entry.file) : undefined;
+    if (!entry || !xsd || text === undefined) {
+      return undefined;
+    }
+    const structure = parseXml(text);
+    const source = { structure, declarations: declarationsOf(structure, xsd), detection: detectDocument(text) };
+    const schema = entry.schema;
+    let variables: DocumentVariables | undefined;
+    let names: DocumentNames | undefined;
+    return {
+      file: entry.file,
+      schema,
+      text,
+      positionAt: positionCounter(text),
+      get variables(): DocumentVariables {
+        return (variables ??= collectVariables(source, schema, xsd, undefined));
+      },
+      get names(): DocumentNames {
+        return (names ??= collectNames(source, schema, xsd, undefined));
+      },
+    };
+  }
+
+  /** Names of the variables read or set in the table of a Mission Director cue or library, in every script of that name. */
+  cueVariableUses(scriptName: string, cueName: string): Set<string> {
+    const uses = new Set<string>();
+    for (const script of this.scripts('md', scriptName)) {
+      const table = this.fileModel(script.file)?.variables.tables.find(
+        (candidate) => (candidate.kind === 'cue' || candidate.kind === 'library') && candidate.name === cueName
+      );
+      for (const name of table?.variables.keys() ?? []) {
+        uses.add(name);
+      }
+    }
+    return uses;
+  }
+
+  /** Names of the variables read or set inside an interrupt library item. */
+  libraryItemUses(item: IndexedLibraryItem): Set<string> {
+    const uses = new Set<string>();
+    const model = this.fileModel(item.position.file);
+    const element = model?.names.items.find((candidate) => candidate.kind === item.kind && candidate.name === item.name && candidate.definitions.length > 0)
+      ?.definitions[0].element;
+    if (!model || !element) {
+      return uses;
+    }
+    for (const occurrence of model.variables.occurrences) {
+      for (let current: XmlElement | undefined = occurrence.element; current; current = current.parent) {
+        if (current === element) {
+          uses.add(occurrence.name);
+          break;
         }
       }
-      this.variables.set(
-        key,
-        xsd && text !== undefined ? { variables: variablesOf(parseXml(text), script.schema, xsd), position: positionCounter(text) } : undefined
-      );
     }
-    return this.variables.get(key);
+    return uses;
   }
 
   /**
@@ -464,12 +685,12 @@ export class ScriptIndex {
   private findCueVariables(scriptName: string, cueName: string): IndexedVariable[] {
     const found: IndexedVariable[] = [];
     for (const script of this.scripts('md', scriptName)) {
-      const known = this.variablesOfScript(script);
-      const table = known?.variables.tables.find((candidate) => (candidate.kind === 'cue' || candidate.kind === 'library') && candidate.name === cueName);
-      if (!known || !table) {
+      const model = this.fileModel(script.file);
+      const table = model?.variables.tables.find((candidate) => (candidate.kind === 'cue' || candidate.kind === 'library') && candidate.name === cueName);
+      if (!model || !table) {
         continue;
       }
-      const position = known.position;
+      const position = model.positionAt;
       for (const variable of table.variables.values()) {
         const first = variable.definitions[0];
         if (first && !found.some((known) => known.name === variable.name)) {
@@ -621,6 +842,45 @@ export class ScriptIndex {
       .filter((key) => key.startsWith(prefix))
       .map((key) => key.slice(prefix.length))
       .sort((a, b) => a.localeCompare(b));
+  }
+
+  private references(key: string): IndexedReference[] {
+    if (!this.referenceLookup) {
+      const lookup = new Map<string, IndexedReference[]>();
+      for (const entry of this.files.values()) {
+        for (const reference of entry.references) {
+          const referenceKeyOf = referenceKey(reference.kind, reference.name, reference.script, reference.cue);
+          const list = lookup.get(referenceKeyOf);
+          if (list) {
+            list.push(reference);
+          } else {
+            lookup.set(referenceKeyOf, [reference]);
+          }
+        }
+      }
+      this.referenceLookup = lookup;
+    }
+    return this.referenceLookup.get(key) ?? [];
+  }
+
+  /** Every `md.<Script>` in any file, also as part of a longer reference, at the script name. */
+  scriptReferences(scriptName: string): IndexedReference[] {
+    return this.references(referenceKey('script', scriptName));
+  }
+
+  /** Every `md.<Script>.<Cue>` in any file, at the cue name. */
+  cueReferences(scriptName: string, cueName: string): IndexedReference[] {
+    return this.references(referenceKey('cue', cueName, scriptName));
+  }
+
+  /** Every `md.<Script>.<Cue>.$x` in any file, at the `$`. */
+  cueVariableReferences(scriptName: string, cueName: string, variableName: string): IndexedReference[] {
+    return this.references(referenceKey('variable', variableName, scriptName, cueName));
+  }
+
+  /** Every reference to an interrupt library item of a kind with a name, in any file. */
+  libraryReferences(kind: IndexedLibraryKind, name: string): IndexedReference[] {
+    return this.references(referenceKey(kind, name));
   }
 }
 

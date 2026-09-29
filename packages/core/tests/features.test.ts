@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { TextEdit } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeText,
@@ -41,6 +42,11 @@ function hoverText(marked: string): string | undefined {
 function definitionFiles(marked: string): string[] {
   const { analysis, offset } = at(marked);
   return definitionAt(analysis, offset, game).map((location) => path.basename(location.uri));
+}
+
+/** The edits a rename makes in the analysed document. */
+function editsOf(renamed: ReturnType<typeof renameAt>): TextEdit[] {
+  return renamed && 'changes' in renamed ? (renamed.changes?.['untitled:document.xml'] ?? []) : [];
 }
 
 /** A script with the body inside a cue. */
@@ -313,11 +319,11 @@ describe('variables', () => {
     const { analysis, offset } = at(script('<set_value name="$bar" exact="$fo|o + this.$foo"/>\n        <remove_value name="$foo"/>'));
     expect(positions(referencesAt(analysis, offset))).toEqual(['5:26', '7:39', '7:51', '8:29']);
     expect(prepareRenameAt(analysis, offset)).toMatchObject({ placeholder: '$foo', range: { start: { line: 6, character: 38 } } });
-    expect(renameAt(analysis, offset, '$baz').map((edit) => edit.newText)).toEqual(['$baz', '$baz', '$baz', '$baz']);
-    expect(renameAt(analysis, offset, 'qux')[0].newText).toBe('$qux');
+    expect(editsOf(renameAt(analysis, offset, '$baz')).map((edit) => edit.newText)).toEqual(['$baz', '$baz', '$baz', '$baz']);
+    expect(editsOf(renameAt(analysis, offset, 'qux'))[0].newText).toBe('$qux');
     expect(referencesAt(analysis, 0)).toEqual([]);
     expect(prepareRenameAt(analysis, 0)).toBeUndefined();
-    expect(renameAt(analysis, 0, '$z')).toEqual([]);
+    expect(renameAt(analysis, 0, '$z')).toBeUndefined();
   });
 
   it('renames a parameter without the dollar sign', () => {
@@ -325,7 +331,7 @@ describe('variables', () => {
       '<aiscript name="a">\n  <params>\n    <param name="foo"/>\n  </params>\n  <attention min="1">\n    <actions>\n      <set_value name="$n" exact="$f|oo"/>\n    </actions>\n  </attention>\n</aiscript>\n'
     );
     expect(positions(referencesAt(ai.analysis, ai.offset))).toEqual(['3:18', '7:35']);
-    expect(renameAt(ai.analysis, ai.offset, '$baz').map((edit) => edit.newText)).toEqual(['baz', '$baz']);
+    expect(editsOf(renameAt(ai.analysis, ai.offset, '$baz')).map((edit) => edit.newText)).toEqual(['baz', '$baz']);
   });
 });
 
@@ -413,13 +419,13 @@ describe('labels, cues and interrupt library items', () => {
     const { analysis, offset } = at(ai('<resume label="start"/>', '<abort_called_scripts resume="st|art"/>'));
     expect(lines(referencesAt(analysis, offset))).toEqual([9, 15, 16, 21]);
     expect(prepareRenameAt(analysis, offset)).toMatchObject({ placeholder: 'start', range: { start: { line: 8, character: 38 } } });
-    expect(renameAt(analysis, offset, ' begin ').map((edit) => edit.newText)).toEqual(['begin', 'begin', 'begin', 'begin']);
-    expect(renameAt(analysis, offset, '  ')).toEqual([]);
+    expect(editsOf(renameAt(analysis, offset, ' begin ')).map((edit) => edit.newText)).toEqual(['begin', 'begin', 'begin', 'begin']);
+    expect(renameAt(analysis, offset, '  ')).toBeUndefined();
     const other = at(ai('<label name="ot|her"/>'));
     expect(lines(referencesAt(other.analysis, other.offset))).toEqual([16]);
     const cueRename = at(actions('<cancel_cue cue="A"/>\n        <set_value name="$x" exact="md.S.A|.$y"/>'));
     expect(lines(referencesAt(cueRename.analysis, cueRename.offset))).toEqual([3, 5, 6]);
-    expect(renameAt(cueRename.analysis, cueRename.offset, 'Begin').map((edit) => edit.range.start.character)).toEqual([15, 25, 41]);
+    expect(editsOf(renameAt(cueRename.analysis, cueRename.offset, 'Begin')).map((edit) => edit.range.start.character)).toEqual([15, 25, 41]);
   });
 });
 

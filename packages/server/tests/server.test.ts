@@ -500,4 +500,84 @@ describe('script index', () => {
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: orderUri } });
     await closed;
   });
+
+  it('renames a cue across the scripts of the workspace, and refuses when a script outside it names the cue', async () => {
+    const mods = path.join(workDir, 'renamemods');
+    const write = (file: string, lines: string[]): string => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${lines.join('\n')}\n`);
+      return pathToFileURL(file).toString();
+    };
+    const apiUri = write(path.join(mods, 'mine', 'md', 'api.xml'), [
+      '<mdscript name="Api">',
+      '  <cues>',
+      '    <cue name="Register"/>',
+      '  </cues>',
+      '</mdscript>',
+    ]);
+    const userLines = [
+      '<mdscript name="User">',
+      '  <cues>',
+      '    <cue name="Use">',
+      '      <actions>',
+      '        <signal_cue_instantly cue="md.Api.Register"/>',
+      '        <signal_cue_instantly cue="md.Api.Nowhere"/>',
+      '        <signal_cue_instantly cue="md.Far.Base"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ];
+    const userUri = write(path.join(mods, 'mine', 'md', 'user.xml'), userLines);
+    write(path.join(mods, 'other', 'md', 'far.xml'), [
+      '<mdscript name="Far">',
+      '  <cues>',
+      '    <cue name="Base">',
+      '      <actions>',
+      '        <cancel_cue cue="md.Api.Register"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ]);
+    const workspace = { uri: pathToFileURL(path.join(mods, 'mine')).toString(), name: 'mine' };
+    // Both md.Api.Nowhere and md.Far.Base are unknown once the workspace mod is indexed.
+    const indexed = diagnosticsCount(userUri, 2);
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: userUri, languageId: 'xml', version: 1, text: userLines.join('\n') + '\n' },
+    });
+    await indexed;
+
+    const position = { line: 4, character: userLines[4].indexOf('Register') + 2 };
+    const locations = await connection.sendRequest(ReferencesRequest.type, { textDocument: { uri: userUri }, position, context: { includeDeclaration: true } });
+    expect((locations ?? []).map((location) => `${path.basename(fileURLToPath(location.uri))}:${location.range.start.line}`).sort()).toEqual([
+      'api.xml:2',
+      'user.xml:4',
+    ]);
+    const edit = await connection.sendRequest(RenameRequest.type, { textDocument: { uri: userUri }, position, newName: 'Enrol' });
+    const changes = Object.entries(edit?.changes ?? {}).map(
+      ([uri, edits]) => `${path.basename(fileURLToPath(uri))}:${edits.map((change) => change.newText).join(',')}`
+    );
+    expect(changes.sort()).toEqual(['api.xml:Enrol', 'user.xml:Enrol']);
+    expect(Object.keys(edit?.changes ?? {})).toContain(apiUri);
+
+    // The neighbouring mod is read, not part of the workspace: its reference cannot be renamed.
+    clientSettings.extensionsFolder = mods;
+    const withNeighbour = diagnosticsCount(userUri, 1);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await withNeighbour;
+    await expect(connection.sendRequest(PrepareRenameRequest.type, { textDocument: { uri: userUri }, position })).rejects.toMatchObject({
+      message: 'cue Register of Api is also written in far.xml (other), outside the workspace',
+    });
+
+    clientSettings.extensionsFolder = '';
+    const restored = diagnosticsCount(userUri, 2);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await restored;
+    const closed = diagnosticsCount(userUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: userUri } });
+    await closed;
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  });
 });

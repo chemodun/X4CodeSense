@@ -6,7 +6,7 @@ import type { DocumentNames, NamedItemKind, NamedOccurrence } from '../names/nam
 import type { IndexedLibraryItem, ScriptIndex } from '../project/scriptIndex';
 import { attributeNamed, type XmlElement } from '../xml/xmlStructure';
 import { escapeMarkdown, inlineCode } from './markdown';
-import { describeLibraryDefinitions, indexedLocation } from './project';
+import { describeLibraryDefinitions, describeReferencesElsewhere, indexedLocation } from './project';
 
 function lineOf(document: TextDocument, offset: number): number {
   return document.positionAt(offset).line + 1;
@@ -46,8 +46,20 @@ function cueFacts(element: XmlElement): string[] {
   return facts;
 }
 
-/** Hover text for a label, cue, library or interrupt library item. */
-export function describeNamedItem(occurrence: NamedOccurrence, document: TextDocument, index?: ScriptIndex): string {
+/** How often other files name a cue of the script or an interrupt library item, for the hover; empty when none do or it cannot be told. */
+function referencesElsewhere(occurrence: NamedOccurrence, document: TextDocument, index: ScriptIndex | undefined, scriptName: string | undefined): string {
+  if (!index || occurrence.kind === 'label' || occurrence.external) {
+    return '';
+  }
+  if (occurrence.kind === 'cue') {
+    const defined = occurrence.items.some((item) => item.definitions.length > 0);
+    return defined && scriptName ? describeReferencesElsewhere(index.cueReferences(scriptName, occurrence.name), document.uri) : '';
+  }
+  return describeReferencesElsewhere(index.libraryReferences(occurrence.kind, occurrence.name), document.uri);
+}
+
+/** Hover text for a label, cue, library or interrupt library item; `scriptName` is the name of the document's script. */
+export function describeNamedItem(occurrence: NamedOccurrence, document: TextDocument, index?: ScriptIndex, scriptName?: string): string {
   const elsewhere = otherScriptDefinitions(occurrence, index);
   const defined = occurrence.items.filter((item) => item.definitions.length > 0);
   const definitions = defined.flatMap((item) => item.definitions);
@@ -81,7 +93,8 @@ export function describeNamedItem(occurrence: NamedOccurrence, document: TextDoc
     where = 'Defined in another script';
   }
   const references = new Set(occurrence.items.flatMap((item) => item.references)).size;
-  lines.push('', `${where} · Referenced ${references} time${references === 1 ? '' : 's'} here`);
+  const inOtherFiles = referencesElsewhere(occurrence, document, index, scriptName);
+  lines.push('', `${where} · Referenced ${references} time${references === 1 ? '' : 's'} here${inOtherFiles ? `, ${inOtherFiles}` : ''}`);
   if (index && elsewhere.length > 0) {
     lines.push('', describeLibraryDefinitions(index, elsewhere));
   }

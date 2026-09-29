@@ -22,7 +22,7 @@ function describeTable(table: VariableTable): string {
 }
 
 /** The script and cue of a remote table written `md.<Script>.<Cue>`. */
-function remoteCueOf(table: VariableTable): { script: string; cue: string } | undefined {
+export function remoteCueOf(table: VariableTable): { script: string; cue: string } | undefined {
   const match = table.kind === 'remote' ? /^md\.([A-Za-z_]\w*)\.([A-Za-z_]\w*)$/.exec(table.name) : null;
   return match ? { script: match[1], cue: match[2] } : undefined;
 }

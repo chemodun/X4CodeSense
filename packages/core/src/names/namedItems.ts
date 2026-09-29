@@ -73,6 +73,9 @@ export interface DocumentNames {
   visible(kind: NamedItemKind, element: XmlElement): NamedItem[];
 }
 
+/** What the collector needs of an analysis: the scanned structure, the resolved declarations, which may be empty, and the script's name. */
+export type NameSource = Pick<DocumentAnalysis, 'structure' | 'declarations' | 'detection'>;
+
 /** Attribute types whose values name an item of a kind. */
 const referenceTypes: ReadonlyMap<string, NamedItemKind> = new Map<string, NamedItemKind>([
   ['labelname', 'label'],
@@ -162,7 +165,7 @@ class NameCollector {
   private readonly attentionScopes = new Map<XmlElement, string>();
 
   constructor(
-    private readonly analysis: DocumentAnalysis,
+    private readonly analysis: NameSource,
     private readonly schema: ScriptSchema,
     private readonly xsd: XsdSchema | undefined,
     private readonly properties: ScriptProperties | undefined
@@ -394,12 +397,7 @@ function guardedNodes(expression: Expression): Set<Expression> {
 }
 
 /** Collects the named items of an analysed script document. */
-export function collectNames(
-  analysis: DocumentAnalysis,
-  schema: ScriptSchema,
-  xsd: XsdSchema | undefined,
-  properties: ScriptProperties | undefined
-): DocumentNames {
+export function collectNames(analysis: NameSource, schema: ScriptSchema, xsd: XsdSchema | undefined, properties: ScriptProperties | undefined): DocumentNames {
   const collector = new NameCollector(analysis, schema, xsd, properties);
   collector.collect();
   return {
