@@ -2,7 +2,7 @@
   "name": "x4codesense",
   "displayName": "X4CodeSense",
   "description": "Language support for X4: Foundations scripts (AI scripts and Mission Director scripts): completion, hover, navigation and diagnostics, powered by a language server.",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "publisher": "X4DevTools",
   "author": {
@@ -157,7 +157,7 @@
   },
   "dependencies": {
     "vscode-languageclient": "^10.1.2",
-    "x4-script-core": "0.0.0"
+    "x4-script-core": "0.1.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.104.0"
