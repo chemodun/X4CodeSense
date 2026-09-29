@@ -94,7 +94,7 @@ describe.skipIf(!extracted)('script index on the corpus', { timeout: 300_000 }, 
     // scripts of the game is mostly real: reads of variables only a commented-out block sets, a case typo
     // (`$feedbackvalue`), a `do_all` without its `counter`, the include of a library that does not exist.
     // The extensions: parameters passed to an AI script that it never declares, and some typos.
-    expect(unset.md.game).toBeLessThanOrEqual(213);
+    expect(unset.md.game).toBeLessThanOrEqual(206);
     expect(unset.aiscripts.extensions).toBeLessThanOrEqual(27);
     expect(unset.md.extensions).toBeLessThanOrEqual(9);
   });

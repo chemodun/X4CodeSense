@@ -31,7 +31,8 @@ export function validateTexts(
   xsd: XsdSchema | undefined,
   texts: TextDatabase,
   document: TextDocument,
-  source: string
+  source: string,
+  checkElement?: (element: XmlElement) => boolean
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const report = (start: number, end: number, message: string): void => {
@@ -44,6 +45,9 @@ export function validateTexts(
     });
   };
   for (const element of structure.elements) {
+    if (checkElement && !checkElement(element)) {
+      continue;
+    }
     const declaration = declarations.get(element) ?? xsd?.anyDeclaration(element.name);
     for (const attribute of element.attributes) {
       if (attribute.quote === '' || !attribute.value.includes('{') || isComment(attribute, declaration)) {

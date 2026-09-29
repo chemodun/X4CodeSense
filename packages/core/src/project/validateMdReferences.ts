@@ -1,6 +1,7 @@
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
+import type { XmlElement } from '../xml/xmlStructure';
 import type { XsdSchema } from '../xsd/schema';
 import { mdReferencesOf } from './mdReferences';
 import type { ScriptIndex } from './scriptIndex';
@@ -15,7 +16,8 @@ export function validateMdReferences(
   xsd: XsdSchema | undefined,
   index: ScriptIndex,
   document: TextDocument,
-  source: string
+  source: string,
+  checkElement?: (element: XmlElement) => boolean
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const own = analysis.detection.script?.schema === 'md' ? analysis.detection.script.name : undefined;
@@ -28,7 +30,7 @@ export function validateMdReferences(
       source,
     });
   };
-  for (const reference of mdReferencesOf(analysis, xsd)) {
+  for (const reference of mdReferencesOf(analysis, xsd, checkElement)) {
     if (reference.guarded || reference.script === own) {
       continue;
     }

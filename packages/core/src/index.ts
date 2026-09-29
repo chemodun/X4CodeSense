@@ -29,6 +29,7 @@ export * from './texts/textDatabase';
 export * from './texts/validateTexts';
 export * from './patches/patchTree';
 export * from './patches/patchAnalysis';
+export * from './patches/patchedDocument';
 export * from './patches/validatePatch';
 export * from './gameData';
 export * from './analysis/analyzeDocument';

@@ -8,6 +8,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { analyzeText, chainAtToken, isExpressionAttribute, loadGameData, resolveChain, tokenize, type GameData, type ScriptSchema } from '../src';
+import { bestOf, fileCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
 
@@ -96,5 +97,16 @@ describe.skipIf(!extracted)('script properties on the vanilla corpus', () => {
     console.log(`resolved ${resolved} of ${chains} two-step keyword chains (${(share * 100).toFixed(1)}%) in ${(performance.now() - started).toFixed(0)} ms`);
     expect(chains).toBeGreaterThan(10000);
     expect(share).toBeGreaterThan(0.85);
+  }, 60_000);
+
+  it('analyses the largest file with the script properties within the ceiling', () => {
+    const texts = [...xmlFilesIn(path.join(root, 'md')), ...xmlFilesIn(path.join(root, 'aiscripts'))].map((file) => ({
+      file,
+      text: readFileSync(file, 'utf8'),
+    }));
+    const largest = texts.reduce((a, b) => (b.text.length > a.text.length ? b : a));
+    const best = bestOf(10, () => analyzeText(largest.text, { schemas: game.schemas, properties: game.properties }));
+    console.log(`${path.basename(largest.file)} (${largest.text.length} characters): best of 10 ${best.toFixed(1)} ms, ceiling ${fileCeilingMs} ms`);
+    expect(best).toBeLessThan(fileCeilingMs);
   }, 60_000);
 });

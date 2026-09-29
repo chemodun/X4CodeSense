@@ -25,12 +25,15 @@ npm run package -w client   # produces client/x4codesense-<version>.vsix
 
 Press F5 in VS Code (configuration `Launch Client`, or `Client + Server` to attach to the server as well).
 
-Optional corpus check against the extracted vanilla game files:
+Optional corpus check against the extracted vanilla game files, and a folder of extensions:
 
 ```powershell
 $env:X4_EXTRACTED = 'C:\path\to\extracted\9.00'
+$env:X4_MODS = 'C:\path\to\extensions'
 npm test
 ```
+
+The corpus check times the analysis of the largest game file against a ceiling of 200 ms, and of patch documents against twice that. On a slower or busy machine, `X4_FILE_CEILING_MS` sets a higher ceiling; with all corpus files running at once, each shares the machine with the others.
 
 ## Releases
 

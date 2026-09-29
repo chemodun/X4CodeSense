@@ -49,6 +49,8 @@ export interface VariableTable {
    * `<include_actions>` runs in the including cue's table, so each sees the other's definitions.
    */
   links: Set<VariableTable>;
+  /** The libraries of the script that this cue or library splices in with `<include_actions>`. */
+  includes: Set<VariableTable>;
   /**
    * True when code this document cannot see fills the table: a cue instantiating a library of another
    * script, or, with the script index, a library another script includes.
@@ -208,7 +210,7 @@ class Collector {
         return existing;
       }
     }
-    const created: VariableTable = { kind, name, variables: new Map(), links: new Set() };
+    const created: VariableTable = { kind, name, variables: new Map(), links: new Set(), includes: new Set() };
     if (owner) {
       created.owner = owner;
       this.tableByOwner.set(owner, created);
@@ -423,6 +425,9 @@ class Collector {
         if (user !== used) {
           user.links.add(used);
           used.links.add(user);
+          if (element.name === 'include_actions') {
+            user.includes.add(used);
+          }
         }
       }
     }

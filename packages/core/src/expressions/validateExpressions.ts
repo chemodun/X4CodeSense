@@ -24,6 +24,8 @@ export interface ExpressionValidationOptions {
   schema?: ScriptSchema;
   /** Names that may start a chain besides keywords: the cues and libraries of the document. */
   knownHeads?: ReadonlySet<string>;
+  /** Check only the attributes of the elements for which this holds. */
+  checkElement?: (element: XmlElement) => boolean;
 }
 
 /**
@@ -43,6 +45,9 @@ export function validateExpressions(
   const knownHeads = options.knownHeads ?? new Set<string>();
 
   for (const [element, declaration] of declarations) {
+    if (options.checkElement && !options.checkElement(element)) {
+      continue;
+    }
     for (const attribute of element.attributes) {
       const declared = declaration.attributes.get(attribute.name);
       if (attribute.quote === '' || attribute.value.trim() === '' || !declared || !isExpressionAttribute(declared)) {

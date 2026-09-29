@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeText,
+  attributeNamed,
   completionAt,
   definitionAt,
   evaluateXPath,
@@ -15,6 +16,7 @@ import {
   prepareRenameAt,
   referencesAt,
   scriptFolders,
+  sourceRange,
   type AnalysisContext,
   type DocumentAnalysis,
   type PatchNode,
@@ -167,6 +169,93 @@ describe('patch analysis', () => {
   });
 });
 
+/** The diagnostics of a patched target's analysis that lie in the patch's pieces, as `start-end code: message`. */
+function mappedFindings(analysis: DocumentAnalysis, target: DocumentAnalysis): string[] {
+  const patch = analysis.patch;
+  const written = patch?.patched?.written;
+  if (!patch || !written) {
+    return [];
+  }
+  return target.diagnostics
+    .slice(target.structure?.problems.length ?? 0)
+    .flatMap((diagnostic) => {
+      const range = sourceRange(written, patch.source, target.document.offsetAt(diagnostic.range.start), target.document.offsetAt(diagnostic.range.end));
+      return range ? [`${range.start}-${range.end} ${String(diagnostic.code)}: ${diagnostic.message}`] : [];
+    })
+    .sort();
+}
+
+describe('what a patch brings in, checked where it lands', () => {
+  const full = readFileSync(latePatch, 'utf8');
+  const late = analyzeFile(latePatch, full);
+  const withMistakes = full
+    .replace('<cue name="Late" />', '<cue name="Late" bogus="1"><actions><set_value name="$c" exact="1 +" /><wrong /></actions></cue>')
+    .replace('@exact">2</replace>', '@exact">2 +</replace>')
+    .replace('<set_value name="$a" exact="1" />', '<set_value name="$a" exact="$count + $nothing" />')
+    .replace('type="@instantiate"', 'type="@instantiat"');
+
+  it('writes the patched target out, each piece tied to its file', () => {
+    const patch = late.patch;
+    const written = patch?.patched?.written;
+    expect(written && parseXml(written.text).problems).toEqual([]);
+    const back = (text: string, part = text): string => {
+      const start = (written?.text.indexOf(text) ?? -1) + text.indexOf(part);
+      const range = written && patch ? sourceRange(written, patch.source, start, start + part.length) : undefined;
+      return range ? full.slice(range.start, range.end) : '';
+    };
+    expect(back('<cue name="Late" />')).toBe('<cue name="Late" />');
+    expect(back('<set_value name="$b" exact="2" />')).toBe('<set_value name="$b" exact="2" />');
+    // A value set by `replace .../@exact`, and an attribute added with `type="@instantiate"`: name and value.
+    expect(back('exact="2">', '2')).toBe('2');
+    expect(back('instantiate="true"', 'instantiate')).toBe('instantiate');
+    expect(back('instantiate="true"', 'true')).toBe('true');
+    // The target's own text is no piece of the patch.
+    expect(back('<cue name="Start">')).toBe('');
+  });
+
+  it('reports what is wrong in the pieces of the patch, at their place', () => {
+    const analysis = analyzeFile(latePatch, withMistakes);
+    const own = new Set(report(late));
+    expect(report(analysis).filter((line) => !own.has(line))).toEqual([
+      // The inserted cue brings a fifth `set_value`.
+      '18 1 patch-several-matches: Multiple matching nodes in md/setup.xml after 1 earlier patch: the path selects 5, an operation needs exactly one',
+      "12 1 unknown-attribute: Unknown attribute 'instantiat' in 'cue'",
+      "5 1 unknown-attribute: Unknown attribute 'bogus' in 'cue'",
+      "5 1 unknown-element: Unknown element 'wrong' in 'actions'",
+      '7 1 expression-syntax: Expression expected',
+      '5 1 expression-syntax: Expression expected',
+      // Content that lands in the target's cue sees its variables: `$count` is set there, `$nothing` nowhere.
+      "9 2 variable-undefined: Variable '$nothing' is never set in cue 'Start'",
+    ]);
+    expect(covered(analysis, 'unknown-attribute')).toEqual(['instantiat', 'bogus']);
+    expect(covered(analysis, 'unknown-element')).toEqual(['wrong']);
+    // After the `+`: in the text of `replace .../@exact`, and in the inserted cue.
+    expect(
+      analysis.diagnostics
+        .filter((diagnostic) => diagnostic.code === 'expression-syntax')
+        .map((diagnostic) => analysis.document.offsetAt(diagnostic.range.start))
+    ).toEqual([withMistakes.indexOf('2 +</replace>') + 3, withMistakes.indexOf('exact="1 +"') + 10]);
+    expect(covered(analysis, 'variable-undefined')).toEqual(['$nothing']);
+  });
+
+  it('leaves out what the target and earlier patches get wrong', () => {
+    const edited = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const target = readFileSync(setup, 'utf8').replace('<cue name="Start">', '<cue name="Start" bogus="1">');
+    edited.setStructure(setup, target, parseXml(target), 'game', true);
+    const early = readFileSync(earlyPatch, 'utf8').replace('<cue name="Early" />', '<cue name="Early" wrong="1" />');
+    edited.setStructure(earlyPatch, early, parseXml(early), 'early_mod', true);
+    expect(report(analyzeFile(latePatch, undefined, { ...context, index: edited }))).toEqual(report(late));
+  });
+
+  it('checks only where the pieces are, and finds there what a check of the whole target finds', () => {
+    const analysis = analyzeFile(latePatch, withMistakes);
+    const patched = analysis.patch?.patched;
+    expect(patched).toBeDefined();
+    const whole = analyzeText(patched?.written.text ?? '', context, pathToFileURL(setup).toString());
+    expect(mappedFindings(analysis, patched?.analysis ?? whole)).toEqual(mappedFindings(analysis, whole));
+  });
+});
+
 describe('patch documents without the index', () => {
   const text = [
     '<diff>',
@@ -209,7 +298,26 @@ describe('patches while typing', () => {
       if (cut > full.indexOf('</add>')) {
         expect(first?.status, `cut at ${cut}`).toBe('applied');
       }
+      // Each well-formedness problem once: the patch document's own, none of the patched target's.
+      const problems = analysis.structure?.problems ?? [];
+      const codes = new Set<string>(problems.map((problem) => problem.code));
+      expect(analysis.diagnostics.filter((diagnostic) => codes.has(String(diagnostic.code))).length, `cut at ${cut}`).toBe(problems.length);
     }
+  });
+
+  it('checks half-typed content where it lands, without taking in the nodes after it', () => {
+    // Inserted after the cue Start, so the target's cue Later follows the half-typed elements.
+    const typed = full.replace(
+      `<add sel="//cue[@name='Early']" pos="after">\n    <cue name="Late" />`,
+      `<add sel="//cue[@name='Start']" pos="after">\n    <cue name="Late"><actions><set_value name="$c" exa`
+    );
+    const analysis = analyzeFile(latePatch, typed);
+    expect(analysis.patch?.operations[0].status).toBe('applied');
+    const patched = analysis.patch?.patched?.analysis.structure;
+    expect(patched?.problems.map((problem) => problem.code)).toEqual(['missing-attribute-value']);
+    const later = patched?.elements.find((element) => element.name === 'cue' && attributeNamed(element, 'name')?.value === 'Later');
+    expect(later?.parent?.name).toBe('cues');
+    expect(covered(analysis, 'unknown-attribute')).toEqual(['exa']);
   });
 
   it('reports a half-typed path at the point where it stops', () => {

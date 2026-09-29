@@ -164,6 +164,11 @@ describe('variables across scripts', () => {
       '        <set_value name="$w" exact="$unknown"/>',
       '      </actions>',
       '    </library>',
+      '    <library name="Chained">',
+      '      <actions>',
+      '        <include_actions ref="Constants"/>',
+      '      </actions>',
+      '    </library>',
     ]);
     const user = add('User', [
       '    <cue name="A">',
@@ -178,6 +183,12 @@ describe('variables across scripts', () => {
       '    <cue name="B" ref="md.Libs.Instantiated">',
       '      <param name="p" value="1"/>',
       '    </cue>',
+      '    <cue name="C">',
+      '      <actions>',
+      '        <include_actions ref="md.Libs.Chained"/>',
+      '        <set_value name="$c" exact="$constant"/>',
+      '      </actions>',
+      '    </cue>',
     ]);
     const reader = add('Reader', [
       '    <cue name="R">',
@@ -189,6 +200,8 @@ describe('variables across scripts', () => {
     expect([scripts.isIncludedByOtherScripts('Libs', 'Included'), scripts.isIncludedByOtherScripts('Libs', 'Instantiated')]).toEqual([true, false]);
     expect([scripts.isUsedByOtherScripts('Libs', 'Instantiated'), scripts.isUsedByOtherScripts('Libs', 'Unused')]).toEqual([true, false]);
     expect([scripts.isWrittenThroughValues('reply'), scripts.isWrittenThroughValues('sum')]).toEqual([true, false]);
+    // A library's table also gets what the libraries it includes set.
+    expect(scripts.cueVariables('Libs', 'Chained').map((variable) => `${variable.name}:${variable.position.line + 1}`)).toEqual(['constant:5']);
 
     // With the index the check is on by default.
     const report = (text: string, withIndex = true): string[] =>

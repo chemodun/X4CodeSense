@@ -709,7 +709,8 @@ export class ScriptIndex {
 
   /**
    * The variables a cue of a Mission Director script has in its own table (`md.<Script>.<Cue>.$x`),
-   * each with where it is set first; for every script of that name.
+   * each with where it is set first; for every script of that name. The libraries of the script that the
+   * cue includes, and those they include, set variables in its table too.
    */
   cueVariables(scriptName: string, cueName: string): IndexedVariable[] {
     const key = `${scriptName}.${cueName}`;
@@ -730,10 +731,16 @@ export class ScriptIndex {
         continue;
       }
       const position = model.positionAt;
-      for (const variable of table.variables.values()) {
-        const first = variable.definitions[0];
-        if (first && !found.some((known) => known.name === variable.name)) {
-          found.push({ name: variable.name, position: { file: script.file, ...position(first.start) } });
+      const tables = new Set([table]);
+      for (const current of tables) {
+        for (const variable of current.variables.values()) {
+          const first = variable.definitions[0];
+          if (first && !found.some((known) => known.name === variable.name)) {
+            found.push({ name: variable.name, position: { file: script.file, ...position(first.start) } });
+          }
+        }
+        for (const included of current.includes) {
+          tables.add(included);
         }
       }
     }

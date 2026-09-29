@@ -617,4 +617,39 @@ describe('patches', () => {
     await closed;
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   });
+
+  it('checks what a patch brings in where it lands, with the variables of the edited target', async () => {
+    const mods = path.join(workDir, 'contentmods');
+    const write = (file: string, text: string): string => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      return pathToFileURL(file).toString();
+    };
+    const apiText =
+      '<mdscript name="Api">\n  <cues>\n    <cue name="Register">\n      <actions>\n        <set_value name="$a" exact="1"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    const apiUri = write(path.join(mods, 'base', 'md', 'api.xml'), apiText);
+    write(path.join(mods, 'patcher', 'content.xml'), '<content id="patcher" name="Patcher" version="100"/>\n');
+    const patchText = `<diff>\n  <add sel="//cue[@name='Register']/actions">\n    <set_value name="$b" exact="$a + 1"/>\n  </add>\n</diff>\n`;
+    const patchUri = write(path.join(mods, 'patcher', 'extensions', 'base', 'md', 'api.xml'), patchText);
+    const workspace = { uri: pathToFileURL(mods).toString(), name: 'contentmods' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    expect(summarize(await open(patchUri, patchText))).toEqual([]);
+
+    // The target's cue no longer sets `$a` in the editor: the patch's read of it is unset.
+    const unset = diagnosticsCount(patchUri, 1);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri: apiUri, languageId: 'xml', version: 1, text: apiText } });
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: apiUri, version: 2 },
+      contentChanges: [{ text: apiText.replace('$a', '$z') }],
+    });
+    expect(summarize(await unset)).toEqual(['3:33 variable-undefined']);
+
+    const restored = diagnosticsCount(patchUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: apiUri } });
+    await restored;
+    const closed = diagnosticsCount(patchUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: patchUri } });
+    await closed;
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  });
 });

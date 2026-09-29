@@ -1,15 +1,16 @@
 /**
  * Corpus gate for patch documents: every `<diff>` in `md` and `aiscripts` of the game's DLCs (X4_EXTRACTED,
  * with the DLCs' `content.xml` for their load order) and of a folder of extensions (X4_MODS), never
- * committed, applied to the file it changes after the patches loaded before it. Every operation of the
- * DLCs applies and their patches get no diagnostic; in the extensions, what does not apply is pinned
- * with the reason.
+ * committed, applied to the file it changes after the patches loaded before it, and what it brings in
+ * checked in the patched file. Every operation of the DLCs applies and their patches get no diagnostic;
+ * in the extensions, what does not apply and what is wrong where it lands is pinned with the reason.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { analyzeText, loadGameData, type AnalysisContext, type DocumentAnalysis } from '../src';
+import { bestOf, patchCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
 const mods = process.env.X4_MODS;
@@ -50,6 +51,10 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
    * needs an explanation.
    */
   const knownModFindings = [
+    // Inserted conditions: the NPC template entries of `availablepeople.{$x}` have a `role`, no `controlpost`
+    // (entities have), so with the `@` the comparison with null always holds.
+    "expression-unknown-property: 'npctemplateentry' has no property 'controlpost' (lsrpcr/aiscripts/order.move.wait.object.xml)",
+    "expression-unknown-property: 'npctemplateentry' has no property 'controlpost' (lsrpcr/md/conversations.xml)",
     // Written for an older version of the game's script: its attention actions have no such `do_if` in 9.00.
     "patch-no-match: No matching node in aiscripts/order.move.recon.xml: 'do_if[@value='@$localtarget']' selects nothing (deadair_scripts/aiscripts/order.move.recon.xml)",
     // The same fix is at extensions/sn_mod_support_apis/md/, which applies; this copy patches nothing.
@@ -71,20 +76,19 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     expect(findings.sort()).toEqual(knownModFindings);
   });
 
-  it('analyses a patch of the largest targets quickly', () => {
+  // A patch document's analysis includes the file it changes: twice the ceiling of a file.
+  it('analyses the slowest patches within the ceiling', () => {
     const slowest = [...analyses].sort((a, b) => b.ms - a.ms).slice(0, 3);
     for (const patch of slowest) {
       const text = readFileSync(patch.file, 'utf8');
-      let best = Infinity;
-      for (let round = 0; round < 5; round++) {
-        const started = performance.now();
-        analyzeText(text, context, pathToFileURL(patch.file).toString());
-        best = Math.min(best, performance.now() - started);
-      }
+      const target = patch.analysis.patch?.target.file ?? '';
+      const targetText = readFileSync(target, 'utf8');
+      const best = bestOf(5, () => analyzeText(text, context, pathToFileURL(patch.file).toString()));
+      const bestTarget = bestOf(5, () => analyzeText(targetText, context, pathToFileURL(target).toString()));
       console.log(
-        `${path.basename(path.dirname(path.dirname(patch.file)))}/${path.basename(patch.file)}: first ${patch.ms.toFixed(0)} ms, best of 5 ${best.toFixed(1)} ms`
+        `${path.basename(path.dirname(path.dirname(patch.file)))}/${path.basename(patch.file)}: first ${patch.ms.toFixed(0)} ms, best of 5 ${best.toFixed(1)} ms (its target alone ${bestTarget.toFixed(1)} ms), ceiling ${patchCeilingMs} ms`
       );
-      expect(best).toBeLessThan(200);
+      expect(best).toBeLessThan(patchCeilingMs);
     }
   });
 });

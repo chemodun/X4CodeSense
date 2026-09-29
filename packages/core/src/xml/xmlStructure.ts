@@ -541,7 +541,12 @@ class Scanner {
     while (position < this.length) {
       const code = text.charCodeAt(position);
       if (code === quote) {
-        const match = attributeStartBeforeQuote.exec(text.slice(valueStart, position));
+        // Only a value that ends with `=` can end with `name =`: most values need no regular expression.
+        let last = position - 1;
+        while (last >= valueStart && isWhitespace(text.charCodeAt(last))) {
+          last--;
+        }
+        const match = last >= valueStart && text.charCodeAt(last) === EQUALS ? attributeStartBeforeQuote.exec(text.slice(valueStart, position)) : null;
         if (match) {
           return { end: valueStart + match.index, closed: false };
         }

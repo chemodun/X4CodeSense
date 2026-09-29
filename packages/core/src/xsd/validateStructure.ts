@@ -11,6 +11,8 @@ export interface StructureValidationOptions {
   source: string;
   /** Attributes whose values the caller checks itself, so their type's facets are not applied. */
   checkedElsewhere?: (declared: XsdAttribute) => boolean;
+  /** Check only the attributes and children of the elements for which this holds; declarations are found for all. */
+  checkElement?: (element: XmlElement) => boolean;
 }
 
 export interface StructureValidation {
@@ -98,8 +100,11 @@ class Validator {
     while (pending.length > 0) {
       const element = pending.pop() as XmlElement;
       const declaration = this.declarations.get(element) as XsdElement;
-      this.validateAttributes(element, declaration);
-      this.validateChildren(element, declaration);
+      const checked = this.options.checkElement?.(element) ?? true;
+      if (checked) {
+        this.validateAttributes(element, declaration);
+      }
+      this.validateChildren(element, declaration, checked);
       for (const child of element.children) {
         if (this.declarations.has(child)) {
           pending.push(child);
@@ -143,13 +148,16 @@ class Validator {
     );
   }
 
-  private validateChildren(element: XmlElement, declaration: XsdElement): void {
+  private validateChildren(element: XmlElement, declaration: XsdElement, checked: boolean): void {
     const model = declaration.contentModel;
     for (const child of element.children) {
       const childDeclaration = model.declarations.get(child.name);
       if (childDeclaration) {
         this.declarations.set(child, childDeclaration);
       }
+    }
+    if (!checked) {
+      return;
     }
     // Children a wildcard allows get no declaration: the schema says nothing about them.
     const problems: ContentProblem[] = this.options.checkContent

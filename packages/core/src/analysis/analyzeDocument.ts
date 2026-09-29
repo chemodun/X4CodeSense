@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
 import { detectDocument } from '../scripts/scriptMetadata';
@@ -17,6 +18,7 @@ import { validateMdReferences } from '../project/validateMdReferences';
 import type { TextDatabase } from '../texts/textDatabase';
 import { validateTexts } from '../texts/validateTexts';
 import type { PatchAnalysis } from '../patches/patchAnalysis';
+import { overlapsPieceOf, sourceRange, writePatchedTree } from '../patches/patchedDocument';
 import { validatePatch } from '../patches/validatePatch';
 
 /** `source` of every diagnostic this library produces. */
@@ -62,6 +64,13 @@ export interface AnalysisContext {
    * needs `index`, and is only as complete as the configured extension folders.
    */
   validateRemoteCues?: boolean;
+  /**
+   * Check only the elements for which this holds: their attributes, expressions, text and `md.`
+   * references, and their children. The declarations, variables and names of the whole document are
+   * still worked out, and their findings reported everywhere. A patch document checks its target so,
+   * for the elements its pieces touch.
+   */
+  checkElement?: (element: XmlElement) => boolean;
 }
 
 /** Names of the cues and libraries of a script: they may start a chain like a keyword. */
@@ -99,8 +108,9 @@ export interface DocumentAnalysis {
 /**
  * Analyses one document: classifies it, and for scripts and patches scans the XML structure and reports
  * well-formedness problems as diagnostics. Scripts are then validated against their schema when one is
- * available; patches against `diff.xsd`, and with the index against the file they change. Other XML
- * documents get no diagnostics, so other XML tooling stays in charge of them.
+ * available; patches against `diff.xsd`, and with the index against the file they change, where what
+ * they bring in is checked as part of that script. Other XML documents get no diagnostics, so other XML
+ * tooling stays in charge of them.
  */
 export function analyzeDocument(document: TextDocument, context: AnalysisContext = {}): DocumentAnalysis {
   const text = document.getText();
@@ -130,14 +140,17 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     analysis.diagnostics.push(...validation.diagnostics);
     if (validation.patch) {
       analysis.patch = validation.patch;
+      analysis.diagnostics.push(...analyzePatchedTarget(validation.patch, document, context));
     }
     return analysis;
   }
   const schema = detection.script && context.schemas?.schemas[detection.script.schema];
   if (detection.script && schema) {
+    const checkElement = context.checkElement;
     const validation = validateStructure(structure, schema, rootElementName[detection.script.schema], document, {
       checkContent: context.validateStructure ?? true,
       source: diagnosticSource,
+      ...(checkElement ? { checkElement } : {}),
     });
     analysis.declarations = validation.declarations;
     analysis.diagnostics.push(...validation.diagnostics);
@@ -147,6 +160,7 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
           properties: context.properties,
           schema: detection.script.schema,
           knownHeads: cueNames(structure),
+          ...(checkElement ? { checkElement } : {}),
         })
       );
     }
@@ -174,13 +188,43 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
       );
     }
     if (context.index && (context.validateRemoteCues ?? true)) {
-      analysis.diagnostics.push(...validateMdReferences(analysis, schema, context.index, document, diagnosticSource));
+      analysis.diagnostics.push(...validateMdReferences(analysis, schema, context.index, document, diagnosticSource, checkElement));
     }
     if (context.texts && (context.validateTexts ?? true)) {
-      analysis.diagnostics.push(...validateTexts(structure, validation.declarations, schema, context.texts, document, diagnosticSource));
+      analysis.diagnostics.push(...validateTexts(structure, validation.declarations, schema, context.texts, document, diagnosticSource, checkElement));
     }
   }
   return analysis;
+}
+
+/**
+ * Analyses the target with the patch applied, as the script the game loads, and gives the diagnostics
+ * that lie in what this patch brought in, placed in the patch document. The target's own findings and
+ * those in what earlier patches brought in are theirs to report, and the patch document reports its own
+ * well-formedness problems. So only the elements the patch's pieces touch are checked: what it inserted,
+ * the elements it set values of, and their ancestors, whose children it changed.
+ */
+function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, context: AnalysisContext): Diagnostic[] {
+  const target = patch.target.file;
+  if (!patch.document || target === undefined || !patch.operations.some((operation) => operation.status === 'applied' && operation.kind !== 'remove')) {
+    return [];
+  }
+  const written = writePatchedTree(patch.document);
+  const touched = overlapsPieceOf(written, patch.source);
+  const patched = analyzeDocument(TextDocument.create(pathToFileURL(target).toString(), 'xml', 0, written.text), {
+    ...context,
+    checkElement: (element) => touched(element.start, element.end),
+  });
+  patch.patched = { written, analysis: patched };
+  const diagnostics: Diagnostic[] = [];
+  // The well-formedness problems come first in every analysis.
+  for (const diagnostic of patched.diagnostics.slice(patched.structure?.problems.length ?? 0)) {
+    const range = sourceRange(written, patch.source, patched.document.offsetAt(diagnostic.range.start), patched.document.offsetAt(diagnostic.range.end));
+    if (range) {
+      diagnostics.push({ ...diagnostic, range: Range.create(document.positionAt(range.start), document.positionAt(range.end)) });
+    }
+  }
+  return diagnostics;
 }
 
 /** Analyses a text that is not backed by an editor document, for tools and tests. */

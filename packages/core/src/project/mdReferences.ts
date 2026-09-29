@@ -109,12 +109,16 @@ export function mdReferencesInAttribute(element: XmlElement, attribute: XmlAttri
   return [...references.values()].sort((a, b) => a.scriptStart - b.scriptStart);
 }
 
-/** Every `md.<Script>[.<Cue>]` reference in the expression attributes of an analysed script. */
-export function mdReferencesOf(analysis: Pick<DocumentAnalysis, 'structure' | 'declarations'>, xsd: XsdSchema | undefined): MdReference[] {
+/** Every `md.<Script>[.<Cue>]` reference in the expression attributes of an analysed script, or of the elements for which `include` holds. */
+export function mdReferencesOf(
+  analysis: Pick<DocumentAnalysis, 'structure' | 'declarations'>,
+  xsd: XsdSchema | undefined,
+  include?: (element: XmlElement) => boolean
+): MdReference[] {
   const references: MdReference[] = [];
   for (const element of analysis.structure?.elements ?? []) {
     const declaration = analysis.declarations.get(element) ?? xsd?.anyDeclaration(element.name);
-    if (!declaration) {
+    if (!declaration || (include && !include(element))) {
       continue;
     }
     for (const attribute of element.attributes) {

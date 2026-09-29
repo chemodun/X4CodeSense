@@ -32,8 +32,10 @@ export interface PatchSource {
 export interface PatchNodeAttribute {
   name: string;
   value: string;
-  /** The operation that set the value, when a patch did. */
-  setBy?: XmlElement;
+  /** The attribute as written in the node's file; a patch that sets the value does not change it. */
+  written?: XmlAttribute;
+  /** The operation that set the value, and its patch, when a patch did. */
+  setBy?: { operation: XmlElement; source: PatchSource };
 }
 
 export class PatchNode implements XPathNode<PatchNode> {
@@ -53,7 +55,7 @@ export class PatchNode implements XPathNode<PatchNode> {
     /** The comment of a comment node. */
     readonly comment?: XmlRegion
   ) {
-    this.attributes = element ? element.attributes.map((attribute) => ({ name: attribute.name, value: attribute.value })) : [];
+    this.attributes = element ? element.attributes.map((attribute) => ({ name: attribute.name, value: attribute.value, written: attribute })) : [];
   }
 
   get name(): string {
@@ -263,9 +265,9 @@ export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = 
         const existing = owner.attributes.find((attribute) => attribute.name === name);
         if (existing) {
           existing.value = operationText(element, patch);
-          existing.setBy = element;
+          existing.setBy = { operation: element, source: patch };
         } else {
-          owner.attributes.push({ name, value: operationText(element, patch), setBy: element });
+          owner.attributes.push({ name, value: operationText(element, patch), setBy: { operation: element, source: patch } });
         }
         owner.markChanged();
         continue;
@@ -301,7 +303,7 @@ export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = 
           const attribute = selection.owner.attributes.find((candidate) => candidate.name === selection.name);
           if (attribute) {
             attribute.value = operationText(element, patch);
-            attribute.setBy = element;
+            attribute.setBy = { operation: element, source: patch };
           }
         }
         selection.owner.markChanged();
