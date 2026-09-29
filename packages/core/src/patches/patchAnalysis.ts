@@ -9,6 +9,7 @@
  */
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { PatchTarget, ScriptIndex } from '../project/scriptIndex';
+import type { XmlElement } from '../xml/xmlStructure';
 import type { PatchedText } from './patchedDocument';
 import { applyPatch, documentTree, type PatchNode, type PatchOperation, type PatchSource } from './patchTree';
 
@@ -35,8 +36,8 @@ export function analyzePatch(patch: PatchSource, index: ScriptIndex): PatchAnaly
   if (!target) {
     return undefined;
   }
-  const targetSource = target.file === undefined ? undefined : index.parsedFile(target.file);
-  if (target.file === undefined || !targetSource) {
+  const tree = target.file === undefined ? undefined : earlierTree(patch.file, target.file, index);
+  if (target.file === undefined || !tree) {
     return {
       source: patch,
       target: target.file === undefined ? target : { name: target.name, missing: `${target.name} cannot be read` },
@@ -44,10 +45,20 @@ export function analyzePatch(patch: PatchSource, index: ScriptIndex): PatchAnaly
       operations: [],
     };
   }
-  const document = documentTree({ file: target.file, ...targetSource });
+  const { document, earlier, uncertain } = tree;
+  return { source: patch, target, earlier, document, operations: applyPatch(document, patch, uncertain) };
+}
+
+/** The target's tree with the patches of sources loaded before the patch applied; undefined when the target cannot be read. */
+function earlierTree(patch: string, target: string, index: ScriptIndex): { document: PatchNode; earlier: string[]; uncertain: boolean } | undefined {
+  const targetSource = index.parsedFile(target);
+  if (!targetSource) {
+    return undefined;
+  }
+  const document = documentTree({ file: target, ...targetSource });
   const earlier: string[] = [];
   let uncertain = false;
-  for (const before of index.patchesBefore(patch.file, target.file)) {
+  for (const before of index.patchesBefore(patch, target)) {
     const source = index.parsedFile(before.file);
     if (!source) {
       uncertain = true;
@@ -57,5 +68,19 @@ export function analyzePatch(patch: PatchSource, index: ScriptIndex): PatchAnaly
     uncertain ||= operations.some((operation) => operation.status === 'unknown');
     earlier.push(before.file);
   }
-  return { source: patch, target, earlier, document, operations: applyPatch(document, patch, uncertain) };
+  return { document, earlier, uncertain };
+}
+
+/**
+ * The target's tree as an operation of the patch finds it: the earlier patches applied, then the
+ * patch's operations before this one. Built anew, since the patch's tree holds all its changes.
+ */
+export function treeBefore(patch: PatchAnalysis, operation: XmlElement, index: ScriptIndex): PatchNode | undefined {
+  const target = patch.target.file;
+  const tree = target === undefined ? undefined : earlierTree(patch.source.file, target, index);
+  if (!tree) {
+    return undefined;
+  }
+  applyPatch(tree.document, patch.source, tree.uncertain, operation);
+  return tree.document;
 }

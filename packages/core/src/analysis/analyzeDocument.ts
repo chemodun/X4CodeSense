@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
@@ -18,7 +19,8 @@ import { validateMdReferences } from '../project/validateMdReferences';
 import type { TextDatabase } from '../texts/textDatabase';
 import { validateTexts } from '../texts/validateTexts';
 import type { PatchAnalysis } from '../patches/patchAnalysis';
-import { overlapsPieceOf, sourceRange, writePatchedTree } from '../patches/patchedDocument';
+import { overlapsPieceOf, sourceOffsetAt, sourceRange, writePatchedTree } from '../patches/patchedDocument';
+import type { PatchSource } from '../patches/patchTree';
 import { validatePatch } from '../patches/validatePatch';
 
 /** `source` of every diagnostic this library produces. */
@@ -101,6 +103,12 @@ export interface DocumentAnalysis {
   readonly names?: DocumentNames;
   /** For a patch document analysed with the index: the patch applied to the file it changes. */
   patch?: PatchAnalysis;
+  /**
+   * For the patched target of a patch document (`PatchAnalysis.patched`), whose text no editor shows:
+   * where an offset of it was written, as a zero-based line of the patch document (no `file`) or of the
+   * file `file` names. Undefined for text the write-out added.
+   */
+  origin?: (offset: number) => { line: number; file?: string } | undefined;
   /** Diagnostics in document order of discovery. */
   diagnostics: Diagnostic[];
 }
@@ -211,10 +219,31 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
   }
   const written = writePatchedTree(patch.document);
   const touched = overlapsPieceOf(written, patch.source);
-  const patched = analyzeDocument(TextDocument.create(pathToFileURL(target).toString(), 'xml', 0, written.text), {
+  // The target's uri with a fragment: locations in this text are told apart from those in the file.
+  const patched = analyzeDocument(TextDocument.create(`${pathToFileURL(target).toString()}#patched`, 'xml', 0, written.text), {
     ...context,
     checkElement: (element) => touched(element.start, element.end),
   });
+  const files = new Map<PatchSource, { document: TextDocument; file?: string }>();
+  patched.origin = (offset) => {
+    const at = sourceOffsetAt(written, offset);
+    if (!at) {
+      return undefined;
+    }
+    let file = files.get(at.source);
+    if (!file) {
+      const source = at.source;
+      file =
+        source === patch.source
+          ? { document }
+          : {
+              document: TextDocument.create(pathToFileURL(source.file).toString(), 'xml', 0, source.text),
+              file: source.file === target ? path.basename(target) : `the patch of ${context.index?.sourceOf(source.file) ?? path.basename(source.file)}`,
+            };
+      files.set(source, file);
+    }
+    return { line: file.document.positionAt(at.offset).line, ...(file.file === undefined ? {} : { file: file.file }) };
+  };
   patch.patched = { written, analysis: patched };
   const diagnostics: Diagnostic[] = [];
   // The well-formedness problems come first in every analysis.

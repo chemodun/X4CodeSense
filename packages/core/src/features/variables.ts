@@ -5,7 +5,7 @@ import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { ScriptIndex } from '../project/scriptIndex';
 import type { XmlElement } from '../xml/xmlStructure';
 import type { DocumentVariables, ElsewhereDefinition, ScriptVariable, VariableOccurrence, VariableTable } from '../variables/variables';
-import { escapeMarkdown, inlineCode } from './markdown';
+import { describeLines, escapeMarkdown, inlineCode, type DocumentOrigin } from './markdown';
 import { indexedLocation } from './project';
 
 function describeTable(table: VariableTable): string {
@@ -41,8 +41,11 @@ function definitionsElsewhere(variable: ScriptVariable, index: ScriptIndex | und
   return found;
 }
 
-/** Hover text for a variable; with the script index, also where other files set it. */
-export function describeVariable(variable: ScriptVariable, document: TextDocument, index?: ScriptIndex): string {
+/**
+ * Hover text for a variable; with the script index, also where other files set it. `origin` tells where
+ * the document's text was written when that is elsewhere.
+ */
+export function describeVariable(variable: ScriptVariable, document: TextDocument, index?: ScriptIndex, origin?: DocumentOrigin): string {
   const lines = [`**$${escapeMarkdown(variable.name)}** *(variable of ${describeTable(variable.table)})*`];
   const facts: string[] = [];
   if (variable.types.size > 0) {
@@ -56,7 +59,7 @@ export function describeVariable(variable: ScriptVariable, document: TextDocumen
   lines.push('', facts.join(' · '));
   if (definitions > 0) {
     const first = variable.definitions[0];
-    lines.push('', `First set in \\<${escapeMarkdown(first.element.name)}\\> at line ${document.positionAt(first.start).line + 1}`);
+    lines.push('', `First set in \\<${escapeMarkdown(first.element.name)}\\> at ${describeLines(document, [first.start], origin)}`);
   }
   if (elsewhere.length > 0) {
     lines.push('');
@@ -121,7 +124,8 @@ export function variableCompletionItems(
   document: TextDocument,
   range: Range,
   prefix: string,
-  index?: ScriptIndex
+  index?: ScriptIndex,
+  origin?: DocumentOrigin
 ): CompletionItem[] {
   const items: CompletionItem[] = [];
   const seen = new Set<string>();
@@ -136,7 +140,7 @@ export function variableCompletionItems(
       const item: CompletionItem = {
         label,
         kind: CompletionItemKind.Variable,
-        documentation: { kind: 'markdown', value: describeVariable(variable, document, index) },
+        documentation: { kind: 'markdown', value: describeVariable(variable, document, index, origin) },
         textEdit: { range, newText: label },
       };
       if (variable.types.size > 0) {

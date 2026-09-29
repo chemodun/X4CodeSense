@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { ScriptKeyword, ScriptProperty } from '../properties/scriptProperties';
 import type { SourceLocation } from '../sourceLocation';
 import type { XsdAttribute, XsdElement } from '../xsd/schema';
@@ -18,6 +19,31 @@ export function inlineCode(text: string): string {
   const fence = '`'.repeat(longest + 1);
   const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
   return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+/** Where an offset of a document was written, when that is not the document itself (see `DocumentAnalysis.origin`). */
+export type DocumentOrigin = (offset: number) => { line: number; file?: string } | undefined;
+
+/**
+ * The lines of offsets of a document, for a hover: `line 7`, `lines 3, 7`. With an origin, the lines
+ * where they were written, those of other files named: `line 3, line 5 of setup.xml`.
+ */
+export function describeLines(document: TextDocument, offsets: readonly number[], origin?: DocumentOrigin): string {
+  const groups: { file?: string; lines: number[] }[] = [];
+  for (const offset of offsets) {
+    const place = origin?.(offset) ?? { line: document.positionAt(offset).line };
+    const last = groups[groups.length - 1];
+    if (last && last.file === place.file) {
+      last.lines.push(place.line + 1);
+    } else {
+      groups.push({ ...(place.file === undefined ? {} : { file: place.file }), lines: [place.line + 1] });
+    }
+  }
+  return groups
+    .map(
+      (group) => `line${group.lines.length === 1 ? '' : 's'} ${group.lines.join(', ')}${group.file === undefined ? '' : ` of ${escapeMarkdown(group.file)}`}`
+    )
+    .join(', ');
 }
 
 function definedIn(location: SourceLocation | undefined): string[] {

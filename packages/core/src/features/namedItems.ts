@@ -5,12 +5,8 @@ import { itemNoun } from '../names/validateNames';
 import type { DocumentNames, NamedItemKind, NamedOccurrence } from '../names/namedItems';
 import type { IndexedLibraryItem, ScriptIndex } from '../project/scriptIndex';
 import { attributeNamed, type XmlElement } from '../xml/xmlStructure';
-import { escapeMarkdown, inlineCode } from './markdown';
+import { describeLines, escapeMarkdown, inlineCode, type DocumentOrigin } from './markdown';
 import { describeLibraryDefinitions, describeReferencesElsewhere, indexedLocation } from './project';
-
-function lineOf(document: TextDocument, offset: number): number {
-  return document.positionAt(offset).line + 1;
-}
 
 function rangeOf(document: TextDocument, occurrence: NamedOccurrence): Range {
   return Range.create(document.positionAt(occurrence.start), document.positionAt(occurrence.end));
@@ -58,8 +54,17 @@ function referencesElsewhere(occurrence: NamedOccurrence, document: TextDocument
   return describeReferencesElsewhere(index.libraryReferences(occurrence.kind, occurrence.name), document.uri);
 }
 
-/** Hover text for a label, cue, library or interrupt library item; `scriptName` is the name of the document's script. */
-export function describeNamedItem(occurrence: NamedOccurrence, document: TextDocument, index?: ScriptIndex, scriptName?: string): string {
+/**
+ * Hover text for a label, cue, library or interrupt library item; `scriptName` is the name of the
+ * document's script, `origin` where the document's text was written when that is elsewhere.
+ */
+export function describeNamedItem(
+  occurrence: NamedOccurrence,
+  document: TextDocument,
+  index?: ScriptIndex,
+  scriptName?: string,
+  origin?: DocumentOrigin
+): string {
   const elsewhere = otherScriptDefinitions(occurrence, index);
   const defined = occurrence.items.filter((item) => item.definitions.length > 0);
   const definitions = defined.flatMap((item) => item.definitions);
@@ -78,8 +83,11 @@ export function describeNamedItem(occurrence: NamedOccurrence, document: TextDoc
   }
   let where: string;
   if (definitions.length > 0) {
-    const at = definitions.map((definition) => lineOf(document, definition.start));
-    where = `Defined at line${at.length === 1 ? '' : 's'} ${at.join(', ')}`;
+    where = `Defined at ${describeLines(
+      document,
+      definitions.map((definition) => definition.start),
+      origin
+    )}`;
     if (occurrence.kind === 'label' && defined.length > 1) {
       where += ` in ${defined.length} attention blocks`;
     }
@@ -139,7 +147,8 @@ export function namedItemCompletionItems(
   document: TextDocument,
   range: Range,
   prefix: string,
-  index?: ScriptIndex
+  index?: ScriptIndex,
+  origin?: DocumentOrigin
 ): CompletionItem[] {
   const items: CompletionItem[] = [];
   const seen = new Set<string>();
@@ -153,7 +162,7 @@ export function namedItemCompletionItems(
       label: item.name,
       kind: completionKinds[kind],
       detail: itemNoun(item, definition).toLowerCase(),
-      documentation: { kind: 'markdown', value: describeNamedItem(definition, document) },
+      documentation: { kind: 'markdown', value: describeNamedItem(definition, document, undefined, undefined, origin) },
       textEdit: { range, newText: item.name },
     });
   }

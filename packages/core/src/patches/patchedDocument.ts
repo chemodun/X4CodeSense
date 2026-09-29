@@ -6,11 +6,14 @@
  * attributes otherwise: each attribute copied from where it was written, a value a patch set from the
  * text of the operation, its name from the operation's `type` or `sel`. An element that is not complete in
  * its file (a start tag cut off, an end tag missing, as while typing) is written like a changed one, so
- * that it closes where it ends and does not take in the nodes after it. Between children, the text that
- * separated them in their file is kept when they were neighbours there; otherwise a line break is added.
- * Added text (line breaks, `>`, quotes, the end tag of an element that had none) comes from no file.
+ * that it closes where it ends and does not take in the nodes after it; a cut-off start tag whose values
+ * are all closed is copied as written, with the whitespace after them, where a caret may be. Between
+ * children, the text that separated them in their file is kept when they were neighbours there; otherwise
+ * a line break is added. Added text (line breaks, `>`, quotes, the end tag of an element that had none)
+ * comes from no file.
  *
- * The text is analysed as the target script; the pieces take what the analysis finds back to the files.
+ * The text is analysed as the target script; the pieces take what the analysis finds back to the files,
+ * and a caret in a file to its place in the text.
  */
 import { attributeNamed, type XmlAttribute, type XmlElement, type XmlRegion } from '../xml/xmlStructure';
 import type { PatchNode, PatchNodeAttribute, PatchSource } from './patchTree';
@@ -30,12 +33,22 @@ export interface PatchedText {
   text: string;
   /** The copied pieces in text order; the text between them was added. */
   pieces: PatchedPiece[];
+  /**
+   * Where the start tag of each element node written piece by piece begins in the text: those a patch
+   * changed and those not complete in their file. Unchanged subtrees are copied whole.
+   */
+  starts: Map<PatchNode, number>;
 }
 
 class Writer {
   private readonly parts: string[] = [];
   private length = 0;
   readonly pieces: PatchedPiece[] = [];
+  readonly starts = new Map<PatchNode, number>();
+
+  get offset(): number {
+    return this.length;
+  }
 
   add(text: string): void {
     this.parts.push(text);
@@ -65,7 +78,7 @@ class Writer {
   }
 
   written(): PatchedText {
-    return { text: this.parts.join(''), pieces: this.pieces };
+    return { text: this.parts.join(''), pieces: this.pieces, starts: this.starts };
   }
 }
 
@@ -130,15 +143,22 @@ function writeSetAttribute(writer: Writer, attribute: PatchNodeAttribute, operat
 /** The start tag of an element written out whole: as written when its attributes are, rebuilt otherwise. */
 function writeStartTag(writer: Writer, node: PatchNode, element: XmlElement): void {
   const source = node.source;
+  writer.starts.set(node, writer.offset);
   const kept =
-    element.startTagClosed &&
     node.attributes.length === element.attributes.length &&
     node.attributes.every((attribute, index) => attribute.setBy === undefined && attribute.written === element.attributes[index]);
-  if (kept) {
+  if (kept && element.startTagClosed) {
     writer.copy(source, element.start, element.selfClosing ? element.startTagEnd - 2 : element.startTagEnd);
     if (element.selfClosing) {
       writer.add('>');
     }
+    return;
+  }
+  if (kept && element.attributes.every((attribute) => attribute.quote === '' || attribute.closed)) {
+    // Cut off while typing, with every value closed: as written, the whitespace after the last attribute
+    // too, so that a caret there has its place in the text.
+    writer.copy(source, element.start, element.startTagEnd);
+    writer.add('>');
     return;
   }
   writer.copy(source, element.start, element.nameEnd);
@@ -233,6 +253,31 @@ function pieceAt(pieces: readonly PatchedPiece[], offset: number): number {
 
 function sourceOffset(piece: PatchedPiece, offset: number): number {
   return piece.sourceStart + Math.min(Math.max(offset - piece.start, 0), piece.sourceEnd - piece.sourceStart);
+}
+
+/** The file an offset of the written text comes from, and the offset there; undefined for added text. */
+export function sourceOffsetAt(written: PatchedText, offset: number): { source: PatchSource; offset: number } | undefined {
+  const piece = written.pieces[pieceAt(written.pieces, offset)];
+  return piece && offset <= piece.end ? { source: piece.source, offset: sourceOffset(piece, offset) } : undefined;
+}
+
+/**
+ * Where an offset of a file lies in the written text: inside a piece copied from the file, else at the
+ * end of one. Undefined when nothing around the offset was copied.
+ */
+export function writtenOffset(written: PatchedText, source: PatchSource, offset: number): number | undefined {
+  let atEnd: number | undefined;
+  for (const piece of written.pieces) {
+    if (piece.source !== source || offset < piece.sourceStart || offset > piece.sourceEnd) {
+      continue;
+    }
+    const at = piece.start + Math.min(offset - piece.sourceStart, piece.end - piece.start);
+    if (offset < piece.sourceEnd) {
+      return at;
+    }
+    atEnd ??= at;
+  }
+  return atEnd;
 }
 
 /** A test for ranges of the written text: true when the range overlaps a piece copied from the file. */

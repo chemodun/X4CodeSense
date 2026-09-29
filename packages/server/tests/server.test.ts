@@ -116,7 +116,7 @@ beforeAll(async () => {
     capabilities: { workspace: { configuration: true, workspaceFolders: true }, textDocument: { completion: { completionItem: { snippetSupport: true } } } },
   });
   expect(result.capabilities.textDocumentSync).toBe(TextDocumentSyncKind.Incremental);
-  expect(result.capabilities.completionProvider?.triggerCharacters).toContain('<');
+  expect(result.capabilities.completionProvider?.triggerCharacters).toEqual(expect.arrayContaining(['<', '/', '@', "'"]));
   expect(result.capabilities.hoverProvider).toBe(true);
   expect(result.capabilities.definitionProvider).toBe(true);
   expect(result.capabilities.referencesProvider).toBe(true);
@@ -647,6 +647,47 @@ describe('patches', () => {
     const restored = diagnosticsCount(patchUri, 0);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: apiUri } });
     await restored;
+    const closed = diagnosticsCount(patchUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: patchUri } });
+    await closed;
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  });
+
+  it('answers in a patch as it lands in its target, and renames a cue through its path', async () => {
+    const mods = path.join(workDir, 'featuremods');
+    const write = (file: string, text: string): string => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      return pathToFileURL(file).toString();
+    };
+    const apiText =
+      '<mdscript name="Api">\n  <cues>\n    <cue name="Register">\n      <actions>\n        <set_value name="$a" exact="1"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    write(path.join(mods, 'base', 'md', 'api.xml'), apiText);
+    write(path.join(mods, 'patcher', 'content.xml'), '<content id="patcher" name="Patcher" version="100"/>\n');
+    const patchLines = ['<diff>', `  <add sel="//cue[@name='Register']/actions">`, '    <set_value name="$b" exact="$a + 1"/>', '  </add>', '</diff>'];
+    const patchUri = write(path.join(mods, 'patcher', 'extensions', 'base', 'md', 'api.xml'), `${patchLines.join('\n')}\n`);
+    const workspace = { uri: pathToFileURL(mods).toString(), name: 'featuremods' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    expect(summarize(await open(patchUri, `${patchLines.join('\n')}\n`))).toEqual([]);
+    const request = { textDocument: { uri: patchUri }, position: { line: 2, character: patchLines[2].indexOf('$a') + 1 } };
+
+    // `$a` of the target's cue, as the patched target has it.
+    const hover = await connection.sendRequest(HoverRequest.type, request);
+    expect(JSON.stringify(hover?.contents)).toContain('at line 5 of api.xml');
+    const definitions = (await connection.sendRequest(DefinitionRequest.type, request)) as Location[];
+    expect(definitions.map((location) => `${path.basename(fileURLToPath(location.uri))}:${location.range.start.line}`)).toEqual(['api.xml:4']);
+
+    // The cue names of the target in the path, and a rename that edits the path with the cue.
+    const inPath = { textDocument: { uri: patchUri }, position: { line: 1, character: patchLines[1].indexOf('Register') } };
+    const completions = await connection.sendRequest(CompletionRequest.type, inPath);
+    const items = Array.isArray(completions) ? completions : (completions?.items ?? []);
+    expect(items.map((item) => item.label)).toEqual(['Register']);
+    const edit = await connection.sendRequest(RenameRequest.type, { ...inPath, newName: 'Enrol' });
+    const changes = Object.entries(edit?.changes ?? {}).map(
+      ([uri, edits]) => `${path.relative(mods, fileURLToPath(uri))}:${edits.map((change) => change.range.start.line).join(',')}`
+    );
+    expect(changes.sort()).toEqual([path.join('base', 'md', 'api.xml:2'), path.join('patcher', 'extensions', 'base', 'md', 'api.xml:1')]);
+
     const closed = diagnosticsCount(patchUri, 0);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: patchUri } });
     await closed;

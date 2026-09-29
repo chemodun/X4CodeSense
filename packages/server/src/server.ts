@@ -65,7 +65,8 @@ const defaultSettings: X4CodeSenseSettings = {
 };
 
 /** Characters after which the client asks for completion without being told to. */
-const completionTriggerCharacters = ['<', '.', '"', ' ', '$', '{', ','];
+// `/`, `@` and `'` for the paths of patch documents.
+const completionTriggerCharacters = ['<', '.', '"', ' ', '$', '{', ',', '/', '@', "'"];
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);

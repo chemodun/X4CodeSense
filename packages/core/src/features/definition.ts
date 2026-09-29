@@ -1,6 +1,6 @@
 import type { Location } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
-import { positionContext, schemaOf } from '../analysis/positionContext';
+import { positionContext, schemaOf, scriptSchemaOf } from '../analysis/positionContext';
 import { isInsideString, tokenize } from '../expressions/lexer';
 import { chainAtToken, resolveChain } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
@@ -10,6 +10,8 @@ import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd
 import { mdReferenceAt } from '../project/mdReferences';
 import { textReferenceAt } from '../texts/textDatabase';
 import { namedItemAt, namedItemDefinitions } from './namedItems';
+import { locationsInFiles, patchedViewAt } from './patchContent';
+import { pathDefinitionsAt } from './patchPaths';
 import { mdReferenceDefinitions } from './project';
 import { textDefinitions, type TextDisplayOptions } from './texts';
 import { variableAt, variableDefinitions } from './variables';
@@ -35,7 +37,7 @@ function definitionInValue(analysis: DocumentAnalysis, attribute: XmlAttribute, 
     return locations(game, [enumeration.location]);
   }
   const properties = game.properties;
-  const schema = analysis.detection.script?.schema;
+  const schema = scriptSchemaOf(analysis);
   if (!properties || !schema || !isExpressionAttribute(declared) || isInsideString(tokenize(value), index)) {
     return [];
   }
@@ -65,6 +67,15 @@ export function definitionAt(analysis: DocumentAnalysis, offset: number, game: G
   const reference = game && game.texts.fileCount > 0 ? textReferenceAt(analysis.document.getText(), offset) : undefined;
   if (game && reference) {
     return textDefinitions(game.texts, reference.page, reference.id, options);
+  }
+  // In what a patch brings in: as it is where it lands, found in the files the target is written in.
+  const view = patchedViewAt(analysis, offset);
+  if (view) {
+    return locationsInFiles(view, definitionAt(view.analysis, view.offset, game, options));
+  }
+  const inPath = game ? pathDefinitionsAt(analysis, offset, game) : undefined;
+  if (inPath) {
+    return inPath;
   }
   const variable = variableAt(analysis, offset);
   if (variable) {

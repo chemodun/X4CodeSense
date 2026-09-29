@@ -1,6 +1,6 @@
 import { Range, type Hover } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
-import { positionContext, schemaOf } from '../analysis/positionContext';
+import { positionContext, schemaOf, scriptSchemaOf } from '../analysis/positionContext';
 import { isInsideString, tokenize } from '../expressions/lexer';
 import { chainAtToken, resolveChain, type ResolvedStep } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
@@ -11,6 +11,8 @@ import { mdReferenceAt } from '../project/mdReferences';
 import { textReferenceAt } from '../texts/textDatabase';
 import { describeMdReference } from './project';
 import { describeNamedItem, namedItemAt } from './namedItems';
+import { hoverInPatch, patchedViewAt } from './patchContent';
+import { pathHoverAt } from './patchPaths';
 import { describeText, type TextDisplayOptions } from './texts';
 import { describeVariable, variableAt } from './variables';
 
@@ -55,7 +57,7 @@ function hoverInValue(
     return hover(analysis, lines.join('\n'), attribute.valueStart, attribute.valueEnd);
   }
   const properties = game?.properties;
-  const schema = analysis.detection.script?.schema;
+  const schema = scriptSchemaOf(analysis);
   if (!properties || !schema || !isExpressionAttribute(declared)) {
     return undefined;
   }
@@ -88,13 +90,28 @@ export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameDa
   if (game && reference) {
     return hover(analysis, describeText(game.texts, reference.page, reference.id, options), reference.start, reference.end);
   }
+  // In what a patch brings in: as it is where it lands.
+  const view = patchedViewAt(analysis, offset);
+  if (view) {
+    const found = hoverAt(view.analysis, view.offset, game, options);
+    return found && hoverInPatch(view, found);
+  }
+  const inPath = game ? pathHoverAt(analysis, offset, game) : undefined;
+  if (inPath) {
+    return inPath;
+  }
   const variable = variableAt(analysis, offset);
   if (variable) {
-    return hover(analysis, describeVariable(variable.variable, analysis.document, game?.index), variable.occurrence.start, variable.occurrence.end);
+    return hover(
+      analysis,
+      describeVariable(variable.variable, analysis.document, game?.index, analysis.origin),
+      variable.occurrence.start,
+      variable.occurrence.end
+    );
   }
   const named = namedItemAt(analysis, offset);
   if (named) {
-    return hover(analysis, describeNamedItem(named, analysis.document, game?.index, analysis.detection.script?.name), named.start, named.end);
+    return hover(analysis, describeNamedItem(named, analysis.document, game?.index, analysis.detection.script?.name, analysis.origin), named.start, named.end);
   }
   const context = positionContext(analysis, offset, schemaOf(game, analysis));
   switch (context.kind) {

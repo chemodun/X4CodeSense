@@ -3,13 +3,24 @@
  * with the DLCs' `content.xml` for their load order) and of a folder of extensions (X4_MODS), never
  * committed, applied to the file it changes after the patches loaded before it, and what it brings in
  * checked in the patched file. Every operation of the DLCs applies and their patches get no diagnostic;
- * in the extensions, what does not apply and what is wrong where it lands is pinned with the reason.
+ * in the extensions, what does not apply and what is wrong where it lands is pinned with the reason. The
+ * editor features see each operation's target as it found it, and what it brings in where it lands.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { analyzeText, loadGameData, type AnalysisContext, type DocumentAnalysis } from '../src';
+import {
+  analyzeText,
+  hoverAt,
+  loadGameData,
+  offsetInValue,
+  pathNamesOf,
+  referencesAt,
+  scriptSchemaOf,
+  type AnalysisContext,
+  type DocumentAnalysis,
+} from '../src';
 import { bestOf, patchCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
@@ -74,6 +85,53 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
       )
     );
     expect(findings.sort()).toEqual(knownModFindings);
+  });
+
+  it('answers the editor features in every patch as its operations find the target', () => {
+    const data = { ...game, ...(index ? { index } : {}) };
+    let selections = 0;
+    let inserted = 0;
+    let names = 0;
+    const wrong: string[] = [];
+    for (const { file, analysis } of analyses) {
+      const where = `${path.basename(path.dirname(path.dirname(file)))}/${path.basename(file)}`;
+      const document = analysis.document;
+      for (const operation of analysis.patch?.operations ?? []) {
+        const step = operation.path?.steps[operation.path.steps.length - 1];
+        if (operation.status !== 'applied' || !operation.sel || !step) {
+          continue;
+        }
+        // The tree an operation is evaluated on is the one it was applied to: its path selects one node.
+        selections++;
+        const hover = hoverAt(analysis, offsetInValue(operation.sel, step.test.start), data);
+        const told = hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '';
+        if (!told.includes('Selects 1 node')) {
+          wrong.push(`${where} ${operation.path?.text ?? ''}: ${told.split('\n')[2] ?? 'no hover'}`);
+        }
+        // What it brings in is seen in the patched target, and shown at its place in the patch.
+        for (const element of operation.inserted.flatMap((node) => node.element ?? [])) {
+          inserted++;
+          const range = hoverAt(analysis, element.nameStart + 1, data)?.range;
+          if (!range || document.offsetAt(range.start) !== element.nameStart) {
+            wrong.push(`${where} <${element.name}> at ${element.nameStart}: hover ${range ? document.offsetAt(range.start) : 'none'}`);
+          }
+        }
+      }
+      // A name a path selects by is found with its other places; a patch without a target names nothing.
+      const schema = scriptSchemaOf(analysis);
+      for (const name of schema && analysis.structure && analysis.patch?.target.file ? pathNamesOf(analysis.structure, schema) : []) {
+        names++;
+        const found = referencesAt(analysis, name.start, data);
+        if (found.length < 2 || !found.some((location) => location.uri === document.uri && document.offsetAt(location.range.start) === name.start)) {
+          wrong.push(`${where} ${name.kind} ${name.name}: ${found.length} places`);
+        }
+      }
+    }
+    console.log(`${selections} paths of applied operations, ${inserted} elements brought in, ${names} names in paths`);
+    expect(selections).toBeGreaterThan(500);
+    expect(inserted).toBeGreaterThan(600);
+    expect(names).toBeGreaterThan(400);
+    expect(wrong).toEqual([]);
   });
 
   // A patch document's analysis includes the file it changes: twice the ceiling of a file.

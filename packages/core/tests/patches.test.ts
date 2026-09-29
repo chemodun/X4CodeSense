@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import type { Range } from 'vscode-languageserver-types';
 import {
   analyzeText,
   attributeNamed,
@@ -15,6 +16,7 @@ import {
   parseXPath,
   prepareRenameAt,
   referencesAt,
+  renameAt,
   scriptFolders,
   sourceRange,
   type AnalysisContext,
@@ -256,6 +258,188 @@ describe('what a patch brings in, checked where it lands', () => {
   });
 });
 
+describe('editor features in patches', () => {
+  // The fixture game's scripts are the game a rename must leave alone.
+  const data = { ...game, index, folder: gameFolder };
+  const editable = { editableFolders: [modsFolder] };
+  const full = readFileSync(latePatch, 'utf8');
+  const late = analyzeFile(latePatch, full);
+  const reading = full.replace('<set_value name="$a" exact="1" />', '<set_value name="$a" exact="$count + 1" />');
+  const withRead = analyzeFile(latePatch, reading);
+  const at = (text: string, needle: string, delta = 0): number => text.indexOf(needle) + delta;
+  const hoverText = (analysis: DocumentAnalysis, offset: number): string => {
+    const found = hoverAt(analysis, offset, data)?.contents;
+    return found && typeof found === 'object' && 'value' in found ? found.value : '';
+  };
+  const place = (location: { uri: string; range: { start: { line: number; character: number } } }): string =>
+    `${relative(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}`;
+  const labels = (analysis: DocumentAnalysis, offset: number): string[] => completionAt(analysis, offset, data).map((item) => item.label);
+  const edits = (edit: ReturnType<typeof renameAt>): string[] =>
+    edit && 'changes' in edit
+      ? Object.entries(edit.changes ?? {}).flatMap(([uri, changes]) => changes.map((change) => `${place({ uri, range: change.range })} ${change.newText}`))
+      : [String(edit && 'refused' in edit ? edit.refused : edit)];
+
+  it('hovers what the content brings in as it is where it lands', () => {
+    const offset = at(full, '<set_value name="$b"', 3);
+    const found = hoverAt(late, offset, data);
+    expect(hoverText(late, offset)).toContain('Sets a variable');
+    expect(found?.range && late.document.getText(found.range)).toBe('set_value');
+    // A variable of the target's cue, set in the target: the line is the target's.
+    expect(hoverText(withRead, at(reading, '$count + 1', 2))).toContain('First set in \\<set\\_value\\> at line 7 of setup.xml');
+    // The attribute `type` adds, as the element the operation selects declares it.
+    expect(hoverText(late, at(full, '@instantiate', 3))).toContain('**instantiate** of \\<cue\\>');
+  });
+
+  it('goes from the content to the files the patched target is written in', () => {
+    const target = readFileSync(setup, 'utf8').split('\n');
+    const line = target.findIndex((text) => text.includes('name="$count"'));
+    expect(definitionAt(withRead, at(reading, '$count + 1', 2), data).map(place)).toEqual([`game/md/setup.xml:${line}:${target[line].indexOf('$count')}`]);
+    expect(definitionAt(late, at(full, 'name="$b"', 7), data).map(place)).toEqual([`mods/late_mod/md/setup.xml:9:21`]);
+    expect(referencesAt(withRead, at(reading, '$count + 1', 2), data).map(place)).toEqual([
+      'mods/late_mod/md/setup.xml:8:32',
+      `game/md/setup.xml:${line}:${target[line].indexOf('$count')}`,
+    ]);
+  });
+
+  it('completes the content as it is where it lands', () => {
+    // A variable of the target's cue, and the edit in the patch.
+    const typing = full.replace('<set_value name="$b" exact="2" />', '<set_value name="$b" exact="$" />');
+    const analysis = analyzeFile(latePatch, typing);
+    const offset = at(typing, 'exact="$"', 8);
+    const items = completionAt(analysis, offset, data);
+    expect(items.map((item) => item.label)).toEqual(expect.arrayContaining(['$count', '$mode']));
+    const edit = items.find((item) => item.label === '$count')?.textEdit;
+    expect(edit && 'range' in edit ? analysis.document.getText(edit.range) : '').toBe('$');
+    // Attributes where one is being added to an element of the content.
+    const attributes = full.replace('<set_value name="$b" exact="2" />', '<set_value ');
+    expect(labels(analyzeFile(latePatch, attributes), at(attributes, '<set_value \n', 11))).toEqual(expect.arrayContaining(['name', 'exact']));
+  });
+
+  it('completes an element right after a bare < where the content lands', () => {
+    const intoCues = readFileSync(earlyPatch, 'utf8').replace('<cue name="Early" />', '<cue name="Early" />\n    <');
+    const analysis = analyzeFile(earlyPatch, intoCues);
+    expect(labels(analysis, at(intoCues, '\n    <\n', 6))).toEqual(expect.arrayContaining(['cue', 'library']));
+    const intoActions = full.replace('<set_value name="$b" exact="2" />', '<set_value name="$b" exact="2" />\n    <');
+    const actions = labels(analyzeFile(latePatch, intoActions), at(intoActions, '\n    <\n', 6));
+    expect(actions).toEqual(expect.arrayContaining(['set_value', 'signal_cue_instantly']));
+    expect(actions).not.toContain('cue');
+  });
+
+  it('tells what a path selects as its operation finds the target, and goes there', () => {
+    expect(hoverText(late, at(full, "[@name='Early']", 9))).toBe(
+      '**cue\\[@name=\'Early\'\\]**\n\nSelects 1 node:\n\n- `<cue name="Early">` · added by the patch of `early_mod`, line 5'
+    );
+    expect(hoverText(late, at(full, "set_value[@name='$count']", 2))).toContain(
+      'Selects 1 node up to here:\n\n- `<set_value name="$count">` · setup.xml, line 7'
+    );
+    // The comment the third operation replaces is still there for it.
+    expect(hoverText(late, at(full, 'comment()', 2))).toContain('- `<!-- patchmarker -->` · setup.xml, line 8');
+    expect(hoverText(late, at(full, "if=\"//cue[@name='Missing']", 8))).toBe("**cue\\[@name='Missing'\\]**\n\nSelects nothing");
+    expect(definitionAt(late, at(full, "[@name='Early']", 9), data).map(place)).toEqual(['mods/early_mod/md/setup.xml:4:5']);
+    expect(definitionAt(late, at(full, '@instantiate', 3), data)).toHaveLength(1);
+  });
+
+  it('completes a path from what it selects', () => {
+    expect(labels(late, at(full, "//cue[@name='Early']", 13))).toEqual(['Start', 'Later', 'Early']);
+    expect(labels(late, at(full, "//cue[@name='Early']", 7))).toEqual(['name']);
+    expect(labels(late, at(full, "//cue[@name='Early']", 2))).toEqual(['mdscript', 'cues', 'cue', 'actions', 'set_value', 'comment()']);
+    expect(labels(late, at(full, "/actions/set_value[@name='$count']", 9))).toEqual(['set_value', 'comment()']);
+    expect(labels(late, at(full, '/@exact', 2))).toEqual(['name', 'exact']);
+    // The attributes `type` may add: not the ones the element has.
+    const typing = full.replace('type="@instantiate"', 'type="@inst"');
+    const typed = labels(analyzeFile(latePatch, typing), at(typing, '@inst"', 5));
+    expect(typed).toContain('instantiate');
+    expect(typed).not.toContain('name');
+  });
+
+  it('finds and renames a cue through the paths that select it', () => {
+    const offset = at(full, "[@name='Early']", 9);
+    expect(referencesAt(late, offset, data).map(place)).toEqual(['mods/late_mod/md/setup.xml:3:25', 'mods/early_mod/md/setup.xml:4:15']);
+    expect(prepareRenameAt(late, offset, data, editable)).toMatchObject({ placeholder: 'Early' });
+    expect(edits(renameAt(late, offset, 'First', data, editable))).toEqual(['mods/late_mod/md/setup.xml:3:25 First', 'mods/early_mod/md/setup.xml:4:15 First']);
+    expect(edits(renameAt(late, offset, 'First', data))).toEqual(['cue Early of Setup is also written in setup.xml (early_mod), outside the workspace']);
+    expect(edits(renameAt(late, at(full, "[@name='Start']", 9), 'Begin', data, editable))).toEqual([
+      'cue Start of Setup is also written in setup.xml of the game, which cannot be renamed',
+    ]);
+    // A cue the patch replaces is gone from the patched text, not from the target's file.
+    const replacing = full.replace(
+      `<add sel="//cue[@name='Later']" type="@instantiate">true</add>`,
+      `<replace sel="//cue[@name='Later']"><cue name="Later2" /></replace>`
+    );
+    const lines = { patch: replacing.split('\n'), target: readFileSync(setup, 'utf8').split('\n') };
+    const patchLine = lines.patch.findIndex((line) => line.includes('<replace sel="//cue[@name=\'Later\']"'));
+    const targetLine = lines.target.findIndex((line) => line.includes('<cue name="Later"'));
+    expect(referencesAt(analyzeFile(latePatch, replacing), at(replacing, "[@name='Later']", 9), data).map(place)).toEqual([
+      `mods/late_mod/md/setup.xml:${patchLine}:${lines.patch[patchLine].indexOf('Later')}`,
+      `game/md/setup.xml:${targetLine}:${lines.target[targetLine].indexOf('Later')}`,
+    ]);
+    // From the script: the path of the patch that selects the cue is renamed with it.
+    const script = analyzeFile(api);
+    const text = script.document.getText();
+    expect(index.cueReferences('Api', 'Register').map((reference) => `${relative(reference.position.file)}:${reference.position.line}`)).toEqual([
+      'mods/late_mod/extensions/base_mod/md/api.xml:3',
+    ]);
+    expect(hoverText(script, at(text, 'Register', 2))).toContain('Referenced 0 times here, 1 time in 1 other file');
+    expect(edits(renameAt(script, at(text, 'Register', 2), 'Enrol', data, editable))).toEqual([
+      'mods/base_mod/md/api.xml:4:15 Enrol',
+      'mods/late_mod/extensions/base_mod/md/api.xml:3:25 Enrol',
+    ]);
+  });
+
+  it('finds and renames an interrupt library item through the paths that select it', () => {
+    // An AI script of the game's folder and a patch of it, both as an editor has them.
+    const scripts = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const library = path.join(gameFolder, 'aiscripts', 'lib.shared.xml');
+    const libraryText = [
+      '<aiscript name="lib.shared">',
+      '  <interrupts>',
+      '    <library>',
+      '      <actions name="SharedActions">',
+      '        <set_value name="$shared" exact="1"/>',
+      '      </actions>',
+      '    </library>',
+      '  </interrupts>',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <include_interrupt_actions ref="SharedActions"/>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+    ].join('\n');
+    const patch = path.join(modsFolder, 'late_mod', 'aiscripts', 'lib.shared.xml');
+    const patchText = `<diff>\n  <add sel="//library/actions[@name='SharedActions']">\n    <set_value name="$more" exact="2"/>\n  </add>\n</diff>\n`;
+    scripts.setStructure(library, libraryText, parseXml(libraryText), 'game', true);
+    scripts.setStructure(patch, patchText, parseXml(patchText), 'late_mod', true);
+    const withScripts = { ...data, index: scripts };
+    const analysis = analyzeFile(patch, patchText, { ...context, index: scripts });
+    expect(analysis.patch?.operations.map((operation) => operation.status)).toEqual(['applied']);
+    const offset = at(patchText, "'SharedActions'", 2);
+    expect(referencesAt(analysis, offset, withScripts).map(place)).toEqual([
+      'mods/late_mod/aiscripts/lib.shared.xml:1:37',
+      'game/aiscripts/lib.shared.xml:3:21',
+      'game/aiscripts/lib.shared.xml:10:38',
+    ]);
+    expect(edits(renameAt(analysis, offset, 'Shared', withScripts, editable))).toEqual([
+      'interrupt actions SharedActions is also written in lib.shared.xml of the game, which cannot be renamed',
+    ]);
+    // The patch's path is one of the item's references.
+    expect(scripts.libraryReferences('actions', 'SharedActions').map((reference) => relative(reference.position.file))).toEqual([
+      'game/aiscripts/lib.shared.xml',
+      'mods/late_mod/aiscripts/lib.shared.xml',
+    ]);
+  });
+
+  it('renames what the content names where it lands, in the files it is written in', () => {
+    expect(edits(renameAt(late, at(full, 'name="$b"', 8), 'bb', data, editable))).toEqual(['mods/late_mod/md/setup.xml:9:21 $bb']);
+    expect(prepareRenameAt(late, at(full, 'name="Late"', 7), data, editable)).toMatchObject({ placeholder: 'Late' });
+    expect(edits(renameAt(late, at(full, 'name="Late"', 7), 'Last', data, editable))).toEqual(['mods/late_mod/md/setup.xml:4:15 Last']);
+    // Set in the game's cue: the game cannot be renamed.
+    expect(prepareRenameAt(withRead, at(reading, '$count + 1', 2), data, editable)).toEqual({
+      refused: '$count is also written in setup.xml of the game, which cannot be renamed',
+    });
+  });
+});
+
 describe('patch documents without the index', () => {
   const text = [
     '<diff>',
@@ -329,16 +513,40 @@ describe('patches while typing', () => {
     expect(analysis.patch?.operations.filter((operation) => operation.status === 'no-match')).toEqual([]);
   });
 
+  it('completes a half-typed path from what it selects so far', () => {
+    const typed = full.replace(`sel="//cue[@name='Early']"`, `sel="//cue[@name='Ea`);
+    const analysis = analyzeFile(latePatch, typed);
+    const offset = typed.indexOf(`'Ea`) + 3;
+    const items = completionAt(analysis, offset, { ...game, index });
+    expect(items.map((item) => item.label)).toEqual(['Start', 'Later', 'Early']);
+    const edit = items[2].textEdit;
+    expect(edit && 'range' in edit ? analysis.document.getText(edit.range) : '').toBe('Ea');
+  });
+
   it('answers the editor features anywhere in a patch without failing', () => {
     const data = { ...game, index };
-    for (const text of [full, full.slice(0, full.indexOf('<remove'))]) {
+    const cuts = [full.length, full.indexOf('<remove')];
+    for (let cut = full.indexOf('<diff>'); cut < full.length; cut += 37) {
+      cuts.push(cut);
+    }
+    for (const cut of cuts) {
+      const text = full.slice(0, cut);
       const analysis = analyzeFile(latePatch, text);
-      for (let offset = 0; offset <= text.length; offset += 3) {
-        hoverAt(analysis, offset, data);
-        completionAt(analysis, offset, data);
+      const document = analysis.document;
+      // What is shown and replaced lies around the caret, also when it was found in the patched target.
+      const around = (range: Range | undefined, offset: number): boolean =>
+        range === undefined || (document.offsetAt(range.start) <= offset && offset <= document.offsetAt(range.end));
+      for (let offset = 0; offset <= text.length; offset += cut === full.length ? 1 : 5) {
+        const found = hoverAt(analysis, offset, data);
+        expect(around(found?.range, offset), `hover at ${offset} of ${cut}`).toBe(true);
+        for (const item of completionAt(analysis, offset, data)) {
+          const edit = item.textEdit;
+          expect(around(edit && 'range' in edit ? edit.range : undefined, offset), `${item.label} at ${offset} of ${cut}`).toBe(true);
+        }
         definitionAt(analysis, offset, data);
         referencesAt(analysis, offset, data);
         prepareRenameAt(analysis, offset, data);
+        renameAt(analysis, offset, 'renamed', data);
       }
     }
   });

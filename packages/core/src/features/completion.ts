@@ -1,6 +1,6 @@
 import { CompletionItemKind, InsertTextFormat, Range, type CompletionItem } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
-import { positionContext, schemaOf, type PositionContext } from '../analysis/positionContext';
+import { positionContext, schemaOf, scriptSchemaOf, type PositionContext } from '../analysis/positionContext';
 import { chainAtCaret, completeChain } from '../expressions/propertyChain';
 import { isInsideString, tokenize, tokenIndexAt, type TokenKind } from '../expressions/lexer';
 import type { GameData } from '../gameData';
@@ -12,6 +12,8 @@ import type { VariableTable } from '../variables/variables';
 import { referenceKindOf } from '../names/namedItems';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
 import { namedItemCompletionItems } from './namedItems';
+import { completionsInPatch, insertionPointAt, patchedViewAt } from './patchContent';
+import { pathCompletionsAt } from './patchPaths';
 import { mdCueCompletionItems, mdScriptCompletionItems } from './project';
 import { textIdCompletionItems, textPageCompletionItems, type TextDisplayOptions } from './texts';
 import { variableCompletionItems } from './variables';
@@ -50,14 +52,17 @@ class Completer {
   }
 
   private get schema(): ScriptSchema | undefined {
-    return this.analysis.detection.script?.schema;
+    return scriptSchemaOf(this.analysis);
   }
 
   complete(context: PositionContext): void {
     switch (context.kind) {
-      case 'element-name':
-        this.elementNames(context.parentDeclaration, context.parent, context.element, context.prefix, context.nameStart, context.nameEnd);
+      case 'element-name': {
+        const { parent, element, nameStart } = context;
+        const previous = parent?.children.filter((child) => child !== element && child.start < nameStart).map((child) => child.name) ?? [];
+        this.elementNames(parent ? context.parentDeclaration : undefined, previous, context.prefix, nameStart, context.nameEnd);
         break;
+      }
       case 'attribute-name':
         this.attributeNames(context.element, context.declaration, context.attribute, context.prefix, context.attribute.nameStart, context.attribute.nameEnd);
         break;
@@ -70,19 +75,12 @@ class Completer {
     }
   }
 
-  private elementNames(
-    parentDeclaration: XsdElement | undefined,
-    parent: XmlElement | undefined,
-    element: XmlElement | undefined,
-    prefix: string,
-    nameStart: number,
-    nameEnd: number
-  ): void {
-    if (!parentDeclaration || !parent) {
+  /** The elements the parent's declaration allows after the named ones, or anywhere when none fits there. */
+  elementNames(parentDeclaration: XsdElement | undefined, previous: string[], prefix: string, nameStart: number, nameEnd: number): void {
+    if (!parentDeclaration) {
       return;
     }
     const model = parentDeclaration.contentModel;
-    const previous = parent.children.filter((child) => child !== element && child.start < nameStart).map((child) => child.name);
     let names = model.expectedAfter(previous);
     if (names.length === 0) {
       names = [...model.declarations.keys()];
@@ -173,7 +171,16 @@ class Completer {
       // A label or interrupt library item, written as is: the whole value is the name.
       const range = this.range(attribute.valueStart, attribute.valueEnd);
       const prefix = expression.slice(0, index).trim();
-      for (const item of namedItemCompletionItems(names, referenceKind, element, this.analysis.document, range, prefix, this.game?.index)) {
+      for (const item of namedItemCompletionItems(
+        names,
+        referenceKind,
+        element,
+        this.analysis.document,
+        range,
+        prefix,
+        this.game?.index,
+        this.analysis.origin
+      )) {
         this.add(item);
       }
       return;
@@ -291,7 +298,8 @@ class Completer {
     }
     if (table) {
       const range = this.range(offsetInValue(attribute, token.start), offsetInValue(attribute, token.end));
-      for (const item of variableCompletionItems(variables, table, this.analysis.document, range, expression.slice(token.start, index), this.game?.index)) {
+      const prefix = expression.slice(token.start, index);
+      for (const item of variableCompletionItems(variables, table, this.analysis.document, range, prefix, this.game?.index, this.analysis.origin)) {
         this.add(item);
       }
     }
@@ -349,16 +357,34 @@ class Completer {
     const names = this.analysis.names;
     if (schema === 'md' && names) {
       // A cue name starts a chain like a keyword does: `Start.$x`, `signal_cue cue="Start"`.
-      for (const item of namedItemCompletionItems(names, 'cue', element, this.analysis.document, range, prefix)) {
+      for (const item of namedItemCompletionItems(names, 'cue', element, this.analysis.document, range, prefix, undefined, this.analysis.origin)) {
         this.add(item);
       }
     }
   }
 }
 
-/** Completion items for a caret offset in an analysed document. */
+/**
+ * Completion items for a caret offset in an analysed document. In a patch document, what it brings in is
+ * completed as it is where it lands, and its paths from the target they select in.
+ */
 export function completionAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined, options: CompletionOptions = {}): CompletionItem[] {
+  const view = patchedViewAt(analysis, offset);
+  if (view) {
+    return completionsInPatch(view, completionAt(view.analysis, view.offset, game, options));
+  }
+  const inPath = game ? pathCompletionsAt(analysis, offset, game) : undefined;
+  if (inPath) {
+    return inPath;
+  }
   const completer = new Completer(analysis, game, options);
-  completer.complete(positionContext(analysis, offset, schemaOf(game, analysis)));
+  const context = positionContext(analysis, offset, schemaOf(game, analysis));
+  // Right after a bare `<` in what a patch brings in: the elements allowed where it lands.
+  const landing = context.kind === 'element-name' && !context.element ? insertionPointAt(analysis, context.parent, offset) : undefined;
+  if (landing) {
+    completer.elementNames(landing.declaration, landing.previous, '', offset, offset);
+  } else {
+    completer.complete(context);
+  }
   return completer.items;
 }

@@ -20,9 +20,9 @@
  * variables it writes into cues it gets as values (`$Cue.$x`, `event.param.$x`).
  *
  * References: with the schemas, each file records the names it uses that other files define, with the
- * position of each: the parts of `md.<Script>.<Cue>.$x`, and interrupt library references. With where
- * each script, cue and library item has its name, that is what find references and rename need across
- * files. What a script refers to without naming the script (a cue's bare name, a variable in its cue) is
+ * position of each: the parts of `md.<Script>.<Cue>.$x`, and interrupt library references; a patch also
+ * the names its paths select cues and library items by (`cue[@name='X']`). With where each script, cue
+ * and library item has its name, that is what find references and rename need across files. What a script refers to without naming the script (a cue's bare name, a variable in its cue) is
  * worked out for a file when first asked for, like the variables of a cue.
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -35,6 +35,7 @@ import { collectVariables, receivesValue, type DocumentVariables } from '../vari
 import { attributeNamed, offsetInValue, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import type { SchemaSet } from '../xsd/loadSchemas';
 import { isExpressionAttribute, type XsdElement, type XsdSchema } from '../xsd/schema';
+import { pathNamesOf, type PathNameKind } from '../patches/pathNames';
 import { mdReferencesInAttribute } from './mdReferences';
 
 /** Where something is defined: a file and a zero-based position. */
@@ -136,6 +137,11 @@ export interface IndexedPatch {
   includes: string[];
   instantiates: string[];
   references: IndexedReference[];
+  /**
+   * The names its `sel` and `if` paths select cues and interrupt library items by; a cue's reference
+   * gets the name of the patched script when the index knows the target.
+   */
+  pathNames: { kind: PathNameKind; name: string; position: IndexedPosition }[];
 }
 
 export type IndexedFile = IndexedScript | IndexedPatch;
@@ -251,7 +257,7 @@ function paramNames(elements: readonly XmlElement[]): string[] {
 }
 
 /** The schema of a script file by its folder, for patches, whose root says nothing about it. */
-function schemaOfFolder(file: string): ScriptSchema | undefined {
+export function schemaOfFolder(file: string): ScriptSchema | undefined {
   const folder = path.basename(path.dirname(file)).toLowerCase();
   return folder === 'md' ? 'md' : folder === 'aiscripts' ? 'aiscripts' : undefined;
 }
@@ -491,7 +497,8 @@ export function indexStructure(
   const writesThroughValues = [...writes].sort();
   const uses = { writesThroughValues, includes: [...includes].sort(), instantiates: [...instantiates].sort(), references };
   if (patch) {
-    return { kind: 'patch', file, source, schema, cues, libraryItems, ...uses };
+    const pathNames = pathNamesOf(structure, schema).map((name) => ({ kind: name.kind, name: name.name, position: atOffset(name.start) }));
+    return { kind: 'patch', file, source, schema, cues, libraryItems, ...uses, pathNames };
   }
   const script: IndexedScript = { kind: 'script', file, source, schema, name: scriptName, position: at(root), cues, libraryItems, params, ...uses };
   if (scriptName !== '') {
@@ -751,6 +758,12 @@ export class ScriptIndex {
     return this.files.has(keyOf(file));
   }
 
+  /** The script a file defines, when it is an indexed script and not a patch. */
+  scriptOf(file: string): IndexedScript | undefined {
+    const entry = this.files.get(keyOf(file));
+    return entry?.kind === 'script' ? entry : undefined;
+  }
+
   /** The source a file belongs to: its own when indexed, else the one of the script folder it lies in. */
   sourceOf(file: string): string | undefined {
     return this.files.get(keyOf(file))?.source ?? this.folders.get(keyOf(path.dirname(file)))?.source;
@@ -953,14 +966,28 @@ export class ScriptIndex {
   private references(key: string): IndexedReference[] {
     if (!this.referenceLookup) {
       const lookup = new Map<string, IndexedReference[]>();
+      const add = (reference: IndexedReference): void => {
+        const referenceKeyOf = referenceKey(reference.kind, reference.name, reference.script, reference.cue);
+        const list = lookup.get(referenceKeyOf);
+        if (list) {
+          list.push(reference);
+        } else {
+          lookup.set(referenceKeyOf, [reference]);
+        }
+      };
       for (const entry of this.files.values()) {
-        for (const reference of entry.references) {
-          const referenceKeyOf = referenceKey(reference.kind, reference.name, reference.script, reference.cue);
-          const list = lookup.get(referenceKeyOf);
-          if (list) {
-            list.push(reference);
-          } else {
-            lookup.set(referenceKeyOf, [reference]);
+        entry.references.forEach(add);
+        if (entry.kind !== 'patch' || entry.pathNames.length === 0) {
+          continue;
+        }
+        // A path selects a cue of the script the patch changes.
+        const targetFile = this.patchTarget(entry.file)?.file;
+        const target = targetFile === undefined ? undefined : this.files.get(keyOf(targetFile));
+        for (const name of entry.pathNames) {
+          if (name.kind !== 'cue') {
+            add({ kind: name.kind, name: name.name, position: name.position });
+          } else if (target?.kind === 'script' && target.name !== '') {
+            add({ kind: 'cue', script: target.name, name: name.name, position: name.position });
           }
         }
       }

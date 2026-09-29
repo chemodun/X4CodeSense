@@ -1,4 +1,7 @@
+import { fileURLToPath } from 'node:url';
 import type { GameData } from '../gameData';
+import { schemaOfFolder } from '../project/scriptIndex';
+import type { ScriptSchema } from '../types';
 import {
   attributeWithNameAt,
   attributeWithValueAt,
@@ -49,9 +52,25 @@ export type PositionContext =
 
 const LT = 0x3c;
 
+/**
+ * The script kind of a document: a script's own, and for a patch the kind of the folder it lies in, so
+ * that what it brings in is known by name also where it does not land.
+ */
+export function scriptSchemaOf(analysis: DocumentAnalysis): ScriptSchema | undefined {
+  const own = analysis.detection.script?.schema;
+  if (own || !analysis.detection.isDiff || !analysis.document.uri.startsWith('file:')) {
+    return own;
+  }
+  try {
+    return schemaOfFolder(fileURLToPath(analysis.document.uri));
+  } catch {
+    return undefined;
+  }
+}
+
 /** The schema of the document's script kind, when game data is available. */
 export function schemaOf(game: GameData | undefined, analysis: DocumentAnalysis): XsdSchema | undefined {
-  const kind = analysis.detection.script?.schema;
+  const kind = scriptSchemaOf(analysis);
   return kind && game ? game.schemas.schemas[kind] : undefined;
 }
 

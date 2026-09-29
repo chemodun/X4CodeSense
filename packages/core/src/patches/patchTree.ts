@@ -193,8 +193,9 @@ function insert(parent: PatchNode, index: number, nodes: PatchNode[]): void {
 /**
  * Applies the operations of a patch to a tree, in order, and tells what became of each. With
  * `uncertain`, the tree may differ from the game's already, so no operation is said to select nothing.
+ * With `until`, the operations stop before that one.
  */
-export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = false): PatchOperation[] {
+export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = false, until?: XmlElement): PatchOperation[] {
   const root = patch.structure.roots[0];
   if (!root) {
     return [];
@@ -202,6 +203,9 @@ export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = 
   const builder = new NodeBuilder(patch);
   const operations: PatchOperation[] = [];
   for (const element of root.children) {
+    if (element === until) {
+      break;
+    }
     if (element.name !== 'add' && element.name !== 'replace' && element.name !== 'remove') {
       continue;
     }

@@ -8,6 +8,11 @@
  * item (its definition and every reference in any AI script). The current document's occurrences come
  * from its analysis, those of other files from the index.
  *
+ * A patch document is seen where it lands: a name in what it brings in is looked up in the patched
+ * target, and its places there are taken to the patch or an earlier patch they were written in; the
+ * target file's own places come from the index, which has what patches replace or remove. The names a
+ * patch's paths select cues and library items by (`cue[@name='X']`) are places of those names too.
+ *
  * A rename always may edit the current document; other files only inside the editable folders (the
  * workspace) and outside the game folder, or it is refused. It is refused too when the script is
  * defined more than once, when a file changed since it was indexed, and when a variable is tied to
@@ -25,7 +30,11 @@ import type { IndexedFileModel, IndexedLibraryKind, IndexedPosition, ScriptIndex
 import type { ScriptVariable, VariableTable } from '../variables/variables';
 import { attributeNamed, attributeWithValueAt, elementWithStartTagAt, type XmlElement } from '../xml/xmlStructure';
 import { isExpressionAttribute } from '../xsd/schema';
+import { scriptSchemaOf } from '../analysis/positionContext';
+import { pathNamesOf } from '../patches/pathNames';
 import { namedItemAt } from './namedItems';
+import { locationsInFiles, patchedViewAt, patchedViewOf, placeOf, rangeInPatch } from './patchContent';
+import { pathNameAt } from './patchPaths';
 import { remoteCueOf, renameVariable, variableAt, variableOccurrences, variableReferences } from './variables';
 
 export interface RenameOptions {
@@ -57,6 +66,8 @@ interface Occurrences {
   /** Text offsets in the current document. */
   here: { start: number; end: number }[];
   there: Elsewhere[];
+  /** Places in a patched target's text that were written in no file. */
+  lost?: number;
 }
 
 function fileOf(uri: string): string | undefined {
@@ -161,9 +172,11 @@ function cueTable(tables: readonly VariableTable[], cue: string): VariableTable 
   return tables.find((table) => (table.kind === 'cue' || table.kind === 'library') && table.name === cue);
 }
 
-/** Every place the target is written: in the current document from its analysis, in other files from the index. */
-function occurrencesOf(target: Target, analysis: DocumentAnalysis, game: GameData, index: ScriptIndex): Occurrences {
-  const current = fileOf(analysis.document.uri);
+/**
+ * Every place the target is written: in the current document from its analysis, in other files from the
+ * index. `current` is the file whose places the analysis gives, the analysed document's by default.
+ */
+function occurrencesOf(target: Target, analysis: DocumentAnalysis, game: GameData, index: ScriptIndex, current = fileOf(analysis.document.uri)): Occurrences {
   const isCurrent = (file: string): boolean => current !== undefined && sameFile(file, current);
   const here: { start: number; end: number }[] = [];
   const there: Elsewhere[] = [];
@@ -269,6 +282,11 @@ function occurrencesOf(target: Target, analysis: DocumentAnalysis, game: GameDat
       }
     }
   }
+  return distinct(here, there);
+}
+
+/** Each place once, in order. */
+function distinct(here: { start: number; end: number }[], there: Elsewhere[]): Occurrences {
   const seenHere = new Set<number>();
   const seenThere = new Set<string>();
   return {
@@ -303,8 +321,16 @@ function editRefusal(target: Target, occurrences: Occurrences, game: GameData, i
   if (scripts.length > 1) {
     return `Mission Director script ${script} is defined ${scripts.length} times (${scripts.map((entry) => path.basename(entry.file)).join(', ')}): its references cannot tell which one they mean`;
   }
+  if (occurrences.lost) {
+    return lostPlace(describeTarget(target));
+  }
+  return placesRefusal(describeTarget(target), occurrences.there, game, index, options);
+}
+
+/** Why places in other files cannot all be edited, or undefined when they can; `what` names what is renamed. */
+function placesRefusal(what: string, places: readonly Elsewhere[], game: GameData, index: ScriptIndex, options: RenameOptions): string | undefined {
   const byFile = new Map<string, Elsewhere[]>();
-  for (const place of occurrences.there) {
+  for (const place of places) {
     const list = byFile.get(place.file) ?? [];
     list.push(place);
     byFile.set(place.file, list);
@@ -312,19 +338,24 @@ function editRefusal(target: Target, occurrences: Occurrences, game: GameData, i
   for (const file of byFile.keys()) {
     const name = path.basename(file);
     if (isInside(file, game.folder)) {
-      return `${describeTarget(target)} is also written in ${name} of the game, which cannot be renamed`;
+      return `${what} is also written in ${name} of the game, which cannot be renamed`;
     }
     if (!(options.editableFolders ?? []).some((folder) => isInside(file, folder))) {
-      return `${describeTarget(target)} is also written in ${name} (${index.sourceOf(file) ?? 'unknown source'}), outside the workspace`;
+      return `${what} is also written in ${name} (${index.sourceOf(file) ?? 'unknown source'}), outside the workspace`;
     }
   }
-  for (const [file, places] of byFile) {
+  for (const [file, inFile] of byFile) {
     const lines = index.currentText(file)?.split('\n');
-    if (!lines || places.some((place) => lines[place.line]?.slice(place.character, place.character + place.text.length) !== place.text)) {
+    if (!lines || inFile.some((place) => lines[place.line]?.slice(place.character, place.character + place.text.length) !== place.text)) {
       return `${path.basename(file)} changed since it was indexed; save it and try again`;
     }
   }
   return undefined;
+}
+
+/** The refusal for a place in a patched target's text that no file holds: it cannot be edited. */
+function lostPlace(what: string): string {
+  return `${what} is also written in the patched file where the text comes from no file, which cannot be renamed`;
 }
 
 /** The first cue of the element or its ancestors. */
@@ -405,15 +436,201 @@ function variableTie(variable: ScriptVariable, analysis: DocumentAnalysis, index
   return undefined;
 }
 
-/** All occurrences of the variable or named item under the caret; with the script index, also those in other files. */
+function locationsOf(analysis: DocumentAnalysis, occurrences: Occurrences): Location[] {
+  return [
+    ...occurrences.here.map((occurrence) => Location.create(analysis.document.uri, rangeOf(analysis, occurrence))),
+    ...occurrences.there.map((place) => Location.create(pathToFileURL(place.file).toString(), rangeElsewhere(place))),
+  ];
+}
+
+/** Edits that give every occurrence the new name, a `$` kept where one is written. */
+function editsOf(analysis: DocumentAnalysis, occurrences: Occurrences, name: string): WorkspaceEdit | undefined {
+  const text = analysis.document.getText();
+  const renamed = (written: string): string => (written.startsWith('$') ? `$${name}` : name);
+  const changes: Record<string, TextEdit[]> = {};
+  if (occurrences.here.length > 0) {
+    changes[analysis.document.uri] = occurrences.here.map((occurrence) => ({
+      range: rangeOf(analysis, occurrence),
+      newText: renamed(text.slice(occurrence.start, occurrence.end)),
+    }));
+  }
+  for (const place of occurrences.there) {
+    const edits = (changes[pathToFileURL(place.file).toString()] ??= []);
+    edits.push({ range: rangeElsewhere(place), newText: renamed(place.text) });
+  }
+  return Object.keys(changes).length > 0 ? { changes } : undefined;
+}
+
+/**
+ * The name in a path of a patch document under the caret, as what it names: a cue or library of the
+ * patched script, or an interrupt library item.
+ */
+function pathTargetAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined): { target: Target; start: number; end: number } | undefined {
+  const name = pathNameAt(analysis, offset);
+  const index = game?.index;
+  if (!name || !index) {
+    return undefined;
+  }
+  if (name.kind !== 'cue') {
+    return { target: { kind: name.kind, name: name.name }, start: name.start, end: name.end };
+  }
+  const file = analysis.patch?.target.file;
+  const script = file === undefined ? undefined : index.scriptOf(file)?.name;
+  return script ? { target: { kind: 'cue', script, cue: name.name }, start: name.start, end: name.end } : undefined;
+}
+
+/** What a caret in a patch document names across files: seen where its content lands, or a name in a path. */
+function patchTargetAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined): Target | undefined {
+  const view = patchedViewAt(analysis, offset);
+  return view ? targetAt(view.analysis, view.offset, game) : pathTargetAt(analysis, offset, game)?.target;
+}
+
+/**
+ * Every place a target is written, for a request in a patch document: in what this patch and those
+ * before it bring in, from the patched target's text; in the patch's own paths; and in the target and
+ * other files from the index, which reads the files as they are, with what patches replace or remove.
+ * The places in the patch document are its own.
+ */
+function patchOccurrences(target: Target, analysis: DocumentAnalysis, game: GameData, index: ScriptIndex): Occurrences {
+  const view = patchedViewOf(analysis);
+  const document = analysis.document;
+  const own = fileOf(document.uri);
+  const found = occurrencesOf(target, view?.analysis ?? analysis, game, index, own);
+  const targetFile = analysis.patch?.target.file;
+  const here: { start: number; end: number }[] = view ? [] : [...found.here];
+  const there: Elsewhere[] = [];
+  let lost = 0;
+  for (const occurrence of view ? found.here : []) {
+    const place = view && placeOf(view, occurrence.start, occurrence.end);
+    const file = place && fileOf(place.document.uri);
+    if (place?.document === document) {
+      here.push(place);
+    } else if (place && file) {
+      if (targetFile === undefined || !sameFile(file, targetFile)) {
+        there.push({ file, ...place.document.positionAt(place.start), text: place.document.getText().slice(place.start, place.end) });
+      }
+    } else {
+      lost++;
+    }
+  }
+  for (const place of found.there) {
+    if (own !== undefined && sameFile(place.file, own)) {
+      const start = document.offsetAt({ line: place.line, character: place.character });
+      here.push({ start, end: start + place.text.length });
+    } else {
+      there.push(place);
+    }
+  }
+  const schema = scriptSchemaOf(analysis);
+  const patched = analysis.patch?.target.file;
+  const script = patched === undefined ? undefined : index.scriptOf(patched)?.name;
+  for (const name of schema && analysis.structure ? pathNamesOf(analysis.structure, schema) : []) {
+    const named =
+      target.kind === 'cue'
+        ? name.kind === 'cue' && target.script === script && name.name === target.cue
+        : name.kind === target.kind && 'name' in target && name.name === target.name;
+    if (named) {
+      here.push(name);
+    }
+  }
+  return { ...distinct(here, there), lost };
+}
+
+/** References from a patch document: of what its content names where it lands, or of a name in a path. */
+function patchReferencesAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined): Location[] {
+  const target = patchTargetAt(analysis, offset, game);
+  if (target && game?.index) {
+    return locationsOf(analysis, patchOccurrences(target, analysis, game, game.index));
+  }
+  const view = patchedViewAt(analysis, offset);
+  return view ? locationsInFiles(view, referencesAt(view.analysis, view.offset, game)) : [];
+}
+
+/** A rename from a patch document; edits in the patched target's text go to the files it was written in. */
+function patchRenameAt(
+  analysis: DocumentAnalysis,
+  offset: number,
+  name: string,
+  game: GameData | undefined,
+  options: RenameOptions
+): WorkspaceEdit | RenameRefusal | undefined {
+  const view = patchedViewAt(analysis, offset);
+  const target = patchTargetAt(analysis, offset, game);
+  const index = game?.index;
+  if (target && game && index) {
+    const variable = view && variableAt(view.analysis, view.offset)?.variable;
+    const tie = view && variable && variableTie(variable, view.analysis, index);
+    if (tie) {
+      return { refused: tie };
+    }
+    const occurrences = patchOccurrences(target, analysis, game, index);
+    const refused = editRefusal(target, occurrences, game, index, options);
+    return refused ? { refused } : editsOf(analysis, occurrences, name);
+  }
+  if (!view || !game || !index) {
+    return undefined;
+  }
+  // A name of the patched text alone: its places there, each in the file it was written in.
+  const edit = renameAt(view.analysis, view.offset, name, game, options);
+  if (!edit || 'refused' in edit) {
+    return edit;
+  }
+  const document = view.analysis.document;
+  const here: { start: number; end: number }[] = [];
+  const there: Elsewhere[] = [];
+  let what = name;
+  for (const change of edit.changes?.[document.uri] ?? []) {
+    const place = placeOf(view, document.offsetAt(change.range.start), document.offsetAt(change.range.end));
+    const file = place && fileOf(place.document.uri);
+    what = document.getText(change.range);
+    if (place?.document === analysis.document) {
+      here.push(place);
+    } else if (place && file) {
+      there.push({ file, ...place.document.positionAt(place.start), text: place.document.getText().slice(place.start, place.end) });
+    } else {
+      return { refused: lostPlace(what) };
+    }
+  }
+  const refused = placesRefusal(what, there, game, index, options);
+  return refused ? { refused } : editsOf(analysis, distinct(here, there), name);
+}
+
+/** A rename prompt in a patch document: the name's range there, or why it cannot be renamed. */
+function patchPrepareRenameAt(
+  analysis: DocumentAnalysis,
+  offset: number,
+  game: GameData | undefined,
+  options: RenameOptions
+): { range: Range; placeholder: string } | RenameRefusal | undefined {
+  const view = patchedViewAt(analysis, offset);
+  let range: Range | undefined;
+  if (view) {
+    const found = variableAt(view.analysis, view.offset)?.occurrence ?? namedItemAt(view.analysis, view.offset) ?? mdNameAt(view.analysis, view.offset, game);
+    range = found && rangeInPatch(view, rangeOf(view.analysis, found));
+  } else {
+    const inPath = pathTargetAt(analysis, offset, game);
+    range = inPath && rangeOf(analysis, inPath);
+  }
+  if (!range) {
+    return undefined;
+  }
+  const placeholder = analysis.document.getText(range);
+  const edit = patchRenameAt(analysis, offset, placeholder.replace(/^\$/, ''), game, options);
+  return edit && 'refused' in edit ? edit : { range, placeholder };
+}
+
+/**
+ * All occurrences of the variable or named item under the caret; with the script index, also those in
+ * other files. In a patch document, also of what its content names where it lands, and of the names in
+ * its paths.
+ */
 export function referencesAt(analysis: DocumentAnalysis, offset: number, game?: GameData): Location[] {
+  if (analysis.detection.isDiff) {
+    return patchReferencesAt(analysis, offset, game);
+  }
   const target = targetAt(analysis, offset, game);
   if (target && game?.index) {
-    const occurrences = occurrencesOf(target, analysis, game, game.index);
-    return [
-      ...occurrences.here.map((occurrence) => Location.create(analysis.document.uri, rangeOf(analysis, occurrence))),
-      ...occurrences.there.map((place) => Location.create(pathToFileURL(place.file).toString(), rangeElsewhere(place))),
-    ];
+    return locationsOf(analysis, occurrencesOf(target, analysis, game, game.index));
   }
   const variable = variableAt(analysis, offset);
   if (variable) {
@@ -444,6 +661,9 @@ export function prepareRenameAt(
   game?: GameData,
   options: RenameOptions = {}
 ): { range: Range; placeholder: string } | RenameRefusal | undefined {
+  if (analysis.detection.isDiff) {
+    return patchPrepareRenameAt(analysis, offset, game, options);
+  }
   const found = variableAt(analysis, offset)?.occurrence ?? namedItemAt(analysis, offset) ?? mdNameAt(analysis, offset, game);
   if (!found) {
     return undefined;
@@ -493,6 +713,9 @@ export function renameAt(
   if (name === '') {
     return undefined;
   }
+  if (analysis.detection.isDiff) {
+    return patchRenameAt(analysis, offset, name, game, options);
+  }
   const refused = renameRefusal(analysis, offset, game, options);
   if (refused) {
     return { refused };
@@ -500,21 +723,7 @@ export function renameAt(
   const uri = analysis.document.uri;
   const target = targetAt(analysis, offset, game);
   if (target && game?.index) {
-    const occurrences = occurrencesOf(target, analysis, game, game.index);
-    const text = analysis.document.getText();
-    const renamed = (written: string): string => (written.startsWith('$') ? `$${name}` : name);
-    const changes: Record<string, TextEdit[]> = {};
-    if (occurrences.here.length > 0) {
-      changes[uri] = occurrences.here.map((occurrence) => ({
-        range: rangeOf(analysis, occurrence),
-        newText: renamed(text.slice(occurrence.start, occurrence.end)),
-      }));
-    }
-    for (const place of occurrences.there) {
-      const edits = (changes[pathToFileURL(place.file).toString()] ??= []);
-      edits.push({ range: rangeElsewhere(place), newText: renamed(place.text) });
-    }
-    return Object.keys(changes).length > 0 ? { changes } : undefined;
+    return editsOf(analysis, occurrencesOf(target, analysis, game, game.index), name);
   }
   const variable = variableAt(analysis, offset);
   if (variable) {
