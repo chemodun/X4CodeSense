@@ -2,5 +2,5 @@
   "packages/core": "0.0.0",
   "packages/server": "0.0.0",
   "packages/cli": "0.0.0",
-  "client": "0.0.0"
+  "client": "1.0.0"
 }
