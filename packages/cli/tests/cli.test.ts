@@ -130,6 +130,27 @@ describe('x4-script-check', () => {
     });
   });
 
+  it('checks text references against the game texts and the extension texts', async () => {
+    const texts = path.join(extension, 't');
+    mkdirSync(texts, { recursive: true });
+    const script = path.join(extension, 'md', 'Texts.xml');
+    const line = '        <debug_text text="{1001,1} + {90001,1} + {90001,2}"/>';
+    const text = `<mdscript name="Texts">\n  <cues>\n    <cue name="A">\n      <actions>\n${line}\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n`;
+    try {
+      writeFileSync(path.join(texts, '0001-l044.xml'), '<diff><add sel="/language"><page id="90001"><t id="1">Mine</t></page></add></diff>\n');
+      await withFile(script, text, async () => {
+        const result = await run('--unpacked', unpacked, extension);
+        expect(result.code).toBe(1);
+        expect(lines(result)).toEqual([
+          `${script}:5:${line.indexOf('{90001,2}') + 1}: Text 2 does not exist on page 90001 [text-undefined]`,
+          '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 1 finding(s)',
+        ]);
+      });
+    } finally {
+      rmSync(texts, { recursive: true, force: true });
+    }
+  });
+
   it('finds extensions one level below the given folder', async () => {
     const result = await run(workDir);
     expect(result.code).toBe(0);

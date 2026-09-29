@@ -367,3 +367,47 @@ describe('references and rename', () => {
     expect(edit?.changes?.[labelUri].map((change) => change.newText)).toEqual(['begin', 'begin']);
   });
 });
+
+describe('texts', () => {
+  const scriptUri = 'file:///mod/md/Texts.xml';
+  const textUri = 'file:///mod/t/0001-l044.xml';
+  const scriptLines = [
+    '<mdscript name="T">',
+    '  <cues>',
+    '    <cue name="A">',
+    '      <actions>',
+    '        <debug_text text="{1001,1} + {1001,50}"/>',
+    '      </actions>',
+    '    </cue>',
+    '  </cues>',
+    '</mdscript>',
+    '',
+  ];
+  const missing = `5:${scriptLines[4].indexOf('{1001,50}') + 1} text-undefined`;
+
+  it('shows texts and reports the ones no file defines', async () => {
+    expect(summarize(await open(scriptUri, scriptLines.join('\n')))).toEqual([missing]);
+    const hover = await connection.sendRequest(HoverRequest.type, {
+      textDocument: { uri: scriptUri },
+      position: { line: 4, character: scriptLines[4].indexOf('{1001,1}') + 2 },
+    });
+    expect(hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '').toContain('Hull');
+  });
+
+  it('follows a text file while it is edited, and forgets unsaved texts on close', async () => {
+    // One waiter at a time: the connection keeps a single handler per notification.
+    const added = nextDiagnostics(scriptUri);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: {
+        uri: textUri,
+        languageId: 'xml',
+        version: 1,
+        text: '<diff><add sel="/language"><page id="1001"><t id="50">Fifty</t></page></add></diff>',
+      },
+    });
+    expect(summarize(await added)).toEqual([]);
+    const removed = nextDiagnostics(scriptUri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: textUri } });
+    expect(summarize(await removed)).toEqual([missing]);
+  });
+});

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test texts for X4CodeSense: German, for the preferred language and its fallbacks. -->
+<language id="49">
+  <page id="1001" title="Interface">
+    <t id="1">Hülle</t>
+    <t id="2">Schild</t>
+  </page>
+</language>

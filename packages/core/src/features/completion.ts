@@ -7,14 +7,15 @@ import type { GameData } from '../gameData';
 import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
-import { enumerationsOf, isExpressionAttribute, type XsdAttribute, type XsdElement } from '../xsd/schema';
+import { enumerationsOf, isExpressionAttribute, typeNamesOf, type XsdAttribute, type XsdElement } from '../xsd/schema';
 import type { VariableTable } from '../variables/variables';
 import { referenceKindOf } from '../names/namedItems';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
 import { namedItemCompletionItems } from './namedItems';
+import { textIdCompletionItems, textPageCompletionItems, type TextDisplayOptions } from './texts';
 import { variableCompletionItems } from './variables';
 
-export interface CompletionOptions {
+export interface CompletionOptions extends TextDisplayOptions {
   /** The client understands snippet syntax in inserted text. */
   snippetSupport?: boolean;
 }
@@ -147,6 +148,9 @@ class Completer {
     if (!declared) {
       return;
     }
+    if (this.textReferences(attribute, declared, expression, index)) {
+      return;
+    }
     const values = enumerationsOf(declared.type);
     const typed = expression.slice(0, index);
     if (values.length > 0 && /^[\w.]*$/.test(typed)) {
@@ -215,6 +219,36 @@ class Completer {
       return;
     }
     this.keywords(tokens, expression, index, element, attribute, properties, schema);
+  }
+
+  /**
+   * A text reference being typed, in any attribute but a comment: text ids after `{page,`, pages after
+   * a `{` that does not follow a dot (`$x.{…}` is a lookup). Returns true when nothing else fits.
+   */
+  private textReferences(attribute: XmlAttribute, declared: XsdAttribute, expression: string, index: number): boolean {
+    const texts = this.game?.texts;
+    if (!texts || texts.fileCount === 0 || typeNamesOf(declared.type).has('comment')) {
+      return false;
+    }
+    const before = expression.slice(0, index);
+    const digitsAfter = /^\d*/.exec(expression.slice(index))?.[0].length ?? 0;
+    const range = (typed: string): Range => this.range(offsetInValue(attribute, index - typed.length), offsetInValue(attribute, index + digitsAfter));
+    const id = /\{\s*(\d+)\s*,\s*(\d*)$/.exec(before);
+    if (id) {
+      for (const item of textIdCompletionItems(texts, Number(id[1]), range(id[2]), id[2], this.options)) {
+        this.add(item);
+      }
+      return true;
+    }
+    const page = /\{\s*(\d*)$/.exec(before);
+    if (!page || /\.\s*$/.test(before.slice(0, page.index))) {
+      return false;
+    }
+    for (const item of textPageCompletionItems(texts, range(page[1]), page[1])) {
+      this.add(item);
+    }
+    // Right after `{` an expression may follow as well (`table[{faction.argon} = 1]`).
+    return page[1] !== '';
   }
 
   /** Variables, when the caret is on a `$name` token: of the element's table, or of the cue named before the dot. */

@@ -5,6 +5,7 @@ import { Location, Range } from 'vscode-languageserver-types';
 import { loadScriptProperties } from './properties/loadScriptProperties';
 import type { ScriptProperties } from './properties/scriptProperties';
 import type { SourceLocation } from './sourceLocation';
+import { loadTexts, type TextDatabase, type TextLoadOptions } from './texts/textDatabase';
 import { loadSchemas, type SchemaSet } from './xsd/loadSchemas';
 
 /** Everything the analysis reads from an unpacked game installation. */
@@ -14,14 +15,16 @@ export interface GameData {
   schemas: SchemaSet;
   /** Absent when `libraries/scriptproperties.xml` is missing. */
   properties?: ScriptProperties;
+  /** Texts of the game and of the extension folders it was loaded with; replaceable when those change. */
+  texts: TextDatabase;
   /** Problems found while loading, for logging. */
   problems: string[];
   /** Converts a location in a game data file into an LSP location. */
   locationOf(location: SourceLocation): Location | undefined;
 }
 
-/** Loads the schemas and the script properties of an unpacked game folder. Never throws. */
-export function loadGameData(unpackedFolder: string): GameData {
+/** Loads the schemas, the script properties and the texts of an unpacked game folder, and the texts of extension folders. Never throws. */
+export function loadGameData(unpackedFolder: string, textOptions: TextLoadOptions = {}): GameData {
   const libraries = path.join(unpackedFolder, 'libraries');
   const schemas = loadSchemas(libraries);
   const properties = loadScriptProperties(libraries);
@@ -53,7 +56,7 @@ export function loadGameData(unpackedFolder: string): GameData {
     }
     return Location.create(document.uri, Range.create(document.positionAt(location.start), document.positionAt(location.end)));
   };
-  const data: GameData = { folder: unpackedFolder, schemas, problems, locationOf };
+  const data: GameData = { folder: unpackedFolder, schemas, problems, locationOf, texts: loadTexts(unpackedFolder, textOptions) };
   if (properties) {
     data.properties = properties;
   }

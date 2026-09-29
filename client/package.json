@@ -69,7 +69,7 @@
         "x4CodeSense.limitLanguageOutput": {
           "type": "boolean",
           "default": false,
-          "description": "Show only the preferred language in text hovers."
+          "description": "Show only the preferred language in text hovers, and read only the text files of that language and English."
         },
         "x4CodeSense.validateXmlStructure": {
           "type": "boolean",

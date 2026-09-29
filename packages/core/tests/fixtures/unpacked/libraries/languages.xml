@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test data for X4CodeSense: a small stand-in for the game's languages.xml. -->
+<languages>
+  <!-- English -->
+  <language id="44" name="English" voice="true" />
+  <!-- German -->
+  <language id="49" name="Deutsch" voice="true" />
+</languages>

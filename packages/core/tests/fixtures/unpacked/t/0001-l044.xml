@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test texts for X4CodeSense: a small stand-in for the game's t/0001-l044.xml. -->
+<language id="44">
+  <page id="1001" title="Interface" descr="Text for interface and menus" voice="no">
+    <t id="1">Hull</t>
+    <t id="2">Shield</t>
+    <t id="3">(Storage)None</t>
+    <t id="4">{1001,1} and {1001, 2}</t>
+    <t id="5">First line\nSecond line \(not a comment\) &amp; more</t>
+    <t id="6">Loops {1001,6}</t>
+    <t id="7">Missing {1001,999}</t>
+  </page>
+  <page id="1002" title="Player Choices" descr="0" voice="no">
+    <t id="10">Yes</t>
+  </page>
+</language>

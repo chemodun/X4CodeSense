@@ -168,7 +168,8 @@ async function main(argv: string[]): Promise<number> {
       console.error(`Not a folder: ${libraries}`);
       return 2;
     }
-    const game = loadGameData(unpacked);
+    // The checked folders' own texts count as well: an extension refers to the texts it ships.
+    const game = loadGameData(unpacked, { extensionFolders: options.roots.map((root) => path.resolve(root)) });
     for (const problem of game.problems) {
       console.error(problem);
     }
@@ -176,6 +177,7 @@ async function main(argv: string[]): Promise<number> {
       return 2;
     }
     context.schemas = game.schemas;
+    context.texts = game.texts;
     if (game.properties) {
       context.properties = game.properties;
     }

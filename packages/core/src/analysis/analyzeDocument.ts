@@ -12,6 +12,8 @@ import { collectVariables, type DocumentVariables } from '../variables/variables
 import { validateVariables } from '../variables/validateVariables';
 import { collectNames, type DocumentNames } from '../names/namedItems';
 import { validateNames } from '../names/validateNames';
+import type { TextDatabase } from '../texts/textDatabase';
+import { validateTexts } from '../texts/validateTexts';
 
 /** `source` of every diagnostic this library produces. */
 export const diagnosticSource = 'X4CodeSense';
@@ -42,6 +44,10 @@ export interface AnalysisContext {
    * no cue of the script. Defaults to true; see `NameValidationOptions.cueReferences`.
    */
   validateCueReferences?: boolean;
+  /** The game's texts; with them `{page, id}` references are checked. */
+  texts?: TextDatabase;
+  /** Report text references that no loaded text file defines. Defaults to true; needs `texts`. */
+  validateTexts?: boolean;
 }
 
 /** Names of the cues and libraries of a script: they may start a chain like a keyword. */
@@ -133,6 +139,9 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
       analysis.diagnostics.push(
         ...validateNames(analysis.names as DocumentNames, document, diagnosticSource, { cueReferences: context.validateCueReferences ?? true })
       );
+    }
+    if (context.texts && (context.validateTexts ?? true)) {
+      analysis.diagnostics.push(...validateTexts(structure, validation.declarations, schema, context.texts, document, diagnosticSource));
     }
   }
   return analysis;

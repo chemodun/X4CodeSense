@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test texts for X4CodeSense: 0001.xml serves every language. -->
+<language>
+  <page id="90001" title="My Mod">
+    <t id="3">Every language</t>
+  </page>
+</language>

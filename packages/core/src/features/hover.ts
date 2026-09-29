@@ -7,7 +7,9 @@ import type { GameData } from '../gameData';
 import { offsetInValue, type XmlAttribute } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
 import { describeAttribute, describeCandidates, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
+import { textReferenceAt } from '../texts/textDatabase';
 import { describeNamedItem, namedItemAt } from './namedItems';
+import { describeText, type TextDisplayOptions } from './texts';
 import { describeVariable, variableAt } from './variables';
 
 function hover(analysis: DocumentAnalysis, value: string, start: number, end: number): Hover {
@@ -72,7 +74,12 @@ function hoverInValue(
 }
 
 /** Hover information for an offset in an analysed document. */
-export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined): Hover | undefined {
+export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined, options: TextDisplayOptions = {}): Hover | undefined {
+  // A text reference, in any XML document, also while it does not parse.
+  const reference = game && game.texts.fileCount > 0 ? textReferenceAt(analysis.document.getText(), offset) : undefined;
+  if (game && reference) {
+    return hover(analysis, describeText(game.texts, reference.page, reference.id, options), reference.start, reference.end);
+  }
   const variable = variableAt(analysis, offset);
   if (variable) {
     return hover(analysis, describeVariable(variable.variable, analysis.document), variable.occurrence.start, variable.occurrence.end);

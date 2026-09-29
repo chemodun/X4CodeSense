@@ -419,3 +419,62 @@ describe('labels, cues and interrupt library items', () => {
     expect(renameAt(cueRename.analysis, cueRename.offset, 'Begin').map((edit) => edit.range.start.character)).toEqual([15, 25, 41]);
   });
 });
+
+describe('texts', () => {
+  const hoverWith = (marked: string, options: { language?: string; limitLanguage?: boolean }): string | undefined => {
+    const { analysis, offset } = at(marked);
+    const found = hoverAt(analysis, offset, game, options);
+    return found && typeof found.contents === 'object' && 'value' in found.contents ? found.contents.value : undefined;
+  };
+
+  it('shows a text as the game does, and how it is written', () => {
+    const text = hoverText(actions('<debug_text text="{1001, |4}"/>'));
+    expect(text).toContain('**{1001, 4}** · page *Interface*');
+    expect(text).toContain('Hull and Shield');
+    expect(text).toContain('Written as: \\{1001,1\\} and \\{1001, 2\\}');
+    expect(hoverText(actions('<debug_text text="{1001,99|}"/>'))).toContain('Text 99 does not exist on page 1001');
+    expect(hoverText(actions('<speak page="1001" li|ne="2"/>'))).toContain('Shield');
+  });
+
+  it('shows every language, or only the preferred one', () => {
+    const all = hoverWith(actions('<debug_text text="{1001,|1}"/>'), { language: '49' });
+    expect(all).toContain('*Deutsch:* Hülle');
+    expect(all).toContain('*English:* Hull');
+    expect(all?.indexOf('Deutsch')).toBeLessThan(all?.indexOf('English') ?? 0);
+    const german = hoverWith(actions('<debug_text text="{1001,|1}"/>'), { language: '49', limitLanguage: true });
+    expect(german).toContain('Hülle');
+    expect(german).not.toContain('Hull');
+    expect(hoverWith(actions('<debug_text text="{1001,|3}"/>'), { language: '49', limitLanguage: true })).toContain('None');
+  });
+
+  it('works in any XML, and while it does not parse', () => {
+    expect(hoverText('<wares>\n  <ware id="x" name="{1001,|2}"/>\n</wares>\n')).toContain('Shield');
+    expect(hoverText('<wares>\n  <ware id="x|" name="{1001,2}"/>\n</wares>\n')).toBeUndefined();
+    expect(hoverText(actions('<debug_text text="{1001,|2}\n'))).toContain('Shield');
+  });
+
+  it('goes to the text in the preferred language', () => {
+    expect(definitionFiles(actions('<debug_text text="{1001,|1}"/>'))).toEqual(['0001-l044.xml']);
+    const { analysis, offset } = at(actions('<debug_text text="{1001,|1}"/>'));
+    const german = definitionAt(analysis, offset, game, { language: '49' });
+    expect(german.map((location) => path.basename(location.uri))).toEqual(['0001-l049.xml']);
+    expect(german[0].range.start).toEqual({ line: 4, character: 4 });
+    expect(definitionFiles(actions('<debug_text text="{1001,|99}"/>'))).toEqual([]);
+  });
+
+  it('completes pages and text ids', () => {
+    const afterBrace = labels(actions('<debug_text text="{|"/>'));
+    expect(afterBrace.slice(0, 2)).toEqual(['1001', '1002']);
+    expect(afterBrace).toContain('player');
+    expect(labels(actions('<debug_text text="{10|"/>'))).toEqual(['1001', '1002']);
+    expect(labels(actions('<debug_text text="{1001,|"/>'))).toEqual(['1', '2', '3', '4', '5', '6', '7']);
+    expect(labels(actions('<debug_text text="{1001, 1|"/>'))).toEqual(['1']);
+    expect(labels(actions('<debug_text text="{1001,|\n'))).toHaveLength(7);
+    expect(labels(actions('<set_value name="$x" exact="$x.{|"/>'))).not.toContain('1001');
+    expect(labels(actions('<set_value name="$x" exact="1" comment="{|"/>'))).toEqual([]);
+    const { analysis, offset } = at(actions('<debug_text text="{1001,|4}"/>'));
+    const item = completionAt(analysis, offset, game).find((candidate) => candidate.label === '4');
+    expect(item?.detail).toBe('Hull and Shield');
+    expect(item?.textEdit).toMatchObject({ range: { start: { character: 32 }, end: { character: 33 } } });
+  });
+});

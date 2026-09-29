@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test texts for X4CodeSense: an extension adds its pages with a patch, as most extensions do. -->
+<diff>
+  <add sel="/language">
+    <page id="90001" title="My Mod" descr="Texts of the test extension" voice="no">
+      <t id="1">Mod text</t>
+      <t id="2">Uses {1001,2}</t>
+    </page>
+  </add>
+</diff>
