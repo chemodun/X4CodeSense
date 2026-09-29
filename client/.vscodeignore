@@ -10,3 +10,4 @@ tsconfig.json
 **/*.ts
 *.vsix
 artifacts/**
+icons/*.svg

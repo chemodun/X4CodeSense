@@ -67,6 +67,37 @@ jobs:
           files: |
             .vsix$
 
+  marketplace:
+    needs: extension
+    if: ${{ github.event_name == 'release' && vars.PUBLISH_TO_MARKETPLACE == 'true' }}
+    runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: vsix
+          path: vsix
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Sign in to Microsoft Entra ID
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Publish to Visual Studio Marketplace
+        run: npx --yes @vscode/vsce@4 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
+
   npm-package:
     if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@')) }}
     runs-on: ubuntu-latest

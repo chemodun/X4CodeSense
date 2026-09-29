@@ -2,7 +2,7 @@
 
 Language support for **X4: Foundations** scripts (AI scripts and Mission Director scripts), built as a Language Server Protocol server with a thin Visual Studio Code client and a command-line checker.
 
-Status: preview, up to the first release, 0.1.0. The extension is not on the Visual Studio Marketplace yet. The Marketplace-facing description lives in [client/README.md](client/README.md).
+Status: preview, 0.x. The npm packages are on npm; the extension's `.vsix` is attached to its GitHub releases and is not on the Visual Studio Marketplace yet. The Marketplace-facing description lives in [client/README.md](client/README.md).
 
 ## Layout
 
@@ -39,7 +39,7 @@ The corpus check times the analysis of the largest game file against a ceiling o
 
 `release-please` keeps one release pull request open on `main`: the next versions and the changelogs of the four packages, from the conventional commits since their last release. They share one pull request because they depend on each other at exact versions, and it updates `package-lock.json` with them. Merging it tags each package that changed (`x4-script-core@v0.1.0`, `x4codesense@v0.1.0`) and creates its GitHub release, which starts the _Build and Publish_ workflow:
 
-- `x4codesense`: the `.vsix` is built, attached to the release and, with the `VT_API_KEY` secret, scanned by VirusTotal. It is not published to the Marketplace yet.
+- `x4codesense`: the `.vsix` is built, attached to the release and, with the `VT_API_KEY` secret, scanned by VirusTotal. With the repository variable `PUBLISH_TO_MARKETPLACE` set to `true`, the same `.vsix` is then published to the Visual Studio Marketplace as `X4DevTools`. That job runs in the `marketplace` environment and signs in to Microsoft Entra ID, whose app registration trusts that environment, so no Marketplace token is kept either.
 - `x4-script-core`, `x4-script-language-server`, `x4-script-check`: built, tested and sent to npm by trusted publishing. No npm token is kept in the repository: npm accepts the upload because the package is bound to this repository and its `build-and-publish.yml`, and adds a provenance statement. The version is staged, and goes live once a maintainer approves it with 2FA, on npmjs.com or with `npm stage approve`. With the repository variable `NPM_DIRECT_PUBLISH` set to `true`, and a binding that allows it, it is published directly.
 
 ## Lineage and credits

@@ -1,94 +1,145 @@
 # X4CodeSense
 
-Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`) and Mission Director scripts (`md/*.xml`).
+Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`), Mission Director scripts (`md/*.xml`) and the patches (`<diff>`) that change them. X4CodeSense reads the game's schemas, script properties and texts, and the scripts of the game, its DLCs and your extensions, and checks your scripts as you type.
 
 X4CodeSense is the successor of X4CodeComplete, written anew around a language server, so the same analysis also runs from the command line and in CI.
 
-## Status
+> **Preview:** while the version is 0.x, features and settings may still change from one version to the next.
 
-Preview. The current build:
+## ✨ Features
 
-- recognises script and patch documents and shows in the status bar the script type and name, or the file a patch changes. While the game files are read and the scripts indexed (about 3 seconds for the game with 70 extensions), it shows a spinner and the progress; when the game files are not set or hold no schemas, a warning. The tooltip tells what was read, and a click opens a menu of the commands;
-- compares a patch with the file it changes: _Show What This Patch Changes_ (also a button in the editor's title bar) opens a diff of the file as the game loads it without the patch and with it, after the patches loaded before it; only the lines the patch changes differ, and the diff follows the patch as you type;
-- reports XML well-formedness problems (unclosed tags, missing quotes, missing end tags) as you type;
-- validates scripts against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes and invalid attribute values;
-- parses every expression and reports syntax errors the way the game would reject them, plus `@` combined with `?`, text references that are not `{page, id}` literals, and `%d` in format strings;
-- checks property chains against `scriptproperties.xml`: a property that does not exist on the type at hand (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword are reported as warnings;
-- completes child elements allowed at the caret, attribute names, attribute values from the schema enumerations, and property chains in expressions from `scriptproperties.xml` (`player.ship.cargo.{$ware}.count`), with keywords and the values of lookups such as `class` or `ware`;
-- shows hover documentation for elements, attributes, enumeration values, keywords and properties;
-- goes to the definition of an element or attribute in the schema, of a keyword or property in `scriptproperties.xml`, and of a lookup value in the game file it comes from;
-- knows the variables of a script and where they live, following the cue namespace rules of the Mission Director guide: completes `$` with the variables visible at the caret (also after `this.`, `parent.` or a cue name), shows on hover where a variable is set, its type when it can be told and how often it is read, goes to its definitions, finds all references and renames it;
-- knows the labels of AI scripts per attention block, the interrupt library actions, handlers and conditions, and the cues and libraries of Mission Director scripts: completes them where a reference is written, shows them on hover, goes to their definition, finds all references and renames them within the script. A label that no reachable attention block defines, a name defined twice, and a bare name in a Mission Director expression that is no keyword and no cue of the script are reported as warnings;
-- reads the game's texts and those of your extensions (`t/0001-l044.xml` and the other languages): hover over `{page, id}` or `page="…" line="…"` in any XML file shows the text as the game shows it, go to definition opens it in the text file, completion offers pages after `{` and text ids after `{page,` in scripts, and a reference to a text that no file defines is reported as a warning. Text files open in the editor count with their unsaved changes;
-- indexes the scripts of the game, its DLCs and your extensions: `md.Script.Cue` shows the script and cue on hover, goes to them, and completes script names after `md.` and cue names after `md.Script.`, also cues that an extension's patch adds; interrupt library actions, handlers and conditions of other scripts are shown, completed and opened, and a reference to one that no script defines is reported as a warning, as is `md.Script.Cue` naming a script or cue that no script defines. Scripts open in the editor count with their unsaved changes, and files changed on disk in the workspace are read again;
-- knows variables that other scripts set: in AI scripts those that the interrupt library items a script uses set in their own files, in Mission Director scripts those a library of another script sets when `include_actions` splices it in, and for `md.Script.Cue.$x` those the cue sets in its script. Hover names where they are set, go to definition opens it, and completion offers them;
-- reports a variable that is read but never set as a warning, once the scripts are indexed. Reads under a test of the same variable (`$x?`, `@$x`, also in the cue's conditions) are fine, as are reads in libraries that other scripts include or that the script only uses through a value, and variables that some script writes into cues it gets as values (`$Cue.$x`, `event.param.$x`);
-- finds all references and renames across scripts: a Mission Director script (its `name` and every `md.Script`), a cue or library (also as `md.Script.Cue` in other scripts and in patches, and in the paths of patches that select it: `cue[@name='X']`), a variable of a cue written `md.Script.Cue.$x`, and an interrupt library item in every AI script and in the paths of patches. Hover tells how often other files name a cue, a script or a library item. A rename edits files of the workspace only: when the game or an extension outside the workspace names the same thing, or a variable is also set or read by a library of another file, the rename is refused with the reason;
-- applies patch documents (`<diff>`) to the file they change, after the patches loaded before them, as the game does: a patch in an extension's `md` or `aiscripts` changes the game's file of the same name, one in `extensions/<folder>/md` that extension's. A `sel` that selects nothing or several nodes is reported where its path stops matching, as is a patch with nothing to patch, an operation the game refuses, and `sel` or `if` that is no valid XPath; the operations and their attributes are checked against the game's `diff.xsd`. What an `add` or `replace` brings in, a value it sets included, is checked where it lands in the patched file, as the game will load it: against the schema, as expressions and texts, and with the variables and cues of the file around it; completion, hover, go to definition, references and rename work in it as they do there, and lead to the file each place is written in. In `sel` and `if`, hover tells what each step selects and where it is written, go to definition goes there, and completion offers the element and attribute names and the values (such as the cue names) of the file as the operation finds it. Patches open in the editor follow the unsaved changes of the file they patch;
-- shows the outline of scripts and patches (the Outline view, breadcrumbs and Go to Symbol in Editor): cues and libraries as they nest, with their parameters; the order, interrupts, handlers, interrupt library items, `init`, `patch` blocks, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path, with the cues, labels and library items it brings in;
-- offers quick fixes (the light bulb, `Ctrl+.`) where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. An unknown element (with its end tag), attribute, enumeration value, keyword, property, cue or script, label, interrupt library item, or a variable that is never set, is changed to the known names closest in spelling, the ones completion offers there; a variable is only offered when something sets it. This works in what a patch brings in as well;
-- checks scripts from the command line and in CI with the same analysis: `x4-script-check` prints each finding with its severity and quick fixes, as text, as JSON for tools (ranges and fixes as edits), or as annotations of the files in GitHub Actions.
+### Checks as you type
 
-Next:
+- XML well-formedness: unclosed tags, missing or unquoted attribute values, missing end tags, repeated attributes.
+- Validation against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes, invalid attribute values.
+- Expressions, parsed as the game parses them: syntax errors, `@` combined with `?`, text references that are not `{page, id}` literals, `%d` in format strings.
+- Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword.
+- Names, checked across the game, its DLCs and your extensions: labels, cues and libraries, interrupt library items, `md.Script.Cue`, and text references that no file defines; names defined twice.
+- Variables that are read but never set, following the cue namespace rules of the Mission Director.
 
-- Semantic highlighting
-- Publication on the Visual Studio Marketplace
+All of it keeps working while a tag, an attribute or a quote is still being typed. Open files count with their unsaved changes, and files changed on disk in the workspace are read again.
 
-## Requirements
+### Completion and hover
 
-- The extracted vanilla game files (`aiscripts`, `md`, `libraries`, `t`), set in `x4CodeSense.unpackedFileLocation`. The schemas `md.xsd`, `aiscripts.xsd`, `common.xsd` and `diff.xsd` and `scriptproperties.xml` with the files it imports are read from its `libraries` folder; without it scripts are only checked for well-formedness. The DLCs load in the game's order when their `content.xml` is in the extracted `extensions/ego_dlc_*` folders (copy it from the game installation; the extracted archives do not hold it); without it they load alphabetically, and patches of the same file by several DLCs are applied in the wrong order.
-- Your extensions in the workspace: a workspace may be one mod, or a folder of several mods. Other extensions yours depend on are found through `x4CodeSense.extensionsFolder`.
+- Child elements allowed at the caret, attribute names, and attribute values from the schemas.
+- Property chains in expressions (`player.ship.cargo.{$ware}.count`), keywords, and the values of lookups such as `class` or `ware`.
+- Variables visible at the caret, also after `this.`, `parent.` or a cue name, and the variables other scripts set for this one: interrupt library items, libraries spliced in with `include_actions`, `md.Script.Cue.$x`.
+- Labels, cues, libraries and interrupt library items; script names after `md.` and cue names after `md.Script.`, cues that an extension's patch adds included.
+- Texts: pages after `{` and text ids after `{page,`. Hover over `{page, id}` or `page="…" line="…"`, in any XML file, shows the text as the game shows it.
+- Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, its type when it can be told, and how often it is read.
 
-## Settings
+### Navigation and rename
 
-- `x4CodeSense.unpackedFileLocation` - path to the extracted vanilla game files.
-- `x4CodeSense.extensionsFolder` - where the other extensions are, usually set per workspace. Relative to the workspace folder: empty or `.` is the workspace itself (a workspace of several mods), `..` the folder above it (one workspace per mod, the mods side by side); an absolute path is taken as is. Extensions are read in the order their `content.xml` dependencies give, so a dependency's texts and patches come before yours.
-- `x4CodeSense.languageNumber` - preferred language number for text lookups, `44` by default; the game's `libraries/languages.xml` lists the numbers.
+- Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, interrupt library item or text where it is defined.
+- Find all references and rename, across scripts: variables, labels, cues and libraries (also as `md.Script.Cue` in other scripts and in the paths of patches), Mission Director script names, and interrupt library items. A rename edits the files of your workspace only; when the game or an extension outside the workspace uses the same name, it is refused, with the reason.
+- The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path.
+
+### Quick fixes
+
+The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item or variable is changed to the known names closest in spelling.
+
+### Patches
+
+- A patch is applied to the file it changes as the game applies it, after the patches loaded before it: a patch in your extension's `md` or `aiscripts` folder changes the game's file of the same name, one in `extensions/<folder>/md` that extension's file.
+- Reported: a `sel` that selects nothing or several nodes, at the step where it stops matching; a patch with nothing to patch; an operation the game refuses; `sel` or `if` that is no valid XPath. The operations and their attributes are checked against the game's `diff.xsd`.
+- What an `add` or `replace` brings in is checked where it lands, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there.
+- In `sel` and `if`, hover tells what each step selects and where it is written, go to definition goes there, and completion offers the element and attribute names and the values, such as cue names, of the file as the operation finds it.
+- **Show What This Patch Changes**, also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. **Open the File This Patch Changes** opens that file.
+
+### Status bar
+
+The status bar shows the type and name of the script, or the file a patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read, and a click opens a menu of the commands.
+
+### Command line and CI
+
+The same checks run outside VS Code with [x4-script-check](https://www.npmjs.com/package/x4-script-check), which prints each finding with its severity and quick fixes: as text, as JSON for tools, or as annotations of the files in GitHub Actions.
+
+```powershell
+npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
+```
+
+## ⚠️ Known limitations
+
+- Without the extracted game files, scripts are only checked for well-formedness: the schemas, the script properties, the texts and the game's scripts all come from them.
+- Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
+- XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
+- AI scripts, Mission Director scripts and their patches are checked. Text files are read for the texts; other files of the game, such as Lua scripts or the `libraries`, are not checked.
+- No semantic highlighting yet: the colours are those of VS Code's XML support.
+
+## 🚀 Getting started
+
+### Install the extension
+
+#### Via VS Code Marketplace
+
+1. Open the Extensions view (`Ctrl+Shift+X`, or `Cmd+Shift+X` on macOS).
+2. Search for "X4CodeSense" and click "Install".
+
+Or open [X4CodeSense on the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=X4DevTools.x4codesense) and click "Install" there.
+
+#### Via VSIX file
+
+1. Download the `.vsix` file from the [X4CodeSense releases on GitHub](https://github.com/chemodun/X4CodeSense/releases).
+2. In the Extensions view, open the `...` menu at its top right and select "Install from VSIX...".
+3. Choose the downloaded file.
+
+### Extract the game files
+
+X4CodeSense reads the game's own files: the schemas `md.xsd`, `aiscripts.xsd`, `common.xsd` and `diff.xsd` and `scriptproperties.xml` from `libraries`, the texts from `t`, and the game's scripts. Extract them with Egosoft's [X Catalog Tool](https://wiki.egosoft.com/X4%20Foundations%20Wiki/Modding%20Support/X%20Catalog%20Tool/), which Steam users get with the "X Tools":
+
+- the game's catalogs (`01.cat`, `02.cat` and so on) into one folder, which then holds `aiscripts`, `md`, `libraries`, `t` and more;
+- each DLC's catalogs (`ext_01.cat` and so on in `extensions/ego_dlc_*` of the game) into the folder of the same name under `extensions` of that folder, and copy each DLC's `content.xml` there from the game installation. The catalogs do not hold it, and without it the DLCs are read alphabetically instead of in the game's order, so patches of the same file by several DLCs are applied in the wrong order.
+
+### Set it up
+
+1. Run **X4CodeSense: Select the Extracted Game Files...** from the Command Palette (`Ctrl+Shift+P`), or click the X4CodeSense item in the status bar, and choose the folder you extracted the game to.
+2. Open your extension's folder as the workspace, or a folder with several extensions.
+3. If your extension uses the texts or scripts of other extensions that are not in the workspace, set `x4CodeSense.extensionsFolder` to where they are, for example `..` when your extensions sit side by side.
+4. Open a script. The status bar shows the progress while the game files are read and the scripts are indexed, a few seconds, and its tooltip tells what was read.
+
+## ⚙️ Extension settings
+
+- `x4CodeSense.unpackedFileLocation` - the folder of the extracted game files (the folder holding `aiscripts`, `md`, `libraries` and `t`).
+  - _default_: empty
+- `x4CodeSense.extensionsFolder` - where the other extensions are, usually set per workspace. Relative to the workspace folder: empty or `.` is the workspace itself (a workspace of several extensions), `..` the folder above it (one workspace per extension, the extensions side by side); an absolute path is taken as is. The folder may be an extension or hold extensions, which are read in the order their `content.xml` dependencies give, so a dependency's texts and patches come before yours.
+  - _default_: empty
+- `x4CodeSense.languageNumber` - the preferred language for texts; the game's `libraries/languages.xml` lists the numbers.
+  - _default_: `44` (English)
 - `x4CodeSense.limitLanguageOutput` - show only the preferred language in hovers, and read only the text files of that language and English.
-- `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas, on by default. Unknown elements and attributes and invalid values are always reported.
-- `x4CodeSense.debug` - verbose server logging in the X4CodeSense output channel.
-- `x4CodeSense.trace.server` - LSP message tracing.
+  - _default_: `false`
+- `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes and invalid values are always reported.
+  - _default_: `true`
+- `x4CodeSense.debug` - verbose logging in the X4CodeSense output channel.
+  - _default_: `false`
+- `x4CodeSense.trace.server` - trace the communication between VS Code and the language server: `off`, `messages` or `verbose`.
+  - _default_: `off`
 
-## Commands
+## ⌨️ Commands
 
-Also in the menu the status bar item opens.
+All of them are also in the menu the status bar item opens.
 
-- `X4CodeSense: Select the Extracted Game Files...` - sets `x4CodeSense.unpackedFileLocation` with a folder picker, in the workspace settings when they set it, else in the user settings.
-- `X4CodeSense: Show What This Patch Changes` - in a patch document: a diff of the file it changes, without and with the patch.
-- `X4CodeSense: Open the File This Patch Changes` - in a patch document.
-- `X4CodeSense: Show Output` - the language server's log, with the problems met reading the game files.
-- `X4CodeSense: Open Settings`
-- `X4CodeSense: Restart Language Server` - reads the game files and the scripts again, for example after the extracted files or an extension outside the workspace changed.
+- **X4CodeSense: Select the Extracted Game Files...** - sets `x4CodeSense.unpackedFileLocation` with a folder picker: in the workspace settings when they set it, else in the user settings.
+- **X4CodeSense: Show What This Patch Changes** - in a patch: a diff of the file it changes, without and with the patch.
+- **X4CodeSense: Open the File This Patch Changes** - in a patch.
+- **X4CodeSense: Show Output** - the language server's log, with the problems met reading the game files.
+- **X4CodeSense: Open Settings**
+- **X4CodeSense: Restart Language Server** - reads the game files and the scripts again, for example after the extracted files or an extension outside the workspace changed.
 
-## Credits
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](https://github.com/chemodun/X4CodeSense/blob/main/LICENSE) file for details.
+
+## 📝 Credits
 
 - [Egosoft](https://www.egosoft.com) for the game.
 - Cgetty, who started X4CodeComplete, and archenovalis, who continued it: this extension builds on its ideas and on the valuable experience gained during its development.
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
-## Changelog
+## 🛠 Changelog
 
-### Unreleased
+### [0.1.0] - 2026-09-29
 
-- Releases: the extension and its three npm packages are released together, the first time as 0.1.0. The command-line checker, the language server and the core library go to npm as `x4-script-check`, `x4-script-language-server` and `x4-script-core`; after the first version, which is published by hand, GitHub Actions publishes them by trusted publishing, with provenance. The extension's `.vsix` is attached to its GitHub release until it is on the Marketplace.
-- Command-line checker: `x4-script-check` prints the severity of each finding (`file:line:column: error: message [code]`) and, below it, the quick fixes the editor offers for it (`fix: Change to 'faction'`). Findings about a whole file have codes now, and files are checked in the order of their names, so the output is the same on every system. `--format json` prints the findings with their LSP ranges and their fixes as edits, the counts, and the problems met reading the game files, for tools; `--format github` prints workflow commands, so GitHub Actions shows each finding on its line in the run and the pull request. `--fail-on error` reports warnings without failing the check. On the mods folder (141 scripts and patches in 69 folders), the three formats give the same 104 findings as before, 62 errors and 42 warnings, 3 of them with a fix.
-- Status bar and commands: the status bar item shows a spinner while the language server reads the game files and indexes the scripts, and the server reports its progress (for any editor that shows it). A warning shows when the game files are not set or hold no schemas; the tooltip tells which folder was read, the schemas and the number of texts, how many scripts were indexed, of the game, its DLCs and which extensions, and links to the commands. A click on the item opens a menu of the commands instead of restarting the server. New commands select the extracted game files with a folder picker (warning when the folder holds no schemas), show the output, open the settings, open the file a patch changes, and show what a patch changes: a diff of that file as the game loads it without the patch and with it, after the patches loaded before it, which follows the patch as it is edited. For that the patched file is written out more faithfully: what a patch brings in comes with the line breaks and indentation it has in the patch, the file's own lines keep theirs, a changed self-closing element stays self-closing, and the XML declaration is kept. On the game's DLCs and 65 mods, for the 54 patches the game applies first to their file, that file comes out without the patch exactly as it is on disk, every patched file is well-formed, and none of the 78 patches that only add elements loses a line of the file; the slowest comparison takes about 14 ms.
-- Quick fixes: the light bulb offers a fix for the diagnostics that have an obvious one. An unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added (empty, to be filled in). An unknown element, attribute, enumeration value, keyword, property, cue or script (in `md.Script.Cue` too), label or interrupt library item, and a variable that is never set, can be changed to one of the three known names closest in spelling: the names completion offers at that place, of the kind the diagnostic is about, and for a variable only those that something sets. A change of case comes first; an element's end tag is renamed with it; the closest name is preferred when no other is as close. What a patch brings in gets the fixes it would get where it lands. In a sample of 23 scripts of the game and the mods, a typo in any of 44,532 names completion knows there (two letters swapped, one missing, doubled or changed, a change of case) brings the name back first in 99.1% of cases; another name comes first only in 8 ties between two equally close names (`wase`: `base` or `ware`), where none is preferred, and what is missed are names of three letters with one letter missing, too short to tell. On the game with its DLCs and 65 mods, 30 of the 371 findings get a fix, among them the game's own `$DeliberyNPC` for `$DeliveryNPC`, `$feedbackvalue` for `$FeedbackValue` and `factin` for `faction`, and each of the 40 fixes offered, applied, removes its finding and brings no new one; a fix takes a few milliseconds.
-- Outline: scripts and patches have an outline, for the Outline view, the breadcrumbs and Go to Symbol in Editor. Mission Director scripts show their cues and libraries as they nest (with `instantiated`, the namespace and the library a cue is an instance of) and the parameters of libraries and cue instances. AI scripts show the order with its parameters, the interrupts with their handlers (named by the handler they use, or by the event an inline handler waits for) and library items, `init`, the `patch` blocks with their version, the attention blocks with their labels, and `on_abort`. Each variable a script sets is listed where it is first set, with its type when it can be told, and with the cue whose table holds it when that is another cue. A patch lists its operations by their paths, with the cues, labels and library items they bring in. Other XML keeps the outline other extensions give it. On the game with its DLCs and 65 mods, all 25,104 cues, libraries, labels, library items and patch operations and all 34,186 variables the scripts set (parameters aside) are listed, each once; the outline of the largest file takes under 10 ms.
-- Patch documents: the editor works in what an `add` or `replace` brings in as it works where that lands. Completion (elements allowed there, also right after a bare `<`, attributes while a start tag is being typed, the variables and cues of the file around it), hover (a line in another file is named: "at line 7 of setup.xml"), go to definition, find references and rename look it up in the patched file and lead to the file each place is written in: the patch, the file it changes, or a patch loaded before it. A rename that would have to edit the game's file is refused with the reason. In `sel` and `if`, the path is evaluated on the file as the operation finds it (the patches before it applied, its own later operations not): hover on a step tells what the path selects up to there, with the file and line of each node and the patch that added it; go to definition goes there; completion offers element names after `/` and `//`, attribute names after `@`, and the values an attribute has there inside `[@name='`, such as the names of the cues. The attribute name of `add type="@name"` gets hover, go to definition and completion from the element the operation selects. The names paths select cues and interrupt library items by (`cue[@name='X']`, `actions[@name='X']`) are indexed as references: find references lists them, and renaming the cue or item renames them too. `/`, `@` and `'` now open completion. On the game's DLCs and 65 mods: all 521 applied operations' paths select their one node on the file as it was then, all 621 elements they bring in are found where they land, all 460 names in paths are found with their other places; a hover on a path takes about 20 to 30 ms on the largest file a patch changes.
-- Patch documents: what an `add` or `replace` brings in is checked where it lands. The patched file is written out as the game loads it and analysed as a script, and what is found in the patch's own content, a value set with `type="@attr"` or `replace …/@attr` included, is reported in the patch at its place: unknown elements and attributes, elements in the wrong place, invalid values, expression errors, unknown properties, texts that do not exist, and variables that nothing sets, with the variables of the cue the content lands in. What the patched file or an earlier patch gets wrong is theirs to report. Half-typed content is closed where it ends, so it never takes in the file's nodes after it. Only the elements the patch touches are checked, with the variables and names of the whole file: a patch of the largest game file is analysed in about 140 ms, less than the file itself. The game's DLC patches get no finding; in 65 mods, a condition asks for a property the game does not have (2 files). A cue that includes a library of another script now also gets what the libraries that library includes set (7 fewer unset reads in the game's Mission Director scripts, 206). The XML scanner reads attribute values faster (about 10% of the analysis of a large file).
-- Patch documents: a `<diff>` in an extension's `md` or `aiscripts` folder is applied to the game's file of the same name, one in `extensions/<folder>/md` or `.../aiscripts` to that extension's file (these nested patches are now read by the script index too, and checked by the command-line checker), after the patches the game loads before it. `sel` and `if` are read as the XPath the game evaluates (paths with `/` and `//`, `@attr`, `comment()`, `text()`, predicates with positions, `last()`, comparisons, `not()`, `and`, `or`); XPath beyond that is noted as not understood, never as wrong. Reported, worded after the game's own log messages: a path that selects nothing (at the step where it stops matching; information only with `silent="true"`) or several nodes, a patch with nothing to patch (with where a patch of an extension's file goes), an operation the game refuses (replacing or removing the root, a node added as an attribute), and a path that is no XPath. The operations and their attributes are checked against the game's `diff.xsd`, whose DOCTYPE entities, XML name escapes and `any` content the schema reader now understands. Every one of the 379 operations of the DLCs applies; in 65 mods, 142 of 147 apply, and the rest are real: a patch written for an older version of a game script, and two patches placed where the game file they name does not exist. An open patch follows the unsaved changes of the file it patches. A cue that an extension's patch adds now counts only for the file the patch changes, not for every script with that file name.
-- References and rename across scripts: find all references and rename reach every script that names a Mission Director script (`md.Script`), a cue or library (`md.Script.Cue`, also in extension patches), a variable of a cue (`md.Script.Cue.$x`) or an interrupt library item, and the script's `name` can be renamed with all of them. The hover of a cue, a script or a library item tells how often other files name it. A rename changes only files in the workspace; it is refused, with the reason, when the game or an extension outside the workspace names the same thing, when a script name is defined twice, when a file changed on disk since it was read, and when a variable is also set or read by a library of another file (renaming it before changed this file only and broke that link without a word). The script index records these references while it reads the files; the most referenced cue of the game (`md.NPC_UseCases.UseCase`, 1,244 places in 61 files) is found in about 12 ms, and renamed in all of them in about 90 ms.
-- Variables that are read but never set are reported, in the editor and by the command-line checker, once the scripts are indexed. Attributes the schema documents as storing a result count as writes (`find_closest_resource wares`, `append_to_list name` with `create="true"`). Reads under a test of the same variable, in an enclosing element or in the cue's conditions, count as safe. In Mission Director scripts, a library of another script spliced in with `include_actions` sets its variables in the including cue; a library that other scripts include, or that the script never uses by name, reads what its users set; and a variable that any script writes into a cue it gets as a value (`$Cue.$x`, `event.param.{1}.$x`) may be in any cue. `md.Script.Cue` naming the script itself addresses its own cue. What is left is mostly real: the game's AI scripts have 4 such reads (two typos of a declared name, a debug text leftover, an undeclared order parameter) and its Mission Director scripts 213 (among them variables only a commented-out block sets, a case typo, a `do_all` without its counter, the include of a library that does not exist); the mods have 27 and 9, mostly parameters an AI script is given but never declares. The check adds about 40 ms to the analysis of the largest vanilla scripts (over 1 MB).
-- Variables across scripts: an interrupt library item runs in the AI script that uses it, so what it sets counts as set there, and what it reads is left to the scripts that use it. `md.Script.Cue.$x` knows the variables the cue sets in its own script. Hover, go to definition and completion show variables set in other files.
-- Script index: the scripts of the game, its DLCs and the extensions are indexed after the server starts (about a second for the game with 65 extensions), without holding up requests. `md.Script.Cue` gets hover, go to definition and completion of script and cue names, counting cues that extension patches add to a script; interrupt library items of other scripts get hover, go to definition and completion, and a reference to one that no script defines is reported (none in vanilla or in the scripts of 52 extensions). `md.Script.Cue` naming a script or cue that no indexed script defines is reported too: the game and its DLCs have 3 such mistakes, the extensions none; a mod that refers to another mod needs that mod in `x4CodeSense.extensionsFolder`. Open scripts count with their unsaved changes; scripts and text files changed on disk in the workspace are read again. The command-line checker takes `--extensions <folder>` for extensions to read but not check. Code in hovers keeps names as they are (`run_actions` was shown with a backslash).
-- Extensions are read in the order the game loads them: after the extensions their `content.xml` names as dependencies. Extension text files that patch the game's texts are applied: pages and texts added (also before or after another), replaced (also just their `text()`) or removed, addressed by `@id`; a patch that cannot be applied is listed in the output log. `x4CodeSense.extensionsFolder` may be relative to the workspace (`.` for the workspace itself, `..` for the folder above it), and each folder may be one extension or hold several, also a level or two deeper as in a repository.
-- Texts: the text files of the game, of the extensions folder and of the workspace are read, in every language or only the preferred one and English; extension text files that add pages with a `<diff>` count too. Hover over a text reference in any XML file shows the text as the game shows it, with references inside it resolved and `(comments)` hidden, and how it is written when that differs. Go to definition opens the text in the preferred language, completion offers pages and text ids, and references to texts that no file defines are reported as warnings in scripts (not in comments). The command-line checker reads the texts of the checked folders. The vanilla texts load in about 0.3 s; all 4,855 text references of the vanilla scripts and all references of 52 published extensions resolve.
-- Labels, cues and interrupt library items: labels belong to their attention block (a `resume` jumps within it, a handler's `abort_called_scripts` may name a label of any block), interrupt library `actions`, `handler` and `conditions` are found by their reference attributes, and cue and library names are found wherever an expression names them, also as `md.Script.Cue` for the script itself. Completion, hover, go to definition, find all references and rename work on all of them within the script. Undefined labels and names defined twice are reported as warnings; neither occurs in vanilla or in the scripts of 52 published extensions. A bare name that is no keyword and no cue of the script is reported as well, except inside libraries, whose names resolve in the including script; vanilla has 20 of them, all vanilla mistakes such as typos of keywords and cues that no script defines, and the extensions have none. Each expression is now parsed once per analysis and shared by all checks.
-- Variables: a script's variables are collected into tables following the cue namespace rules of the Mission Director guide (root cues, libraries and cues with `namespace="this"` or `"static"` own a table, other cues share their parent's; `this`, `static`, `parent`, `namespace`, a cue name, `global` and `md.Script.Cue` address the right one; `<param>` declarations, `include_actions` and `<cue ref>` are understood). Completion of `$` offers the variables visible at the caret, hover shows the type, the definitions and the number of reads, go to definition, find all references and rename work on variables, also while the XML around them is half typed. Property checks are indexed now: the largest vanilla scripts (over 1 MB) are fully analysed in about 130 ms instead of up to a second.
-- Property chains are checked against `scriptproperties.xml`: unknown properties on a known type and, in AI scripts, unknown chain heads are reported as warnings. Lookup values (`class`, `faction`, `ware`, ...) are not checked because their lists lag behind the game and its DLCs. All placeholder forms of the game data are understood now: `<cuename>`, `<tagname>`, `$<variable>`, `[$x, $y, $z]`, bare values and list literals for `{$type}`, and a chain that stops inside a pattern. Keywords the game has but the file lacks (`component`, `chairtype`, `datatype.macroslot`) are added.
-- Expression diagnostics: every attribute that takes an expression is parsed with the game's operator precedence; syntax errors, `@` combined with `?`, text references without numeric literals and `%d` in a format string are reported at their position. All 247,000 expressions of the vanilla scripts parse cleanly in about a second.
-- Completion, hover and go to definition from the schemas and `scriptproperties.xml`: child elements allowed at the caret, attribute names, enumeration values, keywords, property chains with placeholders and lookup values. Lookups the game evaluates but `scriptproperties.xml` does not list (relation ranges, licence types, component states, input functions and more) come from the game's own data files. Everything keeps working while a tag, an attribute or a quote is still being typed.
-- Schema validation of scripts against the game's XSD files, on by default: unknown elements and attributes, misplaced and missing child elements, missing required attributes, invalid attribute values with the expected values in the message. The schemas load in well under a second and the largest vanilla script validates in tens of milliseconds.
-- XML well-formedness diagnostics for scripts and patches: unclosed start and end tags, missing or unquoted attribute values, missing closing quotes, duplicate attributes, missing end tags, unclosed comments.
-- Initial scaffold: language server, client and command-line checker with script detection.
+- Added
+  - First version, released on GitHub: diagnostics, completion, hover, go to definition, references, rename, the outline and quick fixes for AI scripts, Mission Director scripts and their patches, with the script index of the game, its DLCs and your extensions.
+  - Patch comparison, the status bar and the commands.
+  - The command-line checker [x4-script-check](https://www.npmjs.com/package/x4-script-check) and the language server [x4-script-language-server](https://www.npmjs.com/package/x4-script-language-server) on npm.
