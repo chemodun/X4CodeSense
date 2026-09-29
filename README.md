@@ -45,6 +45,7 @@ The corpus check times the analysis of the largest game file against a ceiling o
 npm binds a repository only to a package that exists, so the first version of a package is published by hand, from its release tag, and the binding added after it (npm 11.15 or later, 2FA on the account). The workflow skips a package that is not on npm yet, or whose version is there already.
 
 ```powershell
+git fetch --tags
 git switch --detach x4-script-core@v0.1.0
 npm ci
 npm run clean
