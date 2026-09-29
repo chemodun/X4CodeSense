@@ -14,16 +14,18 @@
  * Variables: an interrupt library item runs in the script that uses it, so the variables it sets are
  * set for that script; with the schemas at hand they are indexed with the item. The variables of a cue
  * (`md.<Script>.<Cue>.$x`) are worked out for a script file when first asked for, since doing so for
- * every file would triple the time to build the index.
+ * every file would triple the time to build the index. From the scan alone come the libraries of other
+ * scripts a Mission Director script includes, instantiates or runs, and, with the schemas, the
+ * variables it writes into cues it gets as values (`$Cue.$x`, `event.param.$x`).
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { findExtensions } from '../extensions/extensions';
 import type { ScriptSchema } from '../types';
-import { collectVariables, type DocumentVariables } from '../variables/variables';
+import { collectVariables, receivesValue, type DocumentVariables } from '../variables/variables';
 import { attributeNamed, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import type { SchemaSet } from '../xsd/loadSchemas';
-import type { XsdSchema } from '../xsd/schema';
+import type { XsdElement, XsdSchema } from '../xsd/schema';
 
 /** Where something is defined: a file and a zero-based position. */
 export interface IndexedPosition {
@@ -81,6 +83,12 @@ export interface IndexedScript {
   libraryItems: IndexedLibraryItem[];
   /** `<param name>` of an AI script or order. */
   params: string[];
+  /** Variables a Mission Director script writes into cues it gets as values; empty when indexed without the schemas. */
+  writesThroughValues: string[];
+  /** Libraries of other scripts a Mission Director script splices in: `<include_actions ref="md.Script.Library">`. */
+  includes: string[];
+  /** Libraries of other scripts a Mission Director script instantiates (`<cue ref>`) or runs (`<run_actions ref>`). */
+  instantiates: string[];
 }
 
 export interface IndexedPatch {
@@ -90,6 +98,9 @@ export interface IndexedPatch {
   schema: ScriptSchema;
   cues: IndexedCue[];
   libraryItems: IndexedLibraryItem[];
+  writesThroughValues: string[];
+  includes: string[];
+  instantiates: string[];
 }
 
 export type IndexedFile = IndexedScript | IndexedPatch;
@@ -176,10 +187,46 @@ function libraryItemVariables(file: string, text: string, structure: XmlStructur
 }
 
 /**
- * What a file contributes to the index, from its scanned structure; undefined for anything but a script
- * or a script patch. With the AI script schema, the variables of interrupt library items are indexed too.
+ * The variable an attribute value names through a value, as `$Cue.$x`, `event.param.$x`,
+ * `event.param.{1}.$x` or `md.Script.Cue.$x` do; undefined for a bare `$x` and for an object written
+ * as one name (`this.$x`, `Cue.$x`), which the script itself resolves.
  */
-export function indexStructure(file: string, text: string, structure: XmlStructure, source: string, xsd?: XsdSchema): IndexedFile | undefined {
+function nameThroughValue(value: string): string | undefined {
+  if (!value.includes('.$')) {
+    return undefined;
+  }
+  const match = /^\s*([^]+?)\.\$([A-Za-z_]\w*)\s*$/.exec(value);
+  return match && !/^[A-Za-z_]\w*$/.test(match[1].trim()) ? match[2] : undefined;
+}
+
+/** Adds the variables an element writes through values, going by what the schema says its attributes receive. */
+function addWritesThroughValues(element: XmlElement, xsd: XsdSchema, into: Set<string>): void {
+  let declaration: XsdElement | undefined | null = null;
+  for (const attribute of element.attributes) {
+    const name = nameThroughValue(attribute.value);
+    if (name === undefined) {
+      continue;
+    }
+    declaration = declaration === null ? xsd.anyDeclaration(element.name) : declaration;
+    if (receivesValue(declaration?.attributes.get(attribute.name), element)) {
+      into.add(name);
+    }
+  }
+}
+
+/**
+ * What a file contributes to the index, from its scanned structure; undefined for anything but a script
+ * or a script patch. With the schemas, the variables of AI script interrupt library items and those
+ * Mission Director scripts write through values are indexed too.
+ */
+export function indexStructure(
+  file: string,
+  text: string,
+  structure: XmlStructure,
+  source: string,
+  schemas: Partial<Record<ScriptSchema, XsdSchema>> = {}
+): IndexedFile | undefined {
+  const xsd = schemas.aiscripts;
   const root = structure.roots[0];
   if (!root) {
     return undefined;
@@ -216,9 +263,22 @@ export function indexStructure(file: string, text: string, structure: XmlStructu
     }
     return false;
   };
+  const writes = new Set<string>();
+  const includes = new Set<string>();
+  const instantiates = new Set<string>();
+  const mdXsd = schema === 'md' ? schemas.md : undefined;
   for (const element of structure.elements) {
     if (!counts(element)) {
       continue;
+    }
+    if (mdXsd) {
+      addWritesThroughValues(element, mdXsd, writes);
+    }
+    if (schema === 'md' && (element.name === 'include_actions' || element.name === 'cue' || element.name === 'run_actions')) {
+      const ref = attributeNamed(element, 'ref')?.value.trim();
+      if (ref?.startsWith('md.')) {
+        (element.name === 'include_actions' ? includes : instantiates).add(ref);
+      }
     }
     if (schema === 'md' && (element.name === 'cue' || element.name === 'library')) {
       const name = nameOf(element);
@@ -271,10 +331,12 @@ export function indexStructure(file: string, text: string, structure: XmlStructu
   for (const [item, element] of itemsWithElements) {
     item.variables = variablesOfItem(element);
   }
+  const writesThroughValues = [...writes].sort();
+  const uses = { writesThroughValues, includes: [...includes].sort(), instantiates: [...instantiates].sort() };
   if (patch) {
-    return { kind: 'patch', file, source, schema, cues, libraryItems };
+    return { kind: 'patch', file, source, schema, cues, libraryItems, ...uses };
   }
-  return { kind: 'script', file, source, schema, name: scriptName, position: at(root), cues, libraryItems, params };
+  return { kind: 'script', file, source, schema, name: scriptName, position: at(root), cues, libraryItems, params, ...uses };
 }
 
 /** What other scripts can see of a file: when it changes, scripts that refer to it are checked again. */
@@ -284,13 +346,21 @@ function signatureOf(entry: IndexedFile | undefined): string {
   }
   const cues = entry.cues.map((cue) => `${cue.kind}:${cue.name}:${cue.params.join(',')}`).join(';');
   const items = entry.libraryItems.map((item) => `${item.kind}:${item.name}:${item.variables.map((variable) => variable.name).join(',')}`).join(';');
-  return entry.kind === 'script' ? `${entry.schema}|${entry.name}|${cues}|${items}|${entry.params.join(',')}` : `${entry.schema}|patch|${cues}|${items}`;
+  const uses = `${entry.writesThroughValues.join(',')}|${entry.includes.join(',')}|${entry.instantiates.join(',')}`;
+  return entry.kind === 'script'
+    ? `${entry.schema}|${entry.name}|${cues}|${items}|${entry.params.join(',')}|${uses}`
+    : `${entry.schema}|patch|${cues}|${items}|${uses}`;
 }
 
 interface Lookups {
   scripts: Map<string, IndexedScript[]>;
   cues: Map<IndexedScript, IndexedCue[]>;
   libraryItems: Map<string, IndexedLibraryItem[]>;
+  writesThroughValues: Set<string>;
+  /** Scripts that include a library, by `md.Script.Library`; a patch counts as a script without a name. */
+  includers: Map<string, Set<string>>;
+  /** Scripts that instantiate or run a library, the same way. */
+  instantiators: Map<string, Set<string>>;
 }
 
 export class ScriptIndex {
@@ -305,6 +375,8 @@ export class ScriptIndex {
     { variables: DocumentVariables; position: (offset: number) => { line: number; character: number } } | undefined
   >();
   private lookups: Lookups | undefined;
+  /** Answers of `cueVariables` by `Script.Cue`, until any file changes. */
+  private readonly cueVariableLists = new Map<string, IndexedVariable[]>();
 
   /** With the schemas, variables are indexed as well. */
   constructor(private readonly schemas?: SchemaSet) {}
@@ -322,7 +394,7 @@ export class ScriptIndex {
   setStructure(file: string, text: string, structure: XmlStructure, source: string, fromEditor = false): boolean {
     const key = keyOf(file);
     const before = signatureOf(this.files.get(key));
-    const entry = indexStructure(file, text, structure, source, this.schemas?.schemas.aiscripts);
+    const entry = indexStructure(file, text, structure, source, this.schemas?.schemas);
     if (entry) {
       this.files.set(key, entry);
     } else {
@@ -334,6 +406,7 @@ export class ScriptIndex {
       this.texts.delete(key);
     }
     this.variables.delete(key);
+    this.cueVariableLists.clear();
     this.lookups = undefined;
     return signatureOf(entry) !== before;
   }
@@ -344,6 +417,7 @@ export class ScriptIndex {
     const removed = this.files.delete(key);
     this.texts.delete(key);
     this.variables.delete(key);
+    this.cueVariableLists.clear();
     if (removed) {
       this.lookups = undefined;
     }
@@ -378,6 +452,16 @@ export class ScriptIndex {
    * each with where it is set first; for every script of that name.
    */
   cueVariables(scriptName: string, cueName: string): IndexedVariable[] {
+    const key = `${scriptName}.${cueName}`;
+    let found = this.cueVariableLists.get(key);
+    if (!found) {
+      found = this.findCueVariables(scriptName, cueName);
+      this.cueVariableLists.set(key, found);
+    }
+    return found;
+  }
+
+  private findCueVariables(scriptName: string, cueName: string): IndexedVariable[] {
     const found: IndexedVariable[] = [];
     for (const script of this.scripts('md', scriptName)) {
       const known = this.variablesOfScript(script);
@@ -424,6 +508,25 @@ export class ScriptIndex {
       const cues = new Map<IndexedScript, IndexedCue[]>();
       const libraryItems = new Map<string, IndexedLibraryItem[]>();
       const byFileName = new Map<string, IndexedScript[]>();
+      const writesThroughValues = new Set<string>();
+      const includers = new Map<string, Set<string>>();
+      const instantiators = new Map<string, Set<string>>();
+      const addUser = (users: Map<string, Set<string>>, ref: string, entry: IndexedFile): void => {
+        const scripts = users.get(ref) ?? new Set<string>();
+        scripts.add(entry.kind === 'script' ? entry.name : '');
+        users.set(ref, scripts);
+      };
+      for (const entry of this.files.values()) {
+        for (const name of entry.writesThroughValues) {
+          writesThroughValues.add(name);
+        }
+        for (const ref of entry.includes) {
+          addUser(includers, ref, entry);
+        }
+        for (const ref of entry.instantiates) {
+          addUser(instantiators, ref, entry);
+        }
+      }
       const push = <T>(map: Map<string, T[]>, key: string, value: T): void => {
         const list = map.get(key);
         if (list) {
@@ -457,9 +560,29 @@ export class ScriptIndex {
           }
         }
       }
-      this.lookups = { scripts, cues, libraryItems };
+      this.lookups = { scripts, cues, libraryItems, writesThroughValues, includers, instantiators };
     }
     return this.lookups;
+  }
+
+  /** True when another Mission Director script splices the library in with `<include_actions ref="md.Script.Library">`. */
+  isIncludedByOtherScripts(scriptName: string, libraryName: string): boolean {
+    const scripts = this.lookup().includers.get(`md.${scriptName}.${libraryName}`);
+    return scripts !== undefined && [...scripts].some((name) => name !== scriptName);
+  }
+
+  /** True when another Mission Director script instantiates the library (`<cue ref>`) or runs it (`<run_actions ref>`). */
+  isUsedByOtherScripts(scriptName: string, libraryName: string): boolean {
+    const scripts = this.lookup().instantiators.get(`md.${scriptName}.${libraryName}`);
+    return scripts !== undefined && [...scripts].some((name) => name !== scriptName);
+  }
+
+  /**
+   * True when a Mission Director script writes the variable into a cue it gets as a value (`$Cue.$x`,
+   * `event.param.$x`, `md.Script.Cue.$x`): any cue may then have it without setting it itself.
+   */
+  isWrittenThroughValues(name: string): boolean {
+    return this.lookup().writesThroughValues.has(name);
   }
 
   /** Scripts of a kind with a name, in load order. */

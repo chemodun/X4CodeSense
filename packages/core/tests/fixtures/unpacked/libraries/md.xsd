@@ -23,6 +23,23 @@
           <xs:attribute name="ref" type="expression" use="required" />
         </xs:complexType>
       </xs:element>
+      <xs:element name="run_actions">
+        <xs:annotation>
+          <xs:documentation>Perform actions of the referenced library in a separate context, providing parameters to the library and optionally receiving a result value.</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="param" minOccurs="0" maxOccurs="unbounded">
+              <xs:complexType>
+                <xs:attribute name="name" type="xs:string" use="required" />
+                <xs:attribute name="value" type="expression" use="required" />
+              </xs:complexType>
+            </xs:element>
+          </xs:sequence>
+          <xs:attribute name="ref" type="expression" use="required" />
+          <xs:attribute name="result" type="lvaluename" />
+        </xs:complexType>
+      </xs:element>
       <xs:element name="signal_cue_instantly">
         <xs:complexType>
           <xs:attribute name="cue" type="cuename" use="required" />

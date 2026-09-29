@@ -16,10 +16,11 @@ function insidePatch(element: XmlElement): boolean {
 }
 
 /**
- * A variable read in a script or cue table that nothing in the document defines: probably a typo or a
- * missing `<param>`. Guarded reads (`@$x`, `$x?`) are fine, as are global and remote tables, which other
- * scripts fill, reads inside an AI script's interrupt library, which the scripts that use it answer
- * for, and variables that library items of other files set.
+ * A variable read in a script or cue table that nothing defines: probably a typo or a missing
+ * `<param>`. Guarded reads (`@$x`, `$x?`, or under such a test) are fine, as are global, remote and
+ * opaque tables, which other code fills, reads inside an AI script's interrupt library, which the
+ * scripts that use it answer for, variables that libraries of other files set, and variables some
+ * script writes into cues it gets as values.
  */
 export function validateVariables(variables: DocumentVariables, document: TextDocument, source: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
@@ -27,12 +28,12 @@ export function validateVariables(variables: DocumentVariables, document: TextDo
     if (table.kind === 'global' || table.kind === 'remote') {
       continue;
     }
-    if (table.opaque || (table.kind === 'library' && table.links.size === 0)) {
-      // Filled by another script, or a library nothing includes by name (`include_actions ref="$lib"`).
+    if (table.opaque) {
+      // Filled by another script, or a library used through a value (`include_actions ref="$lib"`).
       continue;
     }
     for (const variable of table.variables.values()) {
-      if (variables.isDefined(variable)) {
+      if (variables.isDefined(variable) || variables.mayBeWrittenThroughValues(variable)) {
         continue;
       }
       for (const reference of variable.references) {

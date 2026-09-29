@@ -119,6 +119,84 @@ describe('variables across scripts', () => {
     copy.setText(setup, readFileSync(setup, 'utf8'), 'game');
     expect(copy.cueVariables('Setup', 'Start').map((variable) => variable.name)).toEqual(['started']);
   });
+
+  it('knows the libraries Mission Director scripts share, and what they write into cues they get as values', () => {
+    const scripts = new ScriptIndex(game.schemas);
+    const add = (name: string, lines: string[]): string => {
+      const text = `<mdscript name="${name}">\n  <cues>\n${lines.join('\n')}\n  </cues>\n</mdscript>\n`;
+      scripts.setStructure(path.join(project, 'open', 'md', `${name.toLowerCase()}.xml`), text, parseXml(text), 'game', true);
+      return text;
+    };
+    const libs = add('Libs', [
+      '    <library name="Constants">',
+      '      <actions>',
+      '        <set_value name="$constant" exact="1"/>',
+      '      </actions>',
+      '    </library>',
+      '    <library name="Included">',
+      '      <actions>',
+      '        <set_value name="$y" exact="$fromIncluder"/>',
+      '      </actions>',
+      '    </library>',
+      '    <library name="Instantiated">',
+      '      <params>',
+      '        <param name="p"/>',
+      '      </params>',
+      '      <actions>',
+      '        <set_value name="$z" exact="$p + $typo"/>',
+      '      </actions>',
+      '    </library>',
+      '    <library name="Unused">',
+      '      <actions>',
+      '        <set_value name="$w" exact="$unknown"/>',
+      '      </actions>',
+      '    </library>',
+    ]);
+    const user = add('User', [
+      '    <cue name="A">',
+      '      <actions>',
+      '        <set_value name="$fromIncluder" exact="1"/>',
+      '        <include_actions ref="md.Libs.Constants"/>',
+      '        <include_actions ref="md.Libs.Included"/>',
+      '        <set_value name="$sum" exact="$constant + $y + $nothing"/>',
+      '        <set_value name="event.param.$reply" exact="$sum"/>',
+      '      </actions>',
+      '    </cue>',
+      '    <cue name="B" ref="md.Libs.Instantiated">',
+      '      <param name="p" value="1"/>',
+      '    </cue>',
+    ]);
+    const reader = add('Reader', [
+      '    <cue name="R">',
+      '      <actions>',
+      '        <set_value name="$r" exact="this.$reply + $never"/>',
+      '      </actions>',
+      '    </cue>',
+    ]);
+    expect([scripts.isIncludedByOtherScripts('Libs', 'Included'), scripts.isIncludedByOtherScripts('Libs', 'Instantiated')]).toEqual([true, false]);
+    expect([scripts.isUsedByOtherScripts('Libs', 'Instantiated'), scripts.isUsedByOtherScripts('Libs', 'Unused')]).toEqual([true, false]);
+    expect([scripts.isWrittenThroughValues('reply'), scripts.isWrittenThroughValues('sum')]).toEqual([true, false]);
+
+    // With the index the check is on by default.
+    const report = (text: string, withIndex = true): string[] =>
+      analyzeText(text, { schemas: game.schemas, properties: game.properties, ...(withIndex ? { index: scripts } : {}) })
+        .diagnostics.filter((diagnostic) => diagnostic.code === 'variable-undefined')
+        .map((diagnostic) => diagnostic.message);
+    // Included libraries read what their includers set, and nothing uses Unused; another script instantiates Instantiated.
+    expect(report(libs)).toEqual(["Variable '$typo' is never set in library 'Instantiated'"]);
+    expect(report(user)).toEqual(["Variable '$nothing' is never set in cue 'A'"]);
+    expect(report(reader)).toEqual(["Variable '$never' is never set in cue 'R'"]);
+    expect(report(reader, false)).toEqual([]);
+    const constant = analyzeText(user, { schemas: game.schemas, index: scripts })
+      .variables?.tables.find((table) => table.name === 'A')
+      ?.variables.get('constant');
+    expect(constant?.elsewhere.map((definition) => `${definition.via} ${definition.position.line + 1}`)).toEqual(['library Constants of Libs 5']);
+
+    // What other scripts see changes with a new write through a value.
+    const edited = user.replace('event.param.$reply', 'event.param.$answer');
+    expect(scripts.setStructure(path.join(project, 'open', 'md', 'user.xml'), edited, parseXml(edited), 'game', true)).toBe(true);
+    expect(report(reader)).toEqual(["Variable '$reply' is never set in cue 'R'", "Variable '$never' is never set in cue 'R'"]);
+  });
 });
 
 describe('checks against the index', () => {

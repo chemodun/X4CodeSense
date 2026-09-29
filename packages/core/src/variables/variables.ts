@@ -9,13 +9,20 @@
  * is the global table and `md.Script.Cue.$x` or `player.entity.$x` a remote table this document cannot
  * see into. Variables on values (`$obj.$x`, `event.param.$x`) are table keys, not script variables.
  *
- * A definition is an lvalue attribute whose whole value is the variable (`<set_value name="$x">`), or
- * a `<param name="x">` of a script or library. `<remove_value name="$x">` removes.
+ * A definition is an attribute that receives a value (see `receivesValue`) whose whole value is the
+ * variable (`<set_value name="$x">`), or a `<param name="x">` of a script or library.
+ * `<remove_value name="$x">` removes.
  *
  * AI scripts share interrupt library items (`<interrupts><library>` actions, handlers, conditions) by
  * name. An item runs in the script that uses it: what it sets counts as set in that script, which the
  * script index tells when the item is in another file; and what it reads is the using script's to set,
  * so those reads are external to the item's own script.
+ *
+ * Mission Director scripts share libraries and write into each other's cues. A library spliced in with
+ * `include_actions` sets its variables in the including cue, also one of another script. A library the
+ * script never uses by name, or that another script includes, reads what its users set: its table is
+ * opaque. A variable written into a cue the script gets as a value (`$Cue.$x`, `event.param.$x`) may be
+ * in any cue.
  */
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { IndexedPosition, ScriptIndex } from '../project/scriptIndex';
@@ -42,7 +49,10 @@ export interface VariableTable {
    * `<include_actions>` runs in the including cue's table, so each sees the other's definitions.
    */
   links: Set<VariableTable>;
-  /** True when code this document cannot see fills the table: a cue instantiating a library of another script. */
+  /**
+   * True when code this document cannot see fills the table: a cue instantiating a library of another
+   * script, or, with the script index, a library another script includes.
+   */
   opaque?: boolean;
 }
 
@@ -100,21 +110,47 @@ export interface DocumentVariables {
   variableOf(occurrence: VariableOccurrence): ScriptVariable;
   /** True when the variable is set in its table or in a table linked to it. */
   isDefined(variable: ScriptVariable): boolean;
+  /**
+   * True when the variable is in a cue's table and a Mission Director script, this one or with the
+   * script index any, writes a variable of that name into a cue it gets as a value (`$Cue.$x`,
+   * `event.param.$x`): the cue may have it without setting it itself.
+   */
+  mayBeWrittenThroughValues(variable: ScriptVariable): boolean;
 }
 
 /** Cue keywords that name a table relative to the current cue. */
 const cueKeywords: ReadonlySet<string> = new Set(['this', 'static', 'staticbase', 'parent', 'namespace']);
 
-function isLvalue(declared: XsdAttribute | undefined): boolean {
+/**
+ * True when an attribute of the element stores a value into what it names. The schema says so in the
+ * type (`lvalueexpression`, `lvaluename`, …) or, for attributes typed as plain expressions, in the
+ * documentation: a `resultvalue` (`find_resource wares`), or a value that "will receive" something,
+ * possibly only when another attribute is true (`append_to_list name` with `create="true"`).
+ */
+export function receivesValue(declared: XsdAttribute | undefined, element: XmlElement): boolean {
   if (!declared) {
     return false;
   }
-  for (const name of typeNamesOf(declared.type)) {
-    if (name.startsWith('lvalue')) {
-      return true;
+  const receives = receiving(declared);
+  return receives === true || (typeof receives === 'string' && attributeNamed(element, receives)?.value.trim() === 'true');
+}
+
+/** Whether an attribute receives a value: always, never, or when the attribute named by the string is true. */
+const receivingByAttribute = new WeakMap<XsdAttribute, boolean | string>();
+
+function receiving(declared: XsdAttribute): boolean | string {
+  let receives = receivingByAttribute.get(declared);
+  if (receives === undefined) {
+    receives = false;
+    const documentation = declared.documentation ?? '';
+    if ([...typeNamesOf(declared.type)].some((name) => name.startsWith('lvalue')) || /\bresultvalue\b/i.test(documentation)) {
+      receives = true;
+    } else if (/\bthis value will receive\b/i.test(documentation)) {
+      receives = /\bif the '([\w-]+)' attribute is true\b/i.exec(documentation)?.[1] ?? true;
     }
+    receivingByAttribute.set(declared, receives);
   }
-  return false;
+  return receives;
 }
 
 /** Text of a chain of names with no variables, braces or brackets in it, such as `player.entity` or `md.Script.Cue`; undefined otherwise. */
@@ -132,11 +168,14 @@ function nameChainText(node: Expression): string | undefined {
 class Collector {
   readonly tables: VariableTable[] = [];
   readonly occurrences: VariableOccurrence[] = [];
+  /** Variables a Mission Director script writes into cues it gets as values: `$Cue.$x`, `event.param.$x`. */
+  readonly writesThroughValues = new Set<string>();
   private readonly tableByOwner = new Map<XmlElement, VariableTable>();
   private readonly tableByName = new Map<string, VariableTable>();
   private readonly namespaces = new Map<XmlElement, XmlElement>();
   private readonly cuesByName = new Map<string, XmlElement>();
   private readonly scriptTable: VariableTable;
+  private readonly scriptName: string | undefined;
 
   constructor(
     private readonly analysis: VariableSource,
@@ -146,6 +185,7 @@ class Collector {
   ) {
     const root = analysis.structure?.roots[0];
     this.scriptTable = this.table('script', 'script', root);
+    this.scriptName = root ? attributeNamed(root, 'name')?.value.trim() : undefined;
     for (const element of analysis.structure?.elements ?? []) {
       if (this.isCue(element)) {
         const name = attributeNamed(element, 'name')?.value;
@@ -183,14 +223,19 @@ class Collector {
     return this.schema === 'md' && (element.name === 'cue' || element.name === 'library');
   }
 
+  private readonly cues = new Map<XmlElement, XmlElement | undefined>();
+
   /** The cue or library the element belongs to. */
   private cueOf(element: XmlElement): XmlElement | undefined {
-    for (let current: XmlElement | undefined = element; current; current = current.parent) {
-      if (this.isCue(current)) {
-        return current;
-      }
+    if (this.schema !== 'md') {
+      return undefined;
     }
-    return undefined;
+    if (this.cues.has(element)) {
+      return this.cues.get(element);
+    }
+    const cue = this.isCue(element) ? element : element.parent && this.cueOf(element.parent);
+    this.cues.set(element, cue);
+    return cue;
   }
 
   /** The cue whose table a bare `$name` inside the cue refers to. */
@@ -209,6 +254,12 @@ class Collector {
     }
     this.namespaces.set(cue, result);
     return result;
+  }
+
+  /** A cue reference with the script's own `md.<Script>.` prefix taken off, as the cue's name in this script. */
+  private localName(ref: string | undefined): string | undefined {
+    const prefix = this.scriptName ? `md.${this.scriptName}.` : undefined;
+    return prefix && ref?.startsWith(prefix) ? ref.slice(prefix.length) : ref;
   }
 
   private cueTable(cue: XmlElement): VariableTable {
@@ -251,7 +302,7 @@ class Collector {
             return this.cueTable(cue);
         }
       }
-      const named = this.cuesByName.get(text);
+      const named = this.cuesByName.get(this.localName(text) as string);
       if (named) {
         return this.cueTable(named);
       }
@@ -277,23 +328,73 @@ class Collector {
         if (attribute.quote === '' || attribute.value.trim() === '' || !isExpressionAttribute(declared)) {
           continue;
         }
-        this.collectAttribute(element, attribute, isLvalue(declared));
+        this.collectAttribute(element, attribute, receivesValue(declared, element));
       }
     }
     this.linkIncludedLibraries();
     this.occurrences.sort((a, b) => a.start - b.start);
+    this.guardByTests();
   }
 
-  /** `<include_actions ref="Lib">` splices the library's actions into the including cue: both run in one table. */
+  /**
+   * A read is safe where an enclosing element, or its own, tests the same variable with `?` or `@`:
+   * `<do_if value="$x?">` runs its body only when `$x` exists, and `value="$x? and $x.y"` stops before
+   * `$x.y` when it does not. A test in a cue's `<conditions>` guards the whole cue. A `do_else` is a
+   * sibling of its `do_if`, not inside it, so it stays unsafe.
+   */
+  private guardByTests(): void {
+    const tests = new Map<XmlElement, Map<VariableTable, Set<string>>>();
+    const addTest = (element: XmlElement, occurrence: VariableOccurrence): void => {
+      const byTable = tests.get(element) ?? new Map<VariableTable, Set<string>>();
+      const names = byTable.get(occurrence.table) ?? new Set<string>();
+      names.add(occurrence.name);
+      byTable.set(occurrence.table, names);
+      tests.set(element, byTable);
+    };
+    for (const occurrence of this.occurrences) {
+      if (occurrence.guarded && occurrence.kind === 'reference') {
+        addTest(occurrence.element, occurrence);
+        for (let current = occurrence.element.parent; current; current = current.parent) {
+          if (current.name === 'conditions' && current.parent && this.isCue(current.parent)) {
+            addTest(current.parent, occurrence);
+            break;
+          }
+        }
+      }
+    }
+    if (tests.size === 0) {
+      return;
+    }
+    for (const occurrence of this.occurrences) {
+      if (occurrence.guarded || occurrence.kind !== 'reference') {
+        continue;
+      }
+      for (let current: XmlElement | undefined = occurrence.element; current; current = current.parent) {
+        if (tests.get(current)?.get(occurrence.table)?.has(occurrence.name)) {
+          occurrence.guarded = true;
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * `<include_actions ref="Lib">` splices the library's actions into the including cue: both run in one
+   * table. A library the script never uses by name (`include_actions`, `<cue ref>`, `run_actions`) is
+   * used through a value (`ref="$lib"`) or by other scripts, which set what it reads; so is a library
+   * only such a library includes.
+   */
   private linkIncludedLibraries(): void {
     if (this.schema !== 'md') {
       return;
     }
+    const includes: [XmlElement, XmlElement][] = [];
+    const usedByName = new Set<XmlElement>();
     for (const element of this.analysis.structure?.elements ?? []) {
-      if (element.name !== 'include_actions' && element.name !== 'cue') {
+      if (element.name !== 'include_actions' && element.name !== 'cue' && element.name !== 'run_actions') {
         continue;
       }
-      const ref = attributeNamed(element, 'ref')?.value;
+      const ref = this.localName(attributeNamed(element, 'ref')?.value.trim());
       if (ref === undefined || ref === '') {
         continue;
       }
@@ -305,11 +406,72 @@ class Collector {
         }
         continue;
       }
-      const user = element.name === 'cue' ? this.cueTable(element) : this.tableOf(element);
+      if (element.name === 'include_actions') {
+        includes.push([element, library]);
+      } else {
+        usedByName.add(library);
+      }
+      if (element.name === 'run_actions') {
+        // Runs in a table of its own, filled by its `<param>`s.
+        continue;
+      }
       const used = this.cueTable(library);
-      if (user !== used) {
-        user.links.add(used);
-        used.links.add(user);
+      // An included library runs in the including cue: its `$x` is the cue's namespace, its `this.$x` the cue itself.
+      const including = element.name === 'include_actions' ? this.cueOf(element) : undefined;
+      const users = element.name === 'cue' ? [this.cueTable(element)] : [this.tableOf(element), ...(including ? [this.cueTable(including)] : [])];
+      for (const user of users) {
+        if (user !== used) {
+          user.links.add(used);
+          used.links.add(user);
+        }
+      }
+    }
+    this.includes = includes;
+    this.usedByName = usedByName;
+  }
+
+  private includes: [XmlElement, XmlElement][] = [];
+  private usedByName = new Set<XmlElement>();
+
+  /**
+   * Marks the libraries whose reads other code answers for as opaque: those the script never uses by
+   * name, unless, as the script index tells, another script instantiates or runs them; those another
+   * script includes; and those only such libraries include.
+   */
+  settleLibraries(index: ScriptIndex | undefined): void {
+    if (this.schema !== 'md') {
+      return;
+    }
+    const scriptName = this.scriptName;
+    // The tables each library is included into.
+    const includers = new Map<XmlElement, VariableTable[]>();
+    for (const [element, library] of this.includes) {
+      const tables = includers.get(library) ?? [];
+      tables.push(this.tableOf(element));
+      includers.set(library, tables);
+    }
+    for (const [name, library] of this.cuesByName) {
+      if (library.name !== 'library') {
+        continue;
+      }
+      const table = this.cueTable(library);
+      if (index && scriptName && index.isIncludedByOtherScripts(scriptName, name)) {
+        // Spliced into cues of other scripts, which set what it reads.
+        table.opaque = true;
+      } else if (!this.usedByName.has(library) && !includers.has(library) && !(index && scriptName && index.isUsedByOtherScripts(scriptName, name))) {
+        table.opaque = true;
+      }
+    }
+    // A library that only opaque tables include is opaque too; one the script uses by name otherwise stays checked.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [library, tables] of includers) {
+        const table = this.cueTable(library);
+        if (!table.opaque && !this.usedByName.has(library) && tables.every((including) => including.opaque)) {
+          table.opaque = true;
+          changed = true;
+        }
       }
     }
   }
@@ -327,7 +489,8 @@ class Collector {
         continue;
       }
       seen.add(table);
-      if ((table.variables.get(variable.name)?.definitions.length ?? 0) > 0) {
+      const linked = table.variables.get(variable.name);
+      if (linked && (linked.definitions.length > 0 || linked.elsewhere.length > 0)) {
         return true;
       }
       pending.push(...table.links);
@@ -346,8 +509,9 @@ class Collector {
       // Declared parameters: of the script (`aiscript/params`, `order/params`) or of a library (`library/params`).
       const cue = this.cueOf(parent);
       table = cue ? this.cueTable(cue) : this.scriptTable;
-    } else if (parent?.name === 'cue') {
-      const library = this.cuesByName.get(attributeNamed(parent, 'ref')?.value ?? '');
+    } else if (parent?.name === 'cue' || parent?.name === 'run_actions') {
+      // Given to a cue that instantiates a library, or to a library run with `run_actions`: the library's parameters.
+      const library = this.cuesByName.get(this.localName(attributeNamed(parent, 'ref')?.value.trim()) ?? '');
       table = library && library.name === 'library' ? this.cueTable(library) : undefined;
     }
     const name = attributeNamed(element, 'name');
@@ -399,16 +563,21 @@ class Collector {
   }
 
   /**
-   * The variables that interrupt library items of other files set, for the items an AI script uses:
-   * `include_interrupt_actions ref`, `<handler ref>`, and a handler's `actions` and `conditions ref`.
-   * Items of the script itself are in its own table already.
+   * The variables that libraries of other files set. In an AI script, the interrupt library items it
+   * uses: `include_interrupt_actions ref`, `<handler ref>`, and a handler's `actions` and `conditions
+   * ref`; items of the script itself are in its own table already. In a Mission Director script, a
+   * library of another script spliced in with `<include_actions ref="md.Script.Library">`: what it sets
+   * is set in the including cue.
    */
   addLibraryDefinitions(index: ScriptIndex): void {
+    const scriptName = this.scriptName;
+    if (this.schema === 'md') {
+      this.addIncludedLibraryDefinitions(index, scriptName);
+      return;
+    }
     if (this.schema !== 'aiscripts') {
       return;
     }
-    const root = this.analysis.structure?.roots[0];
-    const scriptName = root ? attributeNamed(root, 'name')?.value : undefined;
     for (const element of this.analysis.structure?.elements ?? []) {
       const ref = attributeNamed(element, 'ref')?.value.trim();
       if (!ref) {
@@ -430,12 +599,35 @@ class Collector {
           continue;
         }
         for (const set of item.variables) {
-          const variable = this.variableOf({ name: set.name, table: this.scriptTable });
-          if (!variable.elsewhere.some((known) => known.position.file === set.position.file && known.position.line === set.position.line)) {
-            variable.elsewhere.push({ position: set.position, via: `interrupt ${kind} ${item.name}` });
-          }
+          this.addElsewhere(this.scriptTable, set.name, { position: set.position, via: `interrupt ${kind} ${item.name}` });
         }
       }
+    }
+  }
+
+  private addIncludedLibraryDefinitions(index: ScriptIndex, scriptName: string | undefined): void {
+    for (const element of this.analysis.structure?.elements ?? []) {
+      if (element.name !== 'include_actions') {
+        continue;
+      }
+      const remote = /^md\.(\w+)\.(\w+)$/.exec(attributeNamed(element, 'ref')?.value.trim() ?? '');
+      if (!remote || remote[1] === scriptName) {
+        continue;
+      }
+      const including = this.cueOf(element);
+      const tables = new Set([this.tableOf(element), ...(including ? [this.cueTable(including)] : [])]);
+      for (const set of index.cueVariables(remote[1], remote[2])) {
+        for (const table of tables) {
+          this.addElsewhere(table, set.name, { position: set.position, via: `library ${remote[2]} of ${remote[1]}` });
+        }
+      }
+    }
+  }
+
+  private addElsewhere(table: VariableTable, name: string, definition: ElsewhereDefinition): void {
+    const variable = this.variableOf({ name, table });
+    if (!variable.elsewhere.some((known) => known.position.file === definition.position.file && known.position.line === definition.position.line)) {
+      variable.elsewhere.push(definition);
     }
   }
 
@@ -467,6 +659,9 @@ class Collector {
         case 'property': {
           if (node.name.startsWith('$')) {
             const table = this.tableForObject(node.object, element);
+            if (node === whole && kindOfWhole === 'definition' && this.schema === 'md' && (!table || table.kind === 'remote')) {
+              this.writesThroughValues.add(node.name.slice(1));
+            }
             if (table) {
               const occurrence = record(table, node.name.slice(1), node.nameStart, node.nameEnd, node, guarded);
               if (occurrence.kind === 'definition') {
@@ -611,6 +806,7 @@ export function collectVariables(
   if (index) {
     collector.addLibraryDefinitions(index);
   }
+  collector.settleLibraries(index);
   return {
     tables: collector.tables,
     occurrences: collector.occurrences,
@@ -619,5 +815,8 @@ export function collectVariables(
     occurrenceAt: (offset) => collector.occurrenceAt(offset),
     variableOf: (occurrence) => collector.variableOf(occurrence),
     isDefined: (variable) => collector.isDefined(variable),
+    mayBeWrittenThroughValues: (variable) =>
+      (variable.table.kind === 'cue' || variable.table.kind === 'library') &&
+      (collector.writesThroughValues.has(variable.name) || (index?.isWrittenThroughValues(variable.name) ?? false)),
   };
 }

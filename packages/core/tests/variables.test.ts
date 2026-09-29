@@ -139,6 +139,7 @@ describe('variable tables of a Mission Director script', () => {
     expect([...lib.links].map((linked) => linked.name).sort()).toEqual(['Inst', 'User']);
     expect(table(analysis, 'cue', 'Ext').opaque).toBe(true);
     expect(table(analysis, 'cue', 'Dyn').opaque).toBeUndefined();
+    expect(table(analysis, 'library', 'Unused').opaque).toBe(true);
     expect([...variable(analysis, 'library', 'Lib', 'p').types]).toEqual(['integer']);
     // `$l` and `$p` read in User come from Lib; `$q` read in Lib comes from User; nothing includes Unused; another script fills Ext.
     expect(undefinedReport(analysis)).toEqual(["18:31 Variable '$lib' is never set in cue 'Dyn'"]);
@@ -169,7 +170,112 @@ describe('variable tables of a Mission Director script', () => {
     ]);
   });
 
-  it('skips patch blocks and reports nothing unless asked', () => {
+  it('counts attributes that store a result as writes, as the schema documents them', () => {
+    const analysis = analyze(
+      md([
+        '    <cue name="A">',
+        '      <actions>',
+        '        <append_to_list name="$list" exact="1" create="true"/>',
+        '        <append_to_list name="$other" exact="$list"/>',
+        '        <find_closest_resource ware="$list" zone="$zone" wares="$wares"/>',
+        '        <set_value name="$r" exact="$zone + $wares + $other"/>',
+        '      </actions>',
+        '    </cue>',
+      ])
+    );
+    expect(tables(analysis)).toEqual(['cue A: $list=1/2/0 $other=0/2/0 $zone=1/1/0 $wares=1/1/0 $r=1/0/0']);
+    // Without `create="true"` the list must exist already.
+    expect(undefinedReport(analysis)).toEqual(["6:31 Variable '$other' is never set in cue 'A'", "8:54 Variable '$other' is never set in cue 'A'"]);
+  });
+
+  it('takes reads under a test of the same variable, or under one in the cue conditions, as safe', () => {
+    const analysis = analyze(
+      md([
+        '    <cue name="A">',
+        '      <conditions>',
+        '        <check_value value="$fromConditions?"/>',
+        '      </conditions>',
+        '      <actions>',
+        '        <set_value name="$x" exact="$fromConditions.count"/>',
+        '        <do_if value="$tested?">',
+        '          <set_value name="$y" exact="$tested + 1"/>',
+        '        </do_if>',
+        '        <set_value name="$z" exact="$tested"/>',
+        '      </actions>',
+        '    </cue>',
+      ])
+    );
+    expect(undefinedReport(analysis)).toEqual(["12:37 Variable '$tested' is never set in cue 'A'"]);
+  });
+
+  it('checks the libraries the script uses by name and leaves the others to their users', () => {
+    const analysis = analyze(
+      md([
+        '    <cue name="A">',
+        '      <actions>',
+        '        <run_actions ref="Run" result="$r">',
+        '          <param name="given" value="1"/>',
+        '        </run_actions>',
+        '        <include_actions ref="md.S.Inc"/>',
+        '        <set_value name="$s" exact="$r + this.$fromInc + $inc"/>',
+        '      </actions>',
+        '    </cue>',
+        '    <library name="Run">',
+        '      <actions>',
+        '        <set_value name="$v" exact="$given + $undeclared"/>',
+        '      </actions>',
+        '    </library>',
+        '    <library name="Inc">',
+        '      <actions>',
+        '        <set_value name="this.$fromInc" exact="1"/>',
+        '        <set_value name="$inc" exact="1"/>',
+        '      </actions>',
+        '    </library>',
+        '    <library name="ByValue">',
+        '      <actions>',
+        '        <include_actions ref="Nested"/>',
+        '        <set_value name="$b" exact="$fromUser"/>',
+        '      </actions>',
+        '    </library>',
+        '    <library name="Nested">',
+        '      <actions>',
+        '        <set_value name="$n" exact="$fromUserToo"/>',
+        '      </actions>',
+        '    </library>',
+      ])
+    );
+    // `run_actions` params fill the library; `md.S.Inc` is the script's own library, which runs in the including cue.
+    expect(undefinedReport(analysis)).toEqual(["14:46 Variable '$undeclared' is never set in library 'Run'"]);
+    expect([table(analysis, 'library', 'Run').opaque, table(analysis, 'library', 'Inc').opaque]).toEqual([undefined, undefined]);
+    // ByValue is used through a value or by other scripts; Nested only by ByValue.
+    expect([table(analysis, 'library', 'ByValue').opaque, table(analysis, 'library', 'Nested').opaque]).toEqual([true, true]);
+  });
+
+  it('lets any cue have what a script writes into cues it gets as values', () => {
+    const analysis = analyze(
+      md([
+        '    <cue name="Sender">',
+        '      <actions>',
+        '        <set_value name="$target" exact="Receiver"/>',
+        '        <set_value name="$target.$reply" exact="1"/>',
+        '        <set_value name="event.param.{1}.$answer" exact="2"/>',
+        '        <set_value name="md.S.Receiver.$direct" exact="3"/>',
+        '      </actions>',
+        '    </cue>',
+        '    <cue name="Receiver">',
+        '      <actions>',
+        '        <set_value name="$x" exact="this.$reply + $answer + $nothing + $direct"/>',
+        '      </actions>',
+        '    </cue>',
+      ])
+    );
+    expect(tables(analysis)).toEqual(['cue Sender: $target=1/1/0', 'cue Receiver: $direct=1/1/0 $x=1/0/0 $reply=0/1/0 $answer=0/1/0 $nothing=0/1/0']);
+    const reply = variable(analysis, 'cue', 'Receiver', 'reply');
+    expect(analysis.variables?.mayBeWrittenThroughValues(reply)).toBe(true);
+    expect(undefinedReport(analysis)).toEqual(["13:61 Variable '$nothing' is never set in cue 'Receiver'"]);
+  });
+
+  it('skips patch blocks, and without the script index reports only when asked', () => {
     const text = md([
       '    <cue name="A">',
       '      <actions>',
@@ -182,6 +288,7 @@ describe('variable tables of a Mission Director script', () => {
     ]);
     expect(undefinedReport(analyze(text))).toEqual(["5:39 Variable '$old' is never set in cue 'A'"]);
     expect(undefinedReport(analyze(text, false))).toEqual([]);
+    expect(undefinedReport(analyzeText(text, { schemas: game.schemas, properties: game.properties }))).toEqual([]);
     expect(analyze(text, false).variables?.tables.length).toBeGreaterThan(0);
   });
 

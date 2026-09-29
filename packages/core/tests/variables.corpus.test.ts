@@ -1,10 +1,9 @@
 /**
  * Corpus gate for the variable model against the extracted vanilla game (X4_EXTRACTED, never committed):
- * every script must yield its tables quickly, and the undefined-variable check, which is off by default,
- * must not report more than it does today. What it still reports on vanilla are flows a single document
- * cannot see: variables written into a cue by another script (`md.Script.Cue.$x`, `run_actions` with a
- * `result` in another cue), library actions included from another script, and cues whose instances are
- * filled by the cue that signals them.
+ * every script must yield its tables quickly, and the undefined-variable check, here asked for without
+ * the script index it defaults to, must not report more than it does today. Beyond the real mistakes it
+ * still reports what only other scripts explain: variables they write into cues they get as values
+ * (`$Cue.$x`, `event.param.$x`), libraries of other scripts spliced in, and libraries they instantiate.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -70,8 +69,9 @@ describe.skipIf(!extracted)('variables on the vanilla corpus', () => {
     expect(variables).toBeGreaterThan(20000);
     expect(occurrences).toBeGreaterThan(150000);
     expect(collectTime).toBeLessThan(15000);
-    // 1494 on vanilla 9.00 without the script index (1541 before reads inside interrupt libraries were
-    // left to the scripts that use them): lower it when the model learns to see more, never raise it.
-    expect(undefinedReads).toBeLessThanOrEqual(1494);
+    // 833 on vanilla 9.00 without the script index (1494 before attributes that store a result, reads
+    // under a test, writes through values and libraries used through values were understood): lower it
+    // when the model learns to see more, never raise it.
+    expect(undefinedReads).toBeLessThanOrEqual(833);
   }, 120_000);
 });

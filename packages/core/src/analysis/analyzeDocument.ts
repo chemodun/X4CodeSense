@@ -31,9 +31,9 @@ export interface AnalysisContext {
   /** Script properties; with them expressions are also checked for unknown keywords and properties. */
   properties?: ScriptProperties;
   /**
-   * Report variables that are read but never set in the document. Off by default: AI scripts include
-   * named actions of library scripts and Mission Director scripts write into each other's cues, so a
-   * single document cannot tell until scripts are indexed across files.
+   * Report variables that are read but never set. Defaults to true when `index` is given, false
+   * otherwise: AI scripts use interrupt library items of other files, and Mission Director scripts
+   * include each other's libraries and write into each other's cues, which a single document cannot see.
    */
   validateVariables?: boolean;
   /**
@@ -139,7 +139,7 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
       enumerable: true,
       get: () => (variables ??= collectVariables(analysis, scriptSchema, schema, context.properties, context.index)),
     });
-    if (context.validateVariables ?? false) {
+    if (context.validateVariables ?? context.index !== undefined) {
       analysis.diagnostics.push(...validateVariables(analysis.variables as DocumentVariables, document, diagnosticSource));
     }
     let names: DocumentNames | undefined;

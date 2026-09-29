@@ -99,14 +99,17 @@ describe('completion', () => {
     expect(labels(cue('<actions/>\n      <|'))).toEqual(['cues', 'patch']);
     expect(labels(cue('<ac|\n'))).toEqual(['actions']);
     expect(labels(cue('<actions>\n        <|\n      </actions>'))).toEqual([
+      'append_to_list',
       'cancel_cue',
       'create_ship',
       'debug_text',
       'deliver',
       'do_if',
+      'find_closest_resource',
       'find_ship',
       'include_actions',
       'remove_value',
+      'run_actions',
       'set_value',
       'signal_cue_instantly',
     ]);

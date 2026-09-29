@@ -159,6 +159,32 @@
           <xs:attribute name="multiple" type="boolean" />
         </xs:complexType>
       </xs:element>
+      <xs:element name="append_to_list">
+        <xs:complexType>
+          <xs:attribute name="name" type="expression" use="required">
+            <xs:annotation>
+              <xs:documentation>
+                Name of the list to which the element should be added (if the 'create' attribute is true and the list does not exist yet, then this value will receive the newly created list)
+              </xs:documentation>
+            </xs:annotation>
+          </xs:attribute>
+          <xs:attribute name="create" type="boolean" />
+          <xs:attribute name="exact" type="expression" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="find_closest_resource">
+        <xs:complexType>
+          <xs:attribute name="ware" type="expression" use="required" />
+          <xs:attribute name="zone" type="lvalueexpression" />
+          <xs:attribute name="wares" type="expression">
+            <xs:annotation>
+              <xs:documentation>
+                (optional, resultvalue) list of all the resources that can be gathered in the found zone
+              </xs:documentation>
+            </xs:annotation>
+          </xs:attribute>
+        </xs:complexType>
+      </xs:element>
       <xs:element name="create_ship">
         <xs:complexType>
           <xs:sequence>

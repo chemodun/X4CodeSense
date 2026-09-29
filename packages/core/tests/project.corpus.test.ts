@@ -1,7 +1,8 @@
 /**
  * Corpus gate for the script index against the extracted game with its DLCs (X4_EXTRACTED) and a folder
  * of extensions (X4_MODS), never committed: the index builds quickly, and the checks that use it report
- * exactly the known vanilla mistakes and nothing in the extensions.
+ * exactly the known vanilla mistakes and nothing in the extensions; unset variable reads stay under
+ * their ceilings.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -42,37 +43,60 @@ describe.skipIf(!extracted)('script index on the corpus', { timeout: 300_000 }, 
     "cue-undefined: No Mission Director script 'BoronGateDND' is known (setup_dlc_boron.xml)",
   ].sort();
 
+  /**
+   * Variables AI scripts of the game read and never set, with what interrupt library items of other
+   * files set counted. Each is a mistake of the game itself.
+   */
+  const knownGameUnsetReads = [
+    // The parameter is `$disablehullpercentagethreshold`.
+    "Variable '$disablehullpercentage' is never set in this script (fight.attack.object.bigtarget.xml)",
+    // The variable is `$TimeOut`.
+    "Variable '$Timeout' is never set in this script (move.random.xml)",
+    // Left in a debug text.
+    "Variable '$myindex' is never set in this script (order.fight.protect.ship.xml)",
+    // The order declares no such parameter.
+    "Variable '$internalorder' is never set in this script (order.mining.player.xml)",
+  ].sort();
+
   it('reports only the known mistakes of the game, and nothing in the extensions', () => {
     const game = loadGameData(root, { extensionFolders: folders, index: true });
     const index = game.index;
     expect(index).toBeDefined();
     const found: string[] = [];
     const inExtensions: string[] = [];
-    // Unset variable reads of AI scripts, with what library items of other files set counted.
-    const unset = { game: 0, extensions: 0 };
+    const unsetInGameAiScripts: string[] = [];
+    // Unset variable reads, which the index turns on: in AI scripts and Mission Director scripts, of the game and of the extensions.
+    const unset = { aiscripts: { game: 0, extensions: 0 }, md: { game: 0, extensions: 0 } };
     for (const entry of index?.entries() ?? []) {
       if (entry.kind !== 'script') {
         continue;
       }
       const fromGame = entry.source === 'game' || entry.source.startsWith('ego_dlc');
-      const analysis = analyzeText(readFileSync(entry.file, 'utf8'), { schemas: game.schemas, properties: game.properties, index, validateVariables: true });
+      const analysis = analyzeText(readFileSync(entry.file, 'utf8'), { schemas: game.schemas, properties: game.properties, index });
       for (const diagnostic of analysis.diagnostics) {
         const remote = diagnostic.code === 'cue-undefined' && /is known|has no cue/.test(diagnostic.message);
         if (diagnostic.code === 'library-undefined' || remote) {
           const line = `${diagnostic.code}: ${diagnostic.message} (${path.basename(entry.file)})`;
           (fromGame ? found : inExtensions).push(line);
-        } else if (diagnostic.code === 'variable-undefined' && entry.schema === 'aiscripts') {
-          unset[fromGame ? 'game' : 'extensions']++;
+        } else if (diagnostic.code === 'variable-undefined') {
+          unset[entry.schema][fromGame ? 'game' : 'extensions']++;
+          if (fromGame && entry.schema === 'aiscripts') {
+            unsetInGameAiScripts.push(`${diagnostic.message} (${path.basename(entry.file)})`);
+          }
         }
       }
     }
-    console.log(`unset variable reads of AI scripts with the index: game ${unset.game}, extensions ${unset.extensions}`);
+    console.log(`unset variable reads with the index: AI scripts ${JSON.stringify(unset.aiscripts)}, Mission Director scripts ${JSON.stringify(unset.md)}`);
     expect(found.sort()).toEqual(knownGameFindings);
     expect(inExtensions).toEqual([]);
-    // 31 and 28 on vanilla 9.00 and the mods (202 and 148 without the index): typos, attributes that
-    // write without being typed as such, parameters passed without a declaration. Lower, never raise.
-    expect(unset.game).toBeLessThanOrEqual(31);
-    expect(unset.extensions).toBeLessThanOrEqual(28);
+    expect(unsetInGameAiScripts.sort()).toEqual(knownGameUnsetReads);
+    // On vanilla 9.00 with its DLCs and on the mods; lower, never raise. What is left in Mission Director
+    // scripts of the game is mostly real: reads of variables only a commented-out block sets, a case typo
+    // (`$feedbackvalue`), a `do_all` without its `counter`, the include of a library that does not exist.
+    // The extensions: parameters passed to an AI script that it never declares, and some typos.
+    expect(unset.md.game).toBeLessThanOrEqual(213);
+    expect(unset.aiscripts.extensions).toBeLessThanOrEqual(27);
+    expect(unset.md.extensions).toBeLessThanOrEqual(9);
   });
 
   it('indexes what interrupt library items set', () => {
