@@ -70,7 +70,8 @@ describe.skipIf(!extracted)('variables on the vanilla corpus', () => {
     expect(variables).toBeGreaterThan(20000);
     expect(occurrences).toBeGreaterThan(150000);
     expect(collectTime).toBeLessThan(15000);
-    // 1541 on vanilla 9.00: lower it when the model learns to see more, never raise it.
-    expect(undefinedReads).toBeLessThanOrEqual(1541);
+    // 1494 on vanilla 9.00 without the script index (1541 before reads inside interrupt libraries were
+    // left to the scripts that use them): lower it when the model learns to see more, never raise it.
+    expect(undefinedReads).toBeLessThanOrEqual(1494);
   }, 120_000);
 });

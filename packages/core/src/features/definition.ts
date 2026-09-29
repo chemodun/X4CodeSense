@@ -68,7 +68,7 @@ export function definitionAt(analysis: DocumentAnalysis, offset: number, game: G
   }
   const variable = variableAt(analysis, offset);
   if (variable) {
-    return variableDefinitions(variable.variable, analysis.document);
+    return variableDefinitions(variable.variable, analysis.document, game?.index);
   }
   const named = namedItemAt(analysis, offset);
   if (named) {

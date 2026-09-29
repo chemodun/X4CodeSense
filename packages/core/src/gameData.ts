@@ -75,7 +75,7 @@ export function loadGameData(unpackedFolder: string, options: GameDataOptions = 
     data.properties = properties;
   }
   if (options.index) {
-    data.index = loadScriptIndex(unpackedFolder, options.extensionFolders);
+    data.index = loadScriptIndex(unpackedFolder, options.extensionFolders, schemas);
   }
   return data;
 }

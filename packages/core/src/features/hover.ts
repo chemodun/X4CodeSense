@@ -90,7 +90,7 @@ export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameDa
   }
   const variable = variableAt(analysis, offset);
   if (variable) {
-    return hover(analysis, describeVariable(variable.variable, analysis.document), variable.occurrence.start, variable.occurrence.end);
+    return hover(analysis, describeVariable(variable.variable, analysis.document, game?.index), variable.occurrence.start, variable.occurrence.end);
   }
   const named = namedItemAt(analysis, offset);
   if (named) {

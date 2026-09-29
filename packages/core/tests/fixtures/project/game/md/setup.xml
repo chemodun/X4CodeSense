@@ -3,6 +3,9 @@
 <mdscript name="Setup">
   <cues>
     <cue name="Start" instantiate="true" namespace="this">
+      <actions>
+        <set_value name="$started" exact="true" />
+      </actions>
       <cues>
         <cue name="Inner" />
       </cues>

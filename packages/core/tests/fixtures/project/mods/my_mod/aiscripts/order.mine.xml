@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Test script for X4CodeSense: uses the game's interrupt library. -->
+<!-- Test script for X4CodeSense: uses the game's interrupt library and the variables its items set. -->
 <aiscript name="order.mine">
   <params>
     <param name="target" />
@@ -10,6 +10,7 @@
   <attention min="unknown">
     <actions>
       <include_interrupt_actions ref="CheckTarget" />
+      <set_value name="$result" exact="$checked or $invalid or $nowhere" />
     </actions>
   </attention>
 </aiscript>

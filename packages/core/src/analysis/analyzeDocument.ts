@@ -137,7 +137,7 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     let variables: DocumentVariables | undefined;
     Object.defineProperty(analysis, 'variables', {
       enumerable: true,
-      get: () => (variables ??= collectVariables(analysis, scriptSchema, schema, context.properties)),
+      get: () => (variables ??= collectVariables(analysis, scriptSchema, schema, context.properties, context.index)),
     });
     if (context.validateVariables ?? false) {
       analysis.diagnostics.push(...validateVariables(analysis.variables as DocumentVariables, document, diagnosticSource));

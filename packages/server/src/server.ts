@@ -26,6 +26,7 @@ import {
   languageOfTextFile,
   loadGameData,
   loadTexts,
+  parseXml,
   prepareRenameAt,
   referencesAt,
   renameAt,
@@ -234,7 +235,7 @@ async function refreshIndex(): Promise<void> {
   const target = game;
   const current = (): boolean => generation === indexGeneration && target === game;
   const started = performance.now();
-  const index = new ScriptIndex();
+  const index = new ScriptIndex(target.schemas);
   for (const folder of folders) {
     index.addFolder(folder.folder, folder.source);
   }
@@ -275,7 +276,8 @@ function indexOpenDocument(document: TextDocument, index: ScriptIndex, structure
   if (!file || !source) {
     return false;
   }
-  return structure ? index.setStructure(file, document.getText(), structure, source) : index.setText(file, document.getText(), source);
+  const text = document.getText();
+  return index.setStructure(file, text, structure ?? parseXml(text), source, true);
 }
 
 /** Reads a file of the index or the texts again from disk, or forgets it; returns true when that changed something. */

@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Test script for X4CodeSense: an interrupt library other AI scripts refer to. -->
+<!-- Test script for X4CodeSense: an interrupt library other AI scripts refer to; its items set variables for them. -->
 <aiscript name="lib.target">
   <interrupts>
     <library>
-      <actions name="CheckTarget" />
-      <handler name="TargetInvalidHandler" />
+      <actions name="CheckTarget">
+        <set_value name="$checked" exact="$target" />
+      </actions>
+      <handler name="TargetInvalidHandler">
+        <actions>
+          <set_value name="$invalid" exact="true" />
+        </actions>
+      </handler>
       <conditions name="TargetConditions" />
     </library>
   </interrupts>

@@ -5,7 +5,8 @@ import { analyzeText, completionAt, definitionAt, hoverAt, inlineCode, loadGameD
 
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
 const project = fileURLToPath(new URL('./fixtures/project', import.meta.url));
-const game: GameData = { ...loadGameData(unpacked), index: loadScriptIndex(path.join(project, 'game'), [path.join(project, 'mods')]) };
+const base = loadGameData(unpacked);
+const game: GameData = { ...base, index: loadScriptIndex(path.join(project, 'game'), [path.join(project, 'mods')], base.schemas) };
 
 /** Analyses a text with a `|` marker for the caret. */
 function at(marked: string): { analysis: DocumentAnalysis; offset: number } {
@@ -67,6 +68,26 @@ describe('md.Script.Cue', () => {
   });
 });
 
+describe('variables set in other scripts', () => {
+  const uses = (read: string): string =>
+    ai('<handler ref="TargetInvalidHandler"/>', `<include_interrupt_actions ref="CheckTarget"/>\n      <set_value name="$r" exact="${read}"/>`);
+
+  it('shows, opens and completes what an interrupt library item sets', () => {
+    const text = hoverText(uses('$check|ed'));
+    expect(text).toContain('Set in another file');
+    expect(text).toContain('Set by interrupt actions CheckTarget in lib.target.xml, line 7');
+    expect(definitions(uses('$check|ed'))).toEqual(['lib.target.xml:7']);
+    expect(labels(uses('$|'))).toEqual(['$checked', '$invalid', '$r']);
+  });
+
+  it('shows, opens and completes the variables of a cue in another script', () => {
+    expect(labels(md('<set_value name="$x" exact="md.Setup.Start.$|"/>'))).toEqual(['$started']);
+    expect(hoverText(md('<set_value name="$x" exact="md.Setup.Start.$star|ted"/>'))).toContain('Set by cue Start of Setup in setup.xml, line 7');
+    expect(definitions(md('<set_value name="$x" exact="md.Setup.Start.$star|ted"/>'))).toEqual(['setup.xml:7']);
+    expect(hoverText(md('<set_value name="$x" exact="md.Setup.Start.$miss|ing"/>'))).toContain('Never set here');
+  });
+});
+
 describe('inline code in hovers', () => {
   it('keeps names as they are, underscores and backticks included', () => {
     expect(inlineCode('run_actions')).toBe('`run_actions`');
@@ -80,8 +101,8 @@ describe('interrupt library items of other scripts', () => {
     const handler = hoverText(ai('<handler ref="TargetInv|alidHandler"/>'));
     expect(handler).toContain('**TargetInvalidHandler** *(interrupt handler)*');
     expect(handler).toContain('Defined in another script');
-    expect(handler).toContain('In lib.target.xml of `game`, line 7 (script `lib.target`)');
-    expect(definitions(ai('<handler ref="TargetInv|alidHandler"/>'))).toEqual(['lib.target.xml:7']);
+    expect(handler).toContain('In lib.target.xml of `game`, line 9 (script `lib.target`)');
+    expect(definitions(ai('<handler ref="TargetInv|alidHandler"/>'))).toEqual(['lib.target.xml:9']);
     expect(hoverText(ai('<handler ref="Miss|ing"/>'))).toContain('Not defined in any known script');
   });
 

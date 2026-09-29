@@ -11,8 +11,14 @@
  *
  * A definition is an lvalue attribute whose whole value is the variable (`<set_value name="$x">`), or
  * a `<param name="x">` of a script or library. `<remove_value name="$x">` removes.
+ *
+ * AI scripts share interrupt library items (`<interrupts><library>` actions, handlers, conditions) by
+ * name. An item runs in the script that uses it: what it sets counts as set in that script, which the
+ * script index tells when the item is in another file; and what it reads is the using script's to set,
+ * so those reads are external to the item's own script.
  */
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
+import type { IndexedPosition, ScriptIndex } from '../project/scriptIndex';
 import { isChainNode, stepsOf } from '../expressions/astChain';
 import { parsedValue } from '../expressions/attributeExpression';
 import type { Expression } from '../expressions/parser';
@@ -51,9 +57,18 @@ export interface VariableOccurrence {
   kind: OccurrenceKind;
   /** True when a missing variable does not fail here: under `@`, or tested with `?`. */
   guarded: boolean;
+  /** True inside an interrupt library item of an AI script: it runs in the scripts that use it, which set what it reads. */
+  external: boolean;
   element: XmlElement;
   attribute: XmlAttribute;
   table: VariableTable;
+}
+
+/** A definition in another file: a variable set by an interrupt library item the script uses. */
+export interface ElsewhereDefinition {
+  position: IndexedPosition;
+  /** What sets it, such as `interrupt actions CheckTarget`. */
+  via: string;
 }
 
 export interface ScriptVariable {
@@ -62,9 +77,14 @@ export interface ScriptVariable {
   definitions: VariableOccurrence[];
   references: VariableOccurrence[];
   removals: VariableOccurrence[];
+  /** Definitions in other files, known from the script index. */
+  elsewhere: ElsewhereDefinition[];
   /** Datatype names the definitions give the variable, when they could be told. */
   types: Set<string>;
 }
+
+/** What the collector needs of an analysis: the scanned structure and the resolved declarations, which may be empty. */
+export type VariableSource = Pick<DocumentAnalysis, 'structure' | 'declarations'>;
 
 export interface DocumentVariables {
   tables: VariableTable[];
@@ -119,7 +139,7 @@ class Collector {
   private readonly scriptTable: VariableTable;
 
   constructor(
-    private readonly analysis: DocumentAnalysis,
+    private readonly analysis: VariableSource,
     private readonly schema: ScriptSchema,
     private readonly xsd: XsdSchema | undefined,
     private readonly properties: ScriptProperties | undefined
@@ -294,9 +314,9 @@ class Collector {
     }
   }
 
-  /** True when the variable is set in its table or in a table linked to it. */
+  /** True when the variable is set in its table, in a table linked to it, or by a library item of another file. */
   isDefined(variable: ScriptVariable): boolean {
-    if (variable.definitions.length > 0) {
+    if (variable.definitions.length > 0 || variable.elsewhere.length > 0) {
       return true;
     }
     const seen = new Set<VariableTable>([variable.table]);
@@ -352,20 +372,71 @@ class Collector {
     element: XmlElement,
     attribute: XmlAttribute
   ): VariableOccurrence {
-    const occurrence: VariableOccurrence = { name, start, end, kind, guarded, element, attribute, table };
+    const external = this.schema === 'aiscripts' && this.inInterruptLibrary(element);
+    const occurrence: VariableOccurrence = { name, start, end, kind, guarded, external, element, attribute, table };
     const variable = this.variableOf(occurrence);
     (kind === 'definition' ? variable.definitions : kind === 'removal' ? variable.removals : variable.references).push(occurrence);
     this.occurrences.push(occurrence);
     return occurrence;
   }
 
-  variableOf(occurrence: VariableOccurrence): ScriptVariable {
+  private inInterruptLibrary(element: XmlElement): boolean {
+    for (let current = element.parent; current; current = current.parent) {
+      if (current.name === 'library' && current.parent?.name === 'interrupts') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  variableOf(occurrence: Pick<VariableOccurrence, 'name' | 'table'>): ScriptVariable {
     let variable = occurrence.table.variables.get(occurrence.name);
     if (!variable) {
-      variable = { name: occurrence.name, table: occurrence.table, definitions: [], references: [], removals: [], types: new Set() };
+      variable = { name: occurrence.name, table: occurrence.table, definitions: [], references: [], removals: [], elsewhere: [], types: new Set() };
       occurrence.table.variables.set(occurrence.name, variable);
     }
     return variable;
+  }
+
+  /**
+   * The variables that interrupt library items of other files set, for the items an AI script uses:
+   * `include_interrupt_actions ref`, `<handler ref>`, and a handler's `actions` and `conditions ref`.
+   * Items of the script itself are in its own table already.
+   */
+  addLibraryDefinitions(index: ScriptIndex): void {
+    if (this.schema !== 'aiscripts') {
+      return;
+    }
+    const root = this.analysis.structure?.roots[0];
+    const scriptName = root ? attributeNamed(root, 'name')?.value : undefined;
+    for (const element of this.analysis.structure?.elements ?? []) {
+      const ref = attributeNamed(element, 'ref')?.value.trim();
+      if (!ref) {
+        continue;
+      }
+      const kind =
+        element.name === 'include_interrupt_actions'
+          ? 'actions'
+          : element.name === 'handler' && element.parent?.name === 'interrupts'
+            ? 'handler'
+            : (element.name === 'actions' || element.name === 'conditions') && element.parent?.name === 'handler'
+              ? element.name
+              : undefined;
+      if (!kind) {
+        continue;
+      }
+      for (const item of index.libraryItems(kind, ref)) {
+        if (item.script === scriptName && !item.patch) {
+          continue;
+        }
+        for (const set of item.variables) {
+          const variable = this.variableOf({ name: set.name, table: this.scriptTable });
+          if (!variable.elsewhere.some((known) => known.position.file === set.position.file && known.position.line === set.position.line)) {
+            variable.elsewhere.push({ position: set.position, via: `interrupt ${kind} ${item.name}` });
+          }
+        }
+      }
+    }
   }
 
   private collectAttribute(element: XmlElement, attribute: XmlAttribute, lvalue: boolean): void {
@@ -527,15 +598,19 @@ class Collector {
   }
 }
 
-/** Collects the variables of an analysed script document. */
+/** Collects the variables of an analysed script document; with the script index, those that library items of other files set as well. */
 export function collectVariables(
-  analysis: DocumentAnalysis,
+  analysis: VariableSource,
   schema: ScriptSchema,
   xsd: XsdSchema | undefined,
-  properties: ScriptProperties | undefined
+  properties: ScriptProperties | undefined,
+  index?: ScriptIndex
 ): DocumentVariables {
   const collector = new Collector(analysis, schema, xsd, properties);
   collector.collect();
+  if (index) {
+    collector.addLibraryDefinitions(index);
+  }
   return {
     tables: collector.tables,
     occurrences: collector.occurrences,

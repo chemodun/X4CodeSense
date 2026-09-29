@@ -48,20 +48,36 @@ describe.skipIf(!extracted)('script index on the corpus', { timeout: 300_000 }, 
     expect(index).toBeDefined();
     const found: string[] = [];
     const inExtensions: string[] = [];
+    // Unset variable reads of AI scripts, with what library items of other files set counted.
+    const unset = { game: 0, extensions: 0 };
     for (const entry of index?.entries() ?? []) {
       if (entry.kind !== 'script') {
         continue;
       }
-      const analysis = analyzeText(readFileSync(entry.file, 'utf8'), { schemas: game.schemas, properties: game.properties, index });
+      const fromGame = entry.source === 'game' || entry.source.startsWith('ego_dlc');
+      const analysis = analyzeText(readFileSync(entry.file, 'utf8'), { schemas: game.schemas, properties: game.properties, index, validateVariables: true });
       for (const diagnostic of analysis.diagnostics) {
         const remote = diagnostic.code === 'cue-undefined' && /is known|has no cue/.test(diagnostic.message);
         if (diagnostic.code === 'library-undefined' || remote) {
           const line = `${diagnostic.code}: ${diagnostic.message} (${path.basename(entry.file)})`;
-          (entry.source === 'game' || entry.source.startsWith('ego_dlc') ? found : inExtensions).push(line);
+          (fromGame ? found : inExtensions).push(line);
+        } else if (diagnostic.code === 'variable-undefined' && entry.schema === 'aiscripts') {
+          unset[fromGame ? 'game' : 'extensions']++;
         }
       }
     }
+    console.log(`unset variable reads of AI scripts with the index: game ${unset.game}, extensions ${unset.extensions}`);
     expect(found.sort()).toEqual(knownGameFindings);
     expect(inExtensions).toEqual([]);
+    // 31 and 28 on vanilla 9.00 and the mods (202 and 148 without the index): typos, attributes that
+    // write without being typed as such, parameters passed without a declaration. Lower, never raise.
+    expect(unset.game).toBeLessThanOrEqual(31);
+    expect(unset.extensions).toBeLessThanOrEqual(28);
+  });
+
+  it('indexes what interrupt library items set', () => {
+    const game = loadGameData(root, { extensionFolders: folders, index: true });
+    const items = [...(game.index?.entries() ?? [])].flatMap((entry) => entry.libraryItems);
+    expect(items.filter((item) => item.variables.length > 0).length).toBeGreaterThan(100);
   });
 });

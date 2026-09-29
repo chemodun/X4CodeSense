@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { analyzeText, loadGameData, loadScriptIndex, ScriptIndex } from '../src';
+import { analyzeText, loadGameData, loadScriptIndex, parseXml, ScriptIndex } from '../src';
 
 const project = fileURLToPath(new URL('./fixtures/project', import.meta.url));
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
@@ -38,7 +38,7 @@ describe('script index', () => {
   });
 
   it('knows the interrupt library items of AI scripts', () => {
-    expect(index.libraryItems('handler', 'TargetInvalidHandler')[0]).toMatchObject({ script: 'lib.target', position: { line: 6, character: 6 } });
+    expect(index.libraryItems('handler', 'TargetInvalidHandler')[0]).toMatchObject({ script: 'lib.target', position: { line: 8, character: 6 } });
     expect(index.libraryItemNames('actions')).toEqual(['CheckTarget']);
     expect(index.libraryItemNames('conditions')).toEqual(['TargetConditions']);
     expect(index.libraryItems('handler', 'Nowhere')).toEqual([]);
@@ -65,6 +65,59 @@ describe('script index', () => {
     expect(copy.scriptNames('md')).toContain('Half');
     expect(copy.setText(path.join(project, 'wares.xml'), '<wares/>', 'x')).toBe(false);
     expect(new ScriptIndex().size).toBe(0);
+  });
+});
+
+describe('variables across scripts', () => {
+  const game = loadGameData(unpacked);
+  const withVariables = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+  const order = path.join(modsFolder, 'my_mod', 'aiscripts', 'order.mine.xml');
+  const library = path.join(gameFolder, 'aiscripts', 'lib.target.xml');
+  const analyse = (file: string, withIndex = true) =>
+    analyzeText(readFileSync(file, 'utf8'), {
+      schemas: game.schemas,
+      properties: game.properties,
+      validateVariables: true,
+      ...(withIndex ? { index: withVariables } : {}),
+    });
+  const unset = (file: string, withIndex = true): string[] =>
+    analyse(file, withIndex)
+      .diagnostics.filter((diagnostic) => diagnostic.code === 'variable-undefined')
+      .map((diagnostic) => diagnostic.message);
+
+  it('indexes the variables interrupt library items set, with the schemas', () => {
+    expect(withVariables.libraryItems('actions', 'CheckTarget')[0].variables).toEqual([
+      { name: 'checked', position: { file: library, line: 6, character: 25 } },
+    ]);
+    expect(withVariables.libraryItems('handler', 'TargetInvalidHandler')[0].variables.map((variable) => variable.name)).toEqual(['invalid']);
+    expect(index.libraryItems('actions', 'CheckTarget')[0].variables).toEqual([]);
+  });
+
+  it('counts what the library items a script uses set, and leaves library reads to the scripts that use them', () => {
+    expect(unset(order)).toEqual(["Variable '$nowhere' is never set in this script"]);
+    expect(unset(order, false)).toEqual([
+      "Variable '$checked' is never set in this script",
+      "Variable '$invalid' is never set in this script",
+      "Variable '$nowhere' is never set in this script",
+    ]);
+    // `$target` read inside CheckTarget is set by the scripts that include it.
+    expect(unset(library, false)).toEqual([]);
+    const checked = analyse(order).variables?.tables[0].variables.get('checked');
+    expect(checked?.elsewhere).toEqual([{ position: { file: library, line: 6, character: 25 }, via: 'interrupt actions CheckTarget' }]);
+  });
+
+  it('works out the variables of a cue in another script when asked, from the editor when it holds the file', () => {
+    expect(withVariables.cueVariables('Setup', 'Start').map((variable) => `${variable.name}:${variable.position.line + 1}`)).toEqual(['started:7']);
+    expect(withVariables.cueVariables('Setup', 'Inner')).toEqual([]);
+    expect(withVariables.cueVariables('Nobody', 'Start')).toEqual([]);
+    expect(index.cueVariables('Setup', 'Start')).toEqual([]);
+    const copy = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const setup = path.join(gameFolder, 'md', 'setup.xml');
+    const edited = readFileSync(setup, 'utf8').replace('$started', '$begun');
+    copy.setStructure(setup, edited, parseXml(edited), 'game', true);
+    expect(copy.cueVariables('Setup', 'Start').map((variable) => variable.name)).toEqual(['begun']);
+    copy.setText(setup, readFileSync(setup, 'utf8'), 'game');
+    expect(copy.cueVariables('Setup', 'Start').map((variable) => variable.name)).toEqual(['started']);
   });
 });
 

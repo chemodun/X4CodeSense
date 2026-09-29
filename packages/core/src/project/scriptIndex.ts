@@ -10,12 +10,20 @@
  *
  * Several definitions of a name are all kept, in load order: the game first, then the extensions in
  * the order `findExtensions` gives.
+ *
+ * Variables: an interrupt library item runs in the script that uses it, so the variables it sets are
+ * set for that script; with the schemas at hand they are indexed with the item. The variables of a cue
+ * (`md.<Script>.<Cue>.$x`) are worked out for a script file when first asked for, since doing so for
+ * every file would triple the time to build the index.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { findExtensions } from '../extensions/extensions';
 import type { ScriptSchema } from '../types';
+import { collectVariables, type DocumentVariables } from '../variables/variables';
 import { attributeNamed, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
+import type { SchemaSet } from '../xsd/loadSchemas';
+import type { XsdSchema } from '../xsd/schema';
 
 /** Where something is defined: a file and a zero-based position. */
 export interface IndexedPosition {
@@ -44,6 +52,12 @@ export interface IndexedCue {
 
 export type IndexedLibraryKind = 'actions' | 'handler' | 'conditions';
 
+/** A variable that something sets, with where it is set first. */
+export interface IndexedVariable {
+  name: string;
+  position: IndexedPosition;
+}
+
 export interface IndexedLibraryItem {
   kind: IndexedLibraryKind;
   name: string;
@@ -51,6 +65,8 @@ export interface IndexedLibraryItem {
   script: string;
   position: IndexedPosition;
   patch?: string;
+  /** Variables it sets, which count as set in the script that uses it; empty when indexed without the schemas. */
+  variables: IndexedVariable[];
 }
 
 export interface IndexedScript {
@@ -126,8 +142,44 @@ function schemaOfFolder(file: string): ScriptSchema | undefined {
   return folder === 'md' ? 'md' : folder === 'aiscripts' ? 'aiscripts' : undefined;
 }
 
-/** What a file contributes to the index, from its scanned structure; undefined for anything but a script or a script patch. */
-export function indexStructure(file: string, text: string, structure: XmlStructure, source: string): IndexedFile | undefined {
+/** The variables of a scanned script, with declarations taken from the schema by element name: no validation pass is needed. */
+function variablesOf(structure: XmlStructure, schema: ScriptSchema, xsd: XsdSchema): DocumentVariables {
+  return collectVariables({ structure, declarations: new Map() }, schema, xsd, undefined);
+}
+
+/** The variables each interrupt library item sets, by the item's start tag. */
+function libraryItemVariables(file: string, text: string, structure: XmlStructure, xsd: XsdSchema): Map<XmlElement, IndexedVariable[]> {
+  const result = new Map<XmlElement, IndexedVariable[]>();
+  const position = positionCounter(text);
+  const variables = variablesOf(structure, 'aiscripts', xsd);
+  for (const occurrence of variables.occurrences) {
+    if (occurrence.kind !== 'definition') {
+      continue;
+    }
+    let item: XmlElement | undefined;
+    for (let current: XmlElement | undefined = occurrence.element; current; current = current.parent) {
+      if (libraryKinds.has(current.name) && current.parent?.name === 'library' && current.parent.parent?.name === 'interrupts') {
+        item = current;
+        break;
+      }
+    }
+    if (!item) {
+      continue;
+    }
+    const list = result.get(item) ?? [];
+    if (!list.some((variable) => variable.name === occurrence.name)) {
+      list.push({ name: occurrence.name, position: { file, ...position(occurrence.start) } });
+    }
+    result.set(item, list);
+  }
+  return result;
+}
+
+/**
+ * What a file contributes to the index, from its scanned structure; undefined for anything but a script
+ * or a script patch. With the AI script schema, the variables of interrupt library items are indexed too.
+ */
+export function indexStructure(file: string, text: string, structure: XmlStructure, source: string, xsd?: XsdSchema): IndexedFile | undefined {
   const root = structure.roots[0];
   if (!root) {
     return undefined;
@@ -143,6 +195,15 @@ export function indexStructure(file: string, text: string, structure: XmlStructu
   const cues: IndexedCue[] = [];
   const libraryItems: IndexedLibraryItem[] = [];
   const params: string[] = [];
+  let itemVariables: Map<XmlElement, IndexedVariable[]> | undefined;
+  const itemsWithElements: [IndexedLibraryItem, XmlElement][] = [];
+  const variablesOfItem = (element: XmlElement): IndexedVariable[] => {
+    if (!xsd) {
+      return [];
+    }
+    itemVariables ??= libraryItemVariables(file, text, structure, xsd);
+    return itemVariables.get(element) ?? [];
+  };
   // In a patch only what `add` and `replace` bring counts.
   const counts = (element: XmlElement): boolean => {
     if (!patch) {
@@ -195,7 +256,8 @@ export function indexStructure(file: string, text: string, structure: XmlStructu
     } else if (schema === 'aiscripts' && libraryKinds.has(element.name) && element.parent?.name === 'library' && element.parent.parent?.name === 'interrupts') {
       const name = nameOf(element);
       if (name) {
-        const item: IndexedLibraryItem = { kind: element.name as IndexedLibraryKind, name, script: scriptName, position: at(element) };
+        const item: IndexedLibraryItem = { kind: element.name as IndexedLibraryKind, name, script: scriptName, position: at(element), variables: [] };
+        itemsWithElements.push([item, element]);
         if (patch) {
           item.patch = file;
         }
@@ -204,6 +266,10 @@ export function indexStructure(file: string, text: string, structure: XmlStructu
     } else if (schema === 'aiscripts' && !patch && element.name === 'params') {
       params.push(...paramNames(element.children));
     }
+  }
+  // After the scan: the positions of variables are counted in a pass of their own.
+  for (const [item, element] of itemsWithElements) {
+    item.variables = variablesOfItem(element);
   }
   if (patch) {
     return { kind: 'patch', file, source, schema, cues, libraryItems };
@@ -217,7 +283,7 @@ function signatureOf(entry: IndexedFile | undefined): string {
     return '';
   }
   const cues = entry.cues.map((cue) => `${cue.kind}:${cue.name}:${cue.params.join(',')}`).join(';');
-  const items = entry.libraryItems.map((item) => `${item.kind}:${item.name}`).join(';');
+  const items = entry.libraryItems.map((item) => `${item.kind}:${item.name}:${item.variables.map((variable) => variable.name).join(',')}`).join(';');
   return entry.kind === 'script' ? `${entry.schema}|${entry.name}|${cues}|${items}|${entry.params.join(',')}` : `${entry.schema}|patch|${cues}|${items}`;
 }
 
@@ -231,34 +297,103 @@ export class ScriptIndex {
   private readonly files = new Map<string, IndexedFile>();
   /** Script folders read by `loadScriptIndex`, with the source of each. */
   private readonly folders = new Map<string, string>();
+  /** Texts of files an editor holds, which may differ from the disk. */
+  private readonly texts = new Map<string, string>();
+  /** Variables of script files with a way to tell positions, worked out when first asked for. */
+  private readonly variables = new Map<
+    string,
+    { variables: DocumentVariables; position: (offset: number) => { line: number; character: number } } | undefined
+  >();
   private lookups: Lookups | undefined;
+
+  /** With the schemas, variables are indexed as well. */
+  constructor(private readonly schemas?: SchemaSet) {}
 
   /** Indexes a file from its text; returns true when what other scripts see of it changed. */
   setText(file: string, text: string, source: string): boolean {
     return this.setStructure(file, text, parseXml(text), source);
   }
 
-  /** Indexes a file from its already scanned structure; returns true when what other scripts see of it changed. */
-  setStructure(file: string, text: string, structure: XmlStructure, source: string): boolean {
+  /**
+   * Indexes a file from its already scanned structure; returns true when what other scripts see of it
+   * changed. `fromEditor` keeps the text, so questions about the file are answered from it and not from
+   * the disk.
+   */
+  setStructure(file: string, text: string, structure: XmlStructure, source: string, fromEditor = false): boolean {
     const key = keyOf(file);
     const before = signatureOf(this.files.get(key));
-    const entry = indexStructure(file, text, structure, source);
+    const entry = indexStructure(file, text, structure, source, this.schemas?.schemas.aiscripts);
     if (entry) {
       this.files.set(key, entry);
     } else {
       this.files.delete(key);
     }
+    if (fromEditor) {
+      this.texts.set(key, text);
+    } else {
+      this.texts.delete(key);
+    }
+    this.variables.delete(key);
     this.lookups = undefined;
     return signatureOf(entry) !== before;
   }
 
   /** Forgets a file; returns true when it was indexed. */
   removeFile(file: string): boolean {
-    const removed = this.files.delete(keyOf(file));
+    const key = keyOf(file);
+    const removed = this.files.delete(key);
+    this.texts.delete(key);
+    this.variables.delete(key);
     if (removed) {
       this.lookups = undefined;
     }
     return removed;
+  }
+
+  /** The variables of an indexed script, from the editor's text or the disk; undefined without the schemas or the file. */
+  private variablesOfScript(
+    script: IndexedScript
+  ): { variables: DocumentVariables; position: (offset: number) => { line: number; character: number } } | undefined {
+    const key = keyOf(script.file);
+    if (!this.variables.has(key)) {
+      const xsd = this.schemas?.schemas[script.schema];
+      let text = this.texts.get(key);
+      if (text === undefined && xsd) {
+        try {
+          text = readFileSync(script.file, 'utf8');
+        } catch {
+          text = undefined;
+        }
+      }
+      this.variables.set(
+        key,
+        xsd && text !== undefined ? { variables: variablesOf(parseXml(text), script.schema, xsd), position: positionCounter(text) } : undefined
+      );
+    }
+    return this.variables.get(key);
+  }
+
+  /**
+   * The variables a cue of a Mission Director script has in its own table (`md.<Script>.<Cue>.$x`),
+   * each with where it is set first; for every script of that name.
+   */
+  cueVariables(scriptName: string, cueName: string): IndexedVariable[] {
+    const found: IndexedVariable[] = [];
+    for (const script of this.scripts('md', scriptName)) {
+      const known = this.variablesOfScript(script);
+      const table = known?.variables.tables.find((candidate) => (candidate.kind === 'cue' || candidate.kind === 'library') && candidate.name === cueName);
+      if (!known || !table) {
+        continue;
+      }
+      const position = known.position;
+      for (const variable of table.variables.values()) {
+        const first = variable.definitions[0];
+        if (first && !found.some((known) => known.name === variable.name)) {
+          found.push({ name: variable.name, position: { file: script.file, ...position(first.start) } });
+        }
+      }
+    }
+    return found.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   hasFile(file: string): boolean {
@@ -390,8 +525,8 @@ export function scriptFiles(folders: readonly { folder: string; source: string }
 }
 
 /** Indexes the scripts of the game and of extension folders at once. Unreadable files are left out. */
-export function loadScriptIndex(gameFolder: string | undefined, extensionFolders: readonly string[] = []): ScriptIndex {
-  const index = new ScriptIndex();
+export function loadScriptIndex(gameFolder: string | undefined, extensionFolders: readonly string[] = [], schemas?: SchemaSet): ScriptIndex {
+  const index = new ScriptIndex(schemas);
   const folders = scriptFolders(gameFolder, extensionFolders);
   for (const folder of folders) {
     index.addFolder(folder.folder, folder.source);

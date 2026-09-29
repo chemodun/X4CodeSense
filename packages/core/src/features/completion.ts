@@ -291,7 +291,7 @@ class Completer {
     }
     if (table) {
       const range = this.range(offsetInValue(attribute, token.start), offsetInValue(attribute, token.end));
-      for (const item of variableCompletionItems(variables, table, this.analysis.document, range, expression.slice(token.start, index))) {
+      for (const item of variableCompletionItems(variables, table, this.analysis.document, range, expression.slice(token.start, index), this.game?.index)) {
         this.add(item);
       }
     }
