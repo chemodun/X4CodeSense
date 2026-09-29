@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test extension for X4CodeSense: loads after both others and patches the game's script and base_mod's. -->
+<content id="late_mod" name="Late Mod" version="100">
+  <dependency id="early_mod" />
+  <dependency id="ws_12345" />
+</content>

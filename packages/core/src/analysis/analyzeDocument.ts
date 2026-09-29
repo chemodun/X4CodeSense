@@ -16,6 +16,8 @@ import type { ScriptIndex } from '../project/scriptIndex';
 import { validateMdReferences } from '../project/validateMdReferences';
 import type { TextDatabase } from '../texts/textDatabase';
 import { validateTexts } from '../texts/validateTexts';
+import type { PatchAnalysis } from '../patches/patchAnalysis';
+import { validatePatch } from '../patches/validatePatch';
 
 /** `source` of every diagnostic this library produces. */
 export const diagnosticSource = 'X4CodeSense';
@@ -88,6 +90,8 @@ export interface DocumentAnalysis {
   readonly variables?: DocumentVariables;
   /** Labels, cues and interrupt library items with their references; present for scripts analysed with schemas. */
   readonly names?: DocumentNames;
+  /** For a patch document analysed with the index: the patch applied to the file it changes. */
+  patch?: PatchAnalysis;
   /** Diagnostics in document order of discovery. */
   diagnostics: Diagnostic[];
 }
@@ -95,7 +99,8 @@ export interface DocumentAnalysis {
 /**
  * Analyses one document: classifies it, and for scripts and patches scans the XML structure and reports
  * well-formedness problems as diagnostics. Scripts are then validated against their schema when one is
- * available. Other XML documents get no diagnostics, so other XML tooling stays in charge of them.
+ * available; patches against `diff.xsd`, and with the index against the file they change. Other XML
+ * documents get no diagnostics, so other XML tooling stays in charge of them.
  */
 export function analyzeDocument(document: TextDocument, context: AnalysisContext = {}): DocumentAnalysis {
   const text = document.getText();
@@ -114,6 +119,19 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
       code: problem.code,
       source: diagnosticSource,
     });
+  }
+  if (detection.isDiff) {
+    const validation = validatePatch(document, structure, {
+      ...(context.schemas ? { schemas: context.schemas } : {}),
+      ...(context.index ? { index: context.index } : {}),
+      source: diagnosticSource,
+    });
+    analysis.declarations = validation.declarations;
+    analysis.diagnostics.push(...validation.diagnostics);
+    if (validation.patch) {
+      analysis.patch = validation.patch;
+    }
+    return analysis;
   }
   const schema = detection.script && context.schemas?.schemas[detection.script.schema];
   if (detection.script && schema) {

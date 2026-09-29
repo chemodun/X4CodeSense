@@ -38,7 +38,9 @@ interface Options {
 const usage = `Usage: x4-script-check [options] [folder...]
 
 Checks every *.xml file in the md and aiscripts folders found directly under each given folder
-(default: the current folder) and one level deeper.
+(default: the current folder) and one level deeper, and in the extensions/<folder>/md and
+.../aiscripts folders there, which hold patches of other extensions. With --unpacked, a patch is
+applied to the file it changes: the game's, or the named extension's.
 
 Options:
   --unpacked <folder>   extracted vanilla game files; enables validation against the game schemas
@@ -98,17 +100,24 @@ async function isDirectory(candidate: string): Promise<boolean> {
   }
 }
 
+async function subfolders(folder: string): Promise<string[]> {
+  try {
+    return (await readdir(folder, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => path.join(folder, entry.name));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Finds script folders under a root: `<root>/md`, `<root>/aiscripts` and the same one level deeper,
- * so a single extension and a folder full of extensions both work.
+ * so a single extension and a folder full of extensions both work; also the patches of other
+ * extensions an extension keeps in `extensions/<folder>/md` and `.../aiscripts`.
  */
 async function collectScriptFolders(root: string): Promise<ScriptFolder[]> {
   const result: ScriptFolder[] = [];
-  const candidates: string[] = [root];
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      candidates.push(path.join(root, entry.name));
-    }
+  const candidates: string[] = [root, ...(await subfolders(root))];
+  for (const candidate of [...candidates]) {
+    candidates.push(...(await subfolders(path.join(candidate, 'extensions'))));
   }
   for (const candidate of candidates) {
     for (const schema of scriptSchemas) {

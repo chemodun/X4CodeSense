@@ -239,7 +239,7 @@ async function refreshIndex(): Promise<void> {
   const started = performance.now();
   const index = new ScriptIndex(target.schemas);
   for (const folder of folders) {
-    index.addFolder(folder.folder, folder.source);
+    index.addFolder(folder);
   }
   const files = scriptFiles(folders);
   let slice = performance.now();
@@ -379,6 +379,7 @@ connection.onDidChangeWatchedFiles((params) => {
     }
     changed = rereadFromDisk(file) || changed;
     debug(`${change.uri}: ${change.type === FileChangeType.Deleted ? 'deleted' : 'changed'} on disk`);
+    reanalyzePatchesOf(file);
   }
   if (changed) {
     reanalyzeAll();
@@ -430,6 +431,22 @@ function analyze(document: TextDocument): void {
       : `not a script (root '${detection.rootElement ?? ''}')`;
   debug(`${document.uri}: ${description}, ${analysis.diagnostics.length} diagnostic(s), ${(performance.now() - started).toFixed(1)} ms`);
   void connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics: analysis.diagnostics });
+  const file = filePathOf(document.uri);
+  if (file) {
+    reanalyzePatchesOf(file, document.uri);
+  }
+}
+
+/** Analyses the open patch documents again that a file affects: it is their target, or a patch applied before them. */
+function reanalyzePatchesOf(file: string, except?: string): void {
+  const key = path.resolve(file).toLowerCase();
+  const affected = (candidate: string | undefined): boolean => candidate !== undefined && path.resolve(candidate).toLowerCase() === key;
+  for (const document of documents.all()) {
+    const patch = document.uri === except ? undefined : analysisByUri.get(document.uri)?.patch;
+    if (patch && (affected(patch.target.file) || patch.earlier.some(affected))) {
+      analyze(document);
+    }
+  }
 }
 
 documents.onDidChangeContent((event) => {
@@ -450,6 +467,8 @@ documents.onDidClose((event) => {
   const file = filePathOf(event.document.uri);
   if (file && rereadFromDisk(file)) {
     reanalyzeAll();
+  } else if (file) {
+    reanalyzePatchesOf(file);
   }
 });
 

@@ -581,3 +581,40 @@ describe('script index', () => {
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   });
 });
+
+describe('patches', () => {
+  it("checks a patch against the file it changes, and follows that file's edits", async () => {
+    const mods = path.join(workDir, 'patchmods');
+    const write = (file: string, text: string): string => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      return pathToFileURL(file).toString();
+    };
+    const apiText = '<mdscript name="Api">\n  <cues>\n    <cue name="Register"/>\n  </cues>\n</mdscript>\n';
+    const apiUri = write(path.join(mods, 'base', 'md', 'api.xml'), apiText);
+    write(path.join(mods, 'patcher', 'content.xml'), '<content id="patcher" name="Patcher" version="100"/>\n');
+    const patchText = `<diff>\n  <add sel="//cue[@name='Register']" type="@instantiate">true</add>\n</diff>\n`;
+    const patchUri = write(path.join(mods, 'patcher', 'extensions', 'base', 'md', 'api.xml'), patchText);
+    const workspace = { uri: pathToFileURL(mods).toString(), name: 'patchmods' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    expect(summarize(await open(patchUri, patchText))).toEqual([]);
+
+    // Renaming the cue in the editor leaves the patch's path without a match, before saving.
+    const unmatched = diagnosticsCount(patchUri, 1);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri: apiUri, languageId: 'xml', version: 1, text: apiText } });
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: apiUri, version: 2 },
+      contentChanges: [{ text: apiText.replace('Register', 'Enrol') }],
+    });
+    expect(summarize(await unmatched)).toEqual(['2:13 patch-no-match']);
+
+    // Closing without saving: the file on disk counts again.
+    const matched = diagnosticsCount(patchUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: apiUri } });
+    await matched;
+    const closed = diagnosticsCount(patchUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: patchUri } });
+    await closed;
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  });
+});

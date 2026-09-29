@@ -1,9 +1,10 @@
 /**
- * The XSD model of one script schema (`md` or `aiscripts`, with `common.xsd` merged in), built from the
- * schema texts with the core's own scanner. Only the subset of XML Schema the game uses is supported:
- * sequence, choice, all, group references, named complex types with extension, attribute groups, simple
- * types with restriction facets, unions and lists. Everything is compiled lazily and cached, so a schema
- * loads in milliseconds and only the parts a document touches get resolved.
+ * The XSD model of one schema (`md` or `aiscripts`, with `common.xsd` merged in, or `diff`), built from
+ * the schema texts with the core's own scanner. Only the subset of XML Schema the game uses is supported:
+ * sequence, choice, all, group references, `any` wildcards, named complex types with extension,
+ * attribute groups, simple types with restriction facets, unions and lists; entities a schema file
+ * declares in its own DOCTYPE are expanded in facet values. Everything is compiled lazily and cached, so a
+ * schema loads in milliseconds and only the parts a document touches get resolved.
  */
 import type { SourceLocation } from '../sourceLocation';
 import { attributeNamed, decodeAttributeValue, parseXml, type XmlElement } from '../xml/xmlStructure';
@@ -116,6 +117,62 @@ function childrenNamed(node: XmlElement, name: string): XmlElement[] {
 
 function firstChildNamed(node: XmlElement, ...names: string[]): XmlElement | undefined {
   return node.children.find((child) => names.includes(localName(child.name)));
+}
+
+/** The general entities a file declares in the internal subset of its DOCTYPE, by name. */
+function entitiesOf(text: string): Map<string, string> {
+  const entities = new Map<string, string>();
+  const doctype = /<!DOCTYPE[^[>]*\[([^]*?)\]\s*>/.exec(text);
+  if (!doctype) {
+    return entities;
+  }
+  for (const match of doctype[1].matchAll(/<!ENTITY\s+([\w.:-]+)\s+(?:"([^"]*)"|'([^']*)')\s*>/g)) {
+    entities.set(match[1], match[2] ?? match[3]);
+  }
+  return entities;
+}
+
+/** Replaces references to the given entities, their own references included; others stay as written. */
+function expandEntities(raw: string, entities: ReadonlyMap<string, string>, depth = 0): string {
+  return raw.replace(/&([\w.:-]+);/g, (reference, name: string) => {
+    const replacement = entities.get(name);
+    return replacement === undefined || depth > 16 ? reference : expandEntities(replacement, entities, depth + 1);
+  });
+}
+
+// XML name characters, for the `\i` and `\c` escapes of XSD regular expressions.
+const nameStartCharacters =
+  'A-Za-z_:\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD';
+const nameCharacters = `${nameStartCharacters}\\-.0-9\\u00B7\\u0300-\\u036F\\u203F-\\u2040`;
+
+/** An XSD pattern as a JavaScript regular expression source: `\i`, `\c`, `\I` and `\C` become character classes. */
+function patternSource(pattern: string): string {
+  let source = '';
+  let inClass = false;
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (character === '\\' && index + 1 < pattern.length) {
+      const escaped = pattern[index + 1];
+      index++;
+      const characters = escaped === 'i' || escaped === 'I' ? nameStartCharacters : escaped === 'c' || escaped === 'C' ? nameCharacters : undefined;
+      if (characters === undefined) {
+        source += `\\${escaped}`;
+      } else if (inClass) {
+        // A negated escape inside a class has no simple form; it is left as the plain class.
+        source += characters;
+      } else {
+        source += escaped === 'i' || escaped === 'c' ? `[${characters}]` : `[^${characters}]`;
+      }
+      continue;
+    }
+    if (character === '[') {
+      inClass = true;
+    } else if (character === ']') {
+      inClass = false;
+    }
+    source += character;
+  }
+  return source;
 }
 
 const integerPattern = /^[+-]?\d+$/;
@@ -359,6 +416,8 @@ const emptyAttributes: ReadonlyMap<string, XsdAttribute> = new Map();
 interface ParsedFile {
   path: string;
   text: string;
+  /** Entities declared in the file's DOCTYPE; `diff.xsd` writes its patterns with them. */
+  entities: ReadonlyMap<string, string>;
 }
 
 /**
@@ -389,7 +448,7 @@ export class XsdSchema {
     readonly files: readonly XsdFile[]
   ) {
     for (const file of files) {
-      const parsed: ParsedFile = { path: file.path, text: file.text };
+      const parsed: ParsedFile = { path: file.path, text: file.text, entities: entitiesOf(file.text) };
       const structure = parseXml(file.text);
       for (const problem of structure.problems) {
         this.problems.push({ file: file.path, message: `${problem.message} at offset ${problem.start}` });
@@ -670,6 +729,9 @@ export class XsdSchema {
         case 'group':
           particles.push(this.groupParticle(child));
           break;
+        case 'any':
+          particles.push({ kind: 'any', ...occursOf(child) });
+          break;
       }
     }
     return { kind, particles, ...occursOf(node) };
@@ -768,6 +830,16 @@ export class XsdSchema {
     return type;
   }
 
+  /** The `value` of a facet, with the entities of its file expanded as an XML parser would. */
+  private valueOf(facet: XmlElement): string | undefined {
+    const attribute = attributeNamed(facet, 'value');
+    const entities = this.fileOfNode.get(facet)?.entities;
+    if (!attribute || !entities || entities.size === 0) {
+      return attribute?.value;
+    }
+    return decodeAttributeValue(expandEntities(attribute.rawValue, entities), []);
+  }
+
   private compileRestriction(restriction: XmlElement, type: XsdSimpleType): void {
     const baseName = attributeNamed(restriction, 'base')?.value;
     const inlineBase = firstChildNamed(restriction, 'simpleType');
@@ -781,7 +853,7 @@ export class XsdSchema {
       type.builtin = builtinOf(baseName);
     }
     for (const facet of restriction.children) {
-      const value = attributeNamed(facet, 'value')?.value;
+      const value = this.valueOf(facet);
       if (value === undefined) {
         continue;
       }
@@ -797,7 +869,7 @@ export class XsdSchema {
         }
         case 'pattern':
           try {
-            type.patterns.push(new RegExp(`^(?:${value})$`));
+            type.patterns.push(new RegExp(`^(?:${patternSource(value)})$`));
           } catch {
             this.problem(facet, `pattern '${value}' is not a valid regular expression`);
           }

@@ -4,7 +4,7 @@
  */
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,11 +14,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cliEntry = path.resolve(here, '../src/cli.ts');
 const coreEntry = path.resolve(here, '../../core/src/index.ts');
-const unpacked = path.resolve(here, '../../core/tests/fixtures/unpacked');
+const fixtureUnpacked = path.resolve(here, '../../core/tests/fixtures/unpacked');
 
 let workDir: string;
 let bundle: string;
 let extension: string;
+/** The fixture game files, with game scripts the extension's patches change. */
+let unpacked: string;
 
 interface Run {
   code: number;
@@ -62,6 +64,10 @@ beforeAll(async () => {
     logLevel: 'silent',
     alias: { 'x4-script-core': coreEntry },
   });
+  unpacked = path.join(mkdtempSync(path.join(tmpdir(), 'x4codesense-cli-game-')), 'unpacked');
+  cpSync(fixtureUnpacked, unpacked, { recursive: true });
+  mkdirSync(path.join(unpacked, 'md'));
+  writeFileSync(path.join(unpacked, 'md', 'patch.xml'), '<mdscript name="Patched">\n  <cues/>\n</mdscript>\n');
   extension = path.join(workDir, 'my_extension');
   mkdirSync(path.join(extension, 'md'), { recursive: true });
   mkdirSync(path.join(extension, 'aiscripts'), { recursive: true });
@@ -75,6 +81,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
+  rmSync(path.dirname(unpacked), { recursive: true, force: true });
 });
 
 // Each test starts the checker, which reads the schemas; under a full parallel run that takes seconds.
@@ -178,6 +185,35 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
         expect((await run('--unpacked', unpacked, extension, '--extensions')).code).toBe(2);
       }
     ).finally(() => rmSync(path.dirname(dependency), { recursive: true, force: true }));
+  });
+
+  it('checks patches against the files they change', async () => {
+    const other = path.join(extension, 'md', 'other.xml');
+    const otherText = `<diff><remove sel="//cue[@name='Missing']"/></diff>\n`;
+    const nowhere = path.join(extension, 'md', 'nowhere.xml');
+    const nested = path.join(extension, 'extensions', 'absent_mod', 'md', 'gone.xml');
+    writeFileSync(path.join(unpacked, 'md', 'other.xml'), '<mdscript name="Other">\n  <cues/>\n</mdscript>\n');
+    mkdirSync(path.dirname(nested), { recursive: true });
+    writeFileSync(nested, `<diff><remove sel="//cue"/></diff>\n`);
+    try {
+      await withFile(other, otherText, () =>
+        withFile(nowhere, `<diff><remove sel="//cue"/></diff>\n`, async () => {
+          const result = await run('--unpacked', unpacked, extension);
+          expect(result.code).toBe(1);
+          expect(lines(result).sort()).toEqual(
+            [
+              `${nested}:1:2: Nothing to patch: the extension 'absent_mod' is not among the extensions read [patch-target-missing]`,
+              `${nowhere}:1:2: Nothing to patch: the game has no md/nowhere.xml [patch-target-missing]`,
+              `${other}:1:${otherText.indexOf('//cue') + 1}: No matching node in md/other.xml: 'cue[@name='Missing']' selects nothing [patch-no-match]`,
+              '6 file(s) in 3 folder(s): 2 script(s), 4 patch(es), 3 finding(s)',
+            ].sort()
+          );
+        })
+      );
+    } finally {
+      rmSync(path.join(extension, 'extensions'), { recursive: true, force: true });
+      rmSync(path.join(unpacked, 'md', 'other.xml'));
+    }
   });
 
   it('finds extensions one level below the given folder', async () => {

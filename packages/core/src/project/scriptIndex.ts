@@ -4,9 +4,10 @@
  * conditions, which AI scripts share by globally unique names.
  *
  * Each file is read with the tolerant scanner alone, so indexing needs no schema and costs little per
- * file. An extension's `<diff>` patches the script in the same folder kind with the same file name, as
- * the game applies extension patches; the cues and library items it adds anywhere inside `add` and
- * `replace` count for that script. Evaluating `sel` exactly is left to the patch support.
+ * file. An extension's `<diff>` in its `md` or `aiscripts` patches the game's file of the same name, one
+ * in its `extensions/<folder>/md` the named extension's (see `scriptFolders`); the cues and library items
+ * it adds anywhere inside `add` and `replace` count for that script. What exactly a patch changes is
+ * worked out by the patch support (`patches/`).
  *
  * Several definitions of a name are all kept, in load order: the game first, then the extensions in
  * the order `findExtensions` gives.
@@ -143,6 +144,34 @@ export type IndexedFile = IndexedScript | IndexedPatch;
 export interface ScriptSource {
   file: string;
   source: string;
+}
+
+/** The folder whose files the patches in a script folder change. */
+export interface PatchedFolder {
+  /** How the patches' location names it: `md`, `extensions/<folder>/aiscripts`. */
+  name: string;
+  /** The folder; absent when the extension it names is not among the extensions read. */
+  folder?: string;
+  /** The extension folder name of `extensions/<folder>/...`. */
+  extension?: string;
+}
+
+/** A folder of scripts or patches, with the source it belongs to. */
+export interface ScriptFolder {
+  folder: string;
+  source: string;
+  /** For an extension's folders: where the patches in it apply. */
+  patches?: PatchedFolder;
+}
+
+/** The file a patch changes, or why there is none. */
+export interface PatchTarget {
+  /** The target file when it is indexed. */
+  file?: string;
+  /** How the patch names it: `md/setup.xml`, `extensions/other_mod/md/api.xml`. */
+  name: string;
+  /** Why there is no target file: the game or the extension has no such file, or the extension is not read. */
+  missing?: string;
 }
 
 const libraryKinds: ReadonlySet<string> = new Set(['actions', 'handler', 'conditions']);
@@ -519,16 +548,22 @@ interface Lookups {
   includers: Map<string, Set<string>>;
   /** Scripts that instantiate or run a library, the same way. */
   instantiators: Map<string, Set<string>>;
+  /** The patches of each script file, by its key, in load order. */
+  patches: Map<string, IndexedPatch[]>;
 }
 
 export class ScriptIndex {
   private readonly files = new Map<string, IndexedFile>();
-  /** Script folders read by `loadScriptIndex`, with the source of each. */
-  private readonly folders = new Map<string, string>();
+  /** Script folders read by `loadScriptIndex`, with the source of each and where their patches apply. */
+  private readonly folders = new Map<string, ScriptFolder>();
+  /** The load order of the sources, by the order their folders were added. */
+  private readonly sourceOrder = new Map<string, number>();
   /** Texts of files an editor holds, which may differ from the disk. */
   private readonly texts = new Map<string, string>();
   /** Models of script files, worked out when first asked for. */
   private readonly models = new Map<string, IndexedFileModel | undefined>();
+  /** Scanned files for the patch support, by key, until they change. */
+  private readonly parsed = new Map<string, { text: string; structure: XmlStructure }>();
   private lookups: Lookups | undefined;
   /** References of every file by what they name, built when first asked for. */
   private referenceLookup: Map<string, IndexedReference[]> | undefined;
@@ -559,8 +594,11 @@ export class ScriptIndex {
     }
     if (fromEditor) {
       this.texts.set(key, text);
+      // Already scanned: a patch of this file can use it as it is.
+      this.parsed.set(key, { text, structure });
     } else {
       this.texts.delete(key);
+      this.parsed.delete(key);
     }
     this.models.delete(key);
     this.cueVariableLists.clear();
@@ -574,6 +612,7 @@ export class ScriptIndex {
     const key = keyOf(file);
     const removed = this.files.delete(key);
     this.texts.delete(key);
+    this.parsed.delete(key);
     this.models.delete(key);
     this.cueVariableLists.clear();
     if (removed) {
@@ -707,12 +746,72 @@ export class ScriptIndex {
 
   /** The source a file belongs to: its own when indexed, else the one of the script folder it lies in. */
   sourceOf(file: string): string | undefined {
-    return this.files.get(keyOf(file))?.source ?? this.folders.get(keyOf(path.dirname(file)));
+    return this.files.get(keyOf(file))?.source ?? this.folders.get(keyOf(path.dirname(file)))?.source;
   }
 
-  /** Records a script folder read for a source, so files created in it later are indexed too. */
-  addFolder(folder: string, source: string): void {
-    this.folders.set(keyOf(folder), source);
+  /** Records a script folder read for a source, so files created in it later are indexed too; sources load in the order they are added. */
+  addFolder(folder: ScriptFolder): void {
+    this.folders.set(keyOf(folder.folder), folder);
+    if (!this.sourceOrder.has(folder.source)) {
+      this.sourceOrder.set(folder.source, this.sourceOrder.size);
+    }
+  }
+
+  /**
+   * The file a patch in an extension's script folder changes: the game's file of the same name, or for
+   * `extensions/<folder>/...` the named extension's. Undefined for a file in no such folder, and for the
+   * game's own folders.
+   */
+  patchTarget(file: string): PatchTarget | undefined {
+    const patches = this.folders.get(keyOf(path.dirname(file)))?.patches;
+    if (!patches) {
+      return undefined;
+    }
+    const name = `${patches.name}/${path.basename(file)}`;
+    if (!patches.folder) {
+      return { name, missing: `the extension '${patches.extension ?? ''}' is not among the extensions read` };
+    }
+    const target = path.join(patches.folder, path.basename(file));
+    const entry = this.files.get(keyOf(target));
+    if (entry?.kind !== 'script') {
+      return {
+        name,
+        missing: patches.extension
+          ? `the extension '${patches.extension}' has no ${patches.name.split('/').pop() ?? ''}/${path.basename(file)}`
+          : `the game has no ${name}`,
+      };
+    }
+    return { file: entry.file, name };
+  }
+
+  /** The patches of a file, in load order. */
+  patchesOf(target: string): IndexedPatch[] {
+    return this.lookup().patches.get(keyOf(target)) ?? [];
+  }
+
+  /** The patches of the same file that the game applies before this patch: those of sources loaded earlier. */
+  patchesBefore(patch: string, target: string): IndexedPatch[] {
+    const order = this.orderOf(this.sourceOf(patch) ?? '');
+    return this.patchesOf(target).filter((earlier) => this.orderOf(earlier.source) < order && keyOf(earlier.file) !== keyOf(patch));
+  }
+
+  /** The text and scanned structure of a file as it is now (editor or disk), kept until it changes; undefined when it cannot be read. */
+  parsedFile(file: string): { text: string; structure: XmlStructure } | undefined {
+    const key = keyOf(file);
+    let parsed = this.parsed.get(key);
+    if (!parsed) {
+      const text = this.currentText(file);
+      if (text === undefined) {
+        return undefined;
+      }
+      parsed = { text, structure: parseXml(text) };
+      this.parsed.set(key, parsed);
+    }
+    return parsed;
+  }
+
+  private orderOf(source: string): number {
+    return this.sourceOrder.get(source) ?? this.sourceOrder.size;
   }
 
   get size(): number {
@@ -728,7 +827,7 @@ export class ScriptIndex {
       const scripts = new Map<string, IndexedScript[]>();
       const cues = new Map<IndexedScript, IndexedCue[]>();
       const libraryItems = new Map<string, IndexedLibraryItem[]>();
-      const byFileName = new Map<string, IndexedScript[]>();
+      const patches = new Map<string, IndexedPatch[]>();
       const writesThroughValues = new Set<string>();
       const includers = new Map<string, Set<string>>();
       const instantiators = new Map<string, Set<string>>();
@@ -761,27 +860,27 @@ export class ScriptIndex {
           continue;
         }
         push(scripts, `${entry.schema}:${entry.name}`, entry);
-        push(byFileName, `${entry.schema}:${path.basename(entry.file).toLowerCase()}`, entry);
         cues.set(entry, [...entry.cues]);
         for (const item of entry.libraryItems) {
           push(libraryItems, `${item.kind}:${item.name}`, item);
         }
       }
-      for (const entry of this.files.values()) {
-        if (entry.kind !== 'patch') {
+      const inLoadOrder = [...this.files.values()]
+        .filter((entry): entry is IndexedPatch => entry.kind === 'patch')
+        .sort((a, b) => this.orderOf(a.source) - this.orderOf(b.source) || a.file.localeCompare(b.file));
+      for (const entry of inLoadOrder) {
+        const targetFile = this.patchTarget(entry.file)?.file;
+        const target = targetFile === undefined ? undefined : this.files.get(keyOf(targetFile));
+        if (target?.kind !== 'script' || target.schema !== entry.schema) {
           continue;
         }
-        for (const target of byFileName.get(`${entry.schema}:${path.basename(entry.file).toLowerCase()}`) ?? []) {
-          if (target.file === entry.file) {
-            continue;
-          }
-          cues.get(target)?.push(...entry.cues);
-          for (const item of entry.libraryItems) {
-            push(libraryItems, `${item.kind}:${item.name}`, { ...item, script: target.name });
-          }
+        push(patches, keyOf(target.file), entry);
+        cues.get(target)?.push(...entry.cues);
+        for (const item of entry.libraryItems) {
+          push(libraryItems, `${item.kind}:${item.name}`, { ...item, script: target.name });
         }
       }
-      this.lookups = { scripts, cues, libraryItems, writesThroughValues, includers, instantiators };
+      this.lookups = { scripts, cues, libraryItems, writesThroughValues, includers, instantiators, patches };
     }
     return this.lookups;
   }
@@ -895,15 +994,63 @@ function xmlFiles(folder: string): string[] {
   }
 }
 
-/** The script folders of the game and of its and the given extensions, in load order, with their sources. */
-export function scriptFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = []): { folder: string; source: string }[] {
-  const roots = gameFolder ? [{ folder: gameFolder, source: 'game' }] : [];
-  roots.push(...findExtensions(gameFolder, extensionFolders).map((extension) => ({ folder: extension.folder, source: extension.id })));
-  return roots.flatMap((root) => ['md', 'aiscripts'].map((kind) => ({ folder: path.join(root.folder, kind), source: root.source })));
+function subfolderNames(folder: string): string[] {
+  try {
+    return readdirSync(folder, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The script folders of the game and of its and the given extensions, in load order, with their
+ * sources. An extension's `md` and `aiscripts` patch the game's (a patch there changes the game's file
+ * of the same name); its `extensions/<folder>/md` and `.../aiscripts` hold patches of the extension in
+ * that folder, named by its folder or else its id, and are listed when they exist.
+ */
+export function scriptFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = []): ScriptFolder[] {
+  const kinds = ['md', 'aiscripts'];
+  const folders: ScriptFolder[] = gameFolder ? kinds.map((kind) => ({ folder: path.join(gameFolder, kind), source: 'game' })) : [];
+  const extensions = findExtensions(gameFolder, extensionFolders);
+  const byName = new Map<string, string>();
+  for (const extension of extensions) {
+    byName.set(path.basename(extension.folder).toLowerCase(), extension.folder);
+  }
+  for (const extension of extensions) {
+    if (!byName.has(extension.id.toLowerCase())) {
+      byName.set(extension.id.toLowerCase(), extension.folder);
+    }
+  }
+  for (const extension of extensions) {
+    for (const kind of kinds) {
+      const folder: ScriptFolder = { folder: path.join(extension.folder, kind), source: extension.id };
+      if (gameFolder) {
+        folder.patches = { name: kind, folder: path.join(gameFolder, kind) };
+      }
+      folders.push(folder);
+    }
+    for (const nested of subfolderNames(path.join(extension.folder, 'extensions'))) {
+      const target = byName.get(nested.toLowerCase());
+      for (const kind of kinds) {
+        const folder = path.join(extension.folder, 'extensions', nested, kind);
+        if (subfolderNames(path.dirname(folder)).includes(kind)) {
+          folders.push({
+            folder,
+            source: extension.id,
+            patches: { name: `extensions/${nested}/${kind}`, extension: nested, ...(target ? { folder: path.join(target, kind) } : {}) },
+          });
+        }
+      }
+    }
+  }
+  return folders;
 }
 
 /** Every script file of the given script folders, in order. */
-export function scriptFiles(folders: readonly { folder: string; source: string }[]): ScriptSource[] {
+export function scriptFiles(folders: readonly ScriptFolder[]): ScriptSource[] {
   return folders.flatMap((folder) => xmlFiles(folder.folder).map((file) => ({ file, source: folder.source })));
 }
 
@@ -912,7 +1059,7 @@ export function loadScriptIndex(gameFolder: string | undefined, extensionFolders
   const index = new ScriptIndex(schemas);
   const folders = scriptFolders(gameFolder, extensionFolders);
   for (const folder of folders) {
-    index.addFolder(folder.folder, folder.source);
+    index.addFolder(folder);
   }
   for (const source of scriptFiles(folders)) {
     try {

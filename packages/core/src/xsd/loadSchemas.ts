@@ -11,6 +11,8 @@ export interface SchemaSet {
   folder: string;
   /** Loaded schemas by name; a schema whose file is missing is absent. */
   schemas: Partial<Record<ScriptSchema, XsdSchema>>;
+  /** `diff.xsd`, the schema of patch documents: `<diff>` and its `add`, `replace` and `remove`. */
+  diff?: XsdSchema;
   /** Problems found while reading or compiling, for logging. */
   problems: XsdProblem[];
 }
@@ -20,6 +22,9 @@ export const rootElementName: Record<ScriptSchema, string> = {
   aiscripts: 'aiscript',
   md: 'mdscript',
 };
+
+/** The schema of patch documents, and their root element. */
+export const diffSchemaName = 'diff';
 
 /** Files an XSD file includes, resolved against its folder, in order and without duplicates. */
 function collectFiles(entry: string, into: XsdFile[], seen: Set<string>, problems: XsdProblem[]): void {
@@ -49,23 +54,35 @@ function collectFiles(entry: string, into: XsdFile[], seen: Set<string>, problem
   }
 }
 
+/** Loads one schema file with the files it includes; undefined, with a problem, when it is missing. */
+function loadSchema(librariesFolder: string, name: string, problems: XsdProblem[]): XsdSchema | undefined {
+  const entry = path.join(librariesFolder, `${name}.xsd`);
+  if (!existsSync(entry)) {
+    problems.push({ file: entry, message: 'file not found' });
+    return undefined;
+  }
+  const files: XsdFile[] = [];
+  collectFiles(entry, files, new Set(), problems);
+  const schema = new XsdSchema(name, files);
+  problems.push(...schema.problems);
+  return schema;
+}
+
 /**
- * Loads `md.xsd` and `aiscripts.xsd` from a folder, following their includes (`common.xsd`).
- * Missing files are reported, not thrown; the returned set holds whatever could be loaded.
+ * Loads `md.xsd` and `aiscripts.xsd` from a folder, following their includes (`common.xsd`), and
+ * `diff.xsd`. Missing files are reported, not thrown; the returned set holds whatever could be loaded.
  */
 export function loadSchemas(librariesFolder: string): SchemaSet {
   const set: SchemaSet = { folder: librariesFolder, schemas: {}, problems: [] };
   for (const schemaName of scriptSchemas) {
-    const entry = path.join(librariesFolder, `${schemaName}.xsd`);
-    if (!existsSync(entry)) {
-      set.problems.push({ file: entry, message: 'file not found' });
-      continue;
+    const schema = loadSchema(librariesFolder, schemaName, set.problems);
+    if (schema) {
+      set.schemas[schemaName] = schema;
     }
-    const files: XsdFile[] = [];
-    collectFiles(entry, files, new Set(), set.problems);
-    const schema = new XsdSchema(schemaName, files);
-    set.problems.push(...schema.problems);
-    set.schemas[schemaName] = schema;
+  }
+  const diff = loadSchema(librariesFolder, diffSchemaName, set.problems);
+  if (diff) {
+    set.diff = diff;
   }
   return set;
 }

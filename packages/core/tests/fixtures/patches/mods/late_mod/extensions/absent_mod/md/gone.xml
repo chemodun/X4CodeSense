@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: patches an extension that is not among the extensions read. -->
+<diff>
+  <remove sel="//cue[@name='Anything']" />
+</diff>

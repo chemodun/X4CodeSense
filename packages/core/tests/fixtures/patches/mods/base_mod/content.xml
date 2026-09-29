@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test extension for X4CodeSense: its script is patched by another extension through extensions/base_mod/. -->
+<content id="ws_12345" name="Base Mod" version="100" />

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test script for X4CodeSense: an extension's own script that another extension patches. -->
+<mdscript name="Api">
+  <cues>
+    <cue name="Register" />
+  </cues>
+</mdscript>

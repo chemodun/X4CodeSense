@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: adds a cue that a later patch builds on. -->
+<diff>
+  <add sel="/mdscript/cues">
+    <cue name="Early" />
+  </add>
+</diff>

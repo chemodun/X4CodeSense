@@ -9,6 +9,8 @@ export interface StructureValidationOptions {
   checkContent: boolean;
   /** `source` of the produced diagnostics. */
   source: string;
+  /** Attributes whose values the caller checks itself, so their type's facets are not applied. */
+  checkedElsewhere?: (declared: XsdAttribute) => boolean;
 }
 
 export interface StructureValidation {
@@ -129,7 +131,7 @@ class Validator {
   }
 
   private validateValue(element: XmlElement, attribute: XmlAttribute, declared: XsdAttribute): void {
-    if (attribute.quote === '' || acceptsValue(declared.type, attribute.value)) {
+    if (attribute.quote === '' || this.options.checkedElsewhere?.(declared) || acceptsValue(declared.type, attribute.value)) {
       return;
     }
     const shown = attribute.value.length > 40 ? `${attribute.value.slice(0, 37)}...` : attribute.value;
@@ -149,9 +151,10 @@ class Validator {
         this.declarations.set(child, childDeclaration);
       }
     }
+    // Children a wildcard allows get no declaration: the schema says nothing about them.
     const problems: ContentProblem[] = this.options.checkContent
       ? model.validate(element.children.map((child) => child.name))
-      : element.children.flatMap((child, index) => (model.declarations.has(child.name) ? [] : [{ index, expected: [] }]));
+      : element.children.flatMap((child, index) => (model.declarations.has(child.name) || model.wildcard ? [] : [{ index, expected: [] }]));
     for (const problem of problems) {
       const child = element.children[problem.index];
       if (!child) {
@@ -161,7 +164,7 @@ class Validator {
           element.nameStart,
           element.nameEnd
         );
-      } else if (!model.declarations.has(child.name)) {
+      } else if (!model.declarations.has(child.name) && !model.wildcard) {
         const message =
           model.declarations.size === 0
             ? `Element '${element.name}' does not allow child elements, found '${child.name}'`

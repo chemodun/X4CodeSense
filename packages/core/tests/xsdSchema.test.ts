@@ -1,7 +1,17 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { acceptsFreeText, acceptsValue, analyzeText, enumerationsOf, loadSchemas, typeNamesOf, type XsdElement, type XsdSchema } from '../src';
+import {
+  acceptsFreeText,
+  acceptsValue,
+  analyzeText,
+  enumerationsOf,
+  loadSchemas,
+  typeNamesOf,
+  type XsdElement,
+  type XsdSchema,
+  type XsdSimpleType,
+} from '../src';
 
 const libraries = fileURLToPath(new URL('./fixtures/unpacked/libraries', import.meta.url));
 const schemas = loadSchemas(libraries);
@@ -35,7 +45,23 @@ describe('loadSchemas', () => {
   it('reports missing files instead of throwing', () => {
     const missing = loadSchemas(path.join(libraries, 'nowhere'));
     expect(missing.schemas).toEqual({});
-    expect(missing.problems.map((problem) => path.basename(problem.file)).sort()).toEqual(['aiscripts.xsd', 'md.xsd']);
+    expect(missing.problems.map((problem) => path.basename(problem.file)).sort()).toEqual(['aiscripts.xsd', 'diff.xsd', 'md.xsd']);
+  });
+
+  it("loads the game's diff.xsd: entities of its DOCTYPE, XML name escapes, any content", () => {
+    const diff = schemas.diff as XsdSchema;
+    expect(diff.rootNames).toEqual(['diff']);
+    const add = declaration(diff, 'diff', 'add');
+    expect(add.documentation).toBe('Add content');
+    const type = add.attributes.get('type');
+    expect(type && ['@version', '@xsi:type', 'namespace::x'].map((value) => acceptsValue(type.type, value))).toEqual([true, true, true]);
+    expect(type && ['version', '@1a', '@a b'].map((value) => acceptsValue(type.type, value))).toEqual([false, false, false]);
+    expect(add.contentModel.wildcard).toBe(true);
+    expect(add.contentModel.validate(['cue', 'actions', 'cue'])).toEqual([]);
+    expect(add.contentModel.expectedAfter([])).toEqual([]);
+    expect(declaration(diff, 'diff', 'replace').contentModel.validate(['cue', 'cue'])).toEqual([{ index: 1, expected: [] }]);
+    expect(declaration(diff, 'diff', 'remove').contentModel.wildcard).toBe(false);
+    expect([...typeNamesOf((add.attributes.get('sel') as { type: XsdSimpleType }).type)]).toEqual(['xpath-add']);
   });
 });
 

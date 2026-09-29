@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test script for X4CodeSense: the game's script that extensions patch. -->
+<mdscript name="Setup">
+  <cues>
+    <cue name="Start">
+      <actions>
+        <set_value name="$count" exact="1" />
+        <!-- patchmarker -->
+        <set_value name="$mode" exact="'easy'" />
+      </actions>
+    </cue>
+    <cue name="Later" />
+  </cues>
+</mdscript>

@@ -20,7 +20,17 @@ export interface GroupParticle {
   max: number;
 }
 
-export type Particle = ElementParticle | GroupParticle;
+/** `xs:any`: an element of any name, which the schema does not describe. */
+export interface WildcardParticle {
+  kind: 'any';
+  min: number;
+  max: number;
+}
+
+export type Particle = ElementParticle | GroupParticle | WildcardParticle;
+
+/** The edge of a wildcard in the automaton; no element name starts with `#`. */
+const anyElement = '#any';
 
 export interface ContentProblem {
   /** Index of the offending child, or the number of children when required children are missing at the end. */
@@ -32,14 +42,20 @@ export interface ContentProblem {
 export interface ContentModel {
   /** Child declarations by name. Empty when the element allows no children. */
   readonly declarations: ReadonlyMap<string, XsdElement>;
+  /** True when children of any name are allowed somewhere (`xs:any`); the schema says nothing more about them. */
+  readonly wildcard: boolean;
   /** Problems in a list of child names, in order. An offending child is skipped and checking goes on. */
   validate(children: readonly string[]): ContentProblem[];
   /** Names that may follow the given children, sorted. Unknown children are skipped. */
   expectedAfter(children: readonly string[]): string[];
 }
 
+function hasWildcard(particle: Particle | undefined): boolean {
+  return particle !== undefined && (particle.kind === 'any' || (particle.kind !== 'element' && particle.particles.some(hasWildcard)));
+}
+
 function collectDeclarations(particle: Particle | undefined, into: Map<string, XsdElement>): void {
-  if (!particle) {
+  if (!particle || particle.kind === 'any') {
     return;
   }
   if (particle.kind === 'element') {
@@ -68,6 +84,7 @@ interface DfaState {
 /** Thompson construction over the particle tree, determinised lazily while matching. */
 class Automaton implements ContentModel {
   readonly declarations: ReadonlyMap<string, XsdElement>;
+  readonly wildcard: boolean;
   private readonly states: State[] = [];
   private readonly start: number;
   private readonly final: number;
@@ -79,6 +96,7 @@ class Automaton implements ContentModel {
     const declarations = new Map<string, XsdElement>();
     collectDeclarations(particle, declarations);
     this.declarations = declarations;
+    this.wildcard = hasWildcard(particle);
     if (particle) {
       [this.start, this.final] = this.build(particle);
     } else {
@@ -98,6 +116,8 @@ class Automaton implements ContentModel {
     const end = this.newState();
     if (particle.kind === 'element') {
       this.states[start].edges.set(particle.declaration.name, [end]);
+    } else if (particle.kind === 'any') {
+      this.states[start].edges.set(anyElement, [end]);
     } else if (particle.kind === 'sequence') {
       let current = start;
       for (const child of particle.particles) {
@@ -178,10 +198,8 @@ class Automaton implements ContentModel {
     }
     const targets: number[] = [];
     for (const state of from.set) {
-      const edge = this.states[state].edges.get(name);
-      if (edge) {
-        targets.push(...edge);
-      }
+      const edges = this.states[state].edges;
+      targets.push(...(edges.get(name) ?? []), ...(edges.get(anyElement) ?? []));
     }
     next = targets.length > 0 ? this.dfaState(targets) : null;
     from.next.set(name, next);
@@ -193,7 +211,9 @@ class Automaton implements ContentModel {
       const names = new Set<string>();
       for (const state of from.set) {
         for (const name of this.states[state].edges.keys()) {
-          names.add(name);
+          if (name !== anyElement) {
+            names.add(name);
+          }
         }
       }
       from.expected = [...names].sort();
@@ -230,6 +250,8 @@ class Automaton implements ContentModel {
 /** An `xs:all` group: every child at most once, in any order. */
 class AllModel implements ContentModel {
   readonly declarations: ReadonlyMap<string, XsdElement>;
+  /** `xs:all` holds elements only. */
+  readonly wildcard = false;
   private readonly required: string[];
 
   constructor(private readonly particle: GroupParticle) {

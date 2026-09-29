@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: operations of every kind and outcome on the game's script, after early_mod's patch. -->
+<diff>
+  <add sel="//cue[@name='Early']" pos="after">
+    <cue name="Late" />
+  </add>
+  <replace sel="//cue[@name='Start']/actions/set_value[@name='$count']/@exact">2</replace>
+  <replace sel="//comment()[. = ' patchmarker ']">
+    <set_value name="$a" exact="1" />
+    <set_value name="$b" exact="2" />
+  </replace>
+  <add sel="//cue[@name='Later']" type="@instantiate">true</add>
+  <remove sel="/mdscript/cues/cue[@name='Start']/actions/set_value[@name='$gone']" />
+  <remove sel="//cue[@name='Missing']" silent="true" />
+  <add sel="//cue[@name='Start']/actions" if="//cue[@name='Missing']">
+    <set_value name="$never" exact="1" />
+  </add>
+  <remove sel="//set_value" />
+  <replace sel="/mdscript">
+    <mdscript name="Other" />
+  </replace>
+</diff>

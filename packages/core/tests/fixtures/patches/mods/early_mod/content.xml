@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test extension for X4CodeSense: patches the game's script before late_mod does. -->
+<content id="early_mod" name="Early Mod" version="100" />
