@@ -42,23 +42,6 @@ The corpus check times the analysis of the largest game file against a ceiling o
 - `x4codesense`: the `.vsix` is built, attached to the release and, with the `VT_API_KEY` secret, scanned by VirusTotal. It is not published to the Marketplace yet.
 - `x4-script-core`, `x4-script-language-server`, `x4-script-check`: built, tested and sent to npm by trusted publishing. No npm token is kept in the repository: npm accepts the upload because the package is bound to this repository and its `build-and-publish.yml`, and adds a provenance statement. The version is staged, and goes live once a maintainer approves it with 2FA, on npmjs.com or with `npm stage approve`. With the repository variable `NPM_DIRECT_PUBLISH` set to `true`, and a binding that allows it, it is published directly.
 
-npm binds a repository only to a package that exists, so the first version of a package is published by hand, from its release tag, and the binding added after it (npm 11.15 or later, 2FA on the account). The workflow skips a package that is not on npm yet, or whose version is there already.
-
-```powershell
-git fetch --tags
-git switch --detach x4-script-core@v0.1.0
-npm ci
-npm run clean
-npm run build
-foreach ($p in 'core', 'server', 'cli') { npm publish -w packages/$p }
-foreach ($n in 'x4-script-core', 'x4-script-language-server', 'x4-script-check') {
-  npm trust github $n --repo chemodun/X4CodeSense --file build-and-publish.yml --allow-stage-publish
-}
-git switch main
-```
-
-Then, in the package's settings on npmjs.com, _Require two-factor authentication and disallow tokens_ leaves trusted publishing as the only way to publish from CI.
-
 ## Lineage and credits
 
 X4CodeSense is the successor of [X4CodeComplete](https://github.com/archenovalis/X4CodeComplete) (MIT), started by Cgetty and continued by archenovalis. It is written anew around a language server, building on the ideas of X4CodeComplete and on the valuable experience gained during its development.

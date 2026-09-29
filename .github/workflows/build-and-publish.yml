@@ -109,7 +109,7 @@ jobs:
             exit 1
           fi
           if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${NAME}")" = 404 ]; then
-            echo "::warning::${NAME} is not on npm yet: its first version is published by hand, see Releases in README.md"
+            echo "::warning::${NAME} is not on npm yet: its first version is published by hand"
             exit 0
           fi
           if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${NAME}/${VERSION}")" = 200 ]; then
