@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test script for X4CodeSense: an interrupt library other AI scripts refer to. -->
+<aiscript name="lib.target">
+  <interrupts>
+    <library>
+      <actions name="CheckTarget" />
+      <handler name="TargetInvalidHandler" />
+      <conditions name="TargetConditions" />
+    </library>
+  </interrupts>
+  <attention min="unknown">
+    <actions />
+  </attention>
+</aiscript>

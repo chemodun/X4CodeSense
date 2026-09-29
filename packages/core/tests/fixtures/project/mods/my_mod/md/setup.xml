@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: adds a cue to the game's Setup script; what `remove` names is not added. -->
+<diff>
+  <add sel="/mdscript/cues/cue[@name='Start']/cues">
+    <cue name="Added" />
+  </add>
+  <remove sel="/mdscript/cues/cue[@name='Start']/cues/cue[@name='Inner']" />
+</diff>

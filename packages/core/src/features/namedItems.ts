@@ -3,8 +3,10 @@ import { CompletionItemKind, Location, Range, type CompletionItem } from 'vscode
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { itemNoun } from '../names/validateNames';
 import type { DocumentNames, NamedItemKind, NamedOccurrence } from '../names/namedItems';
+import type { IndexedLibraryItem, ScriptIndex } from '../project/scriptIndex';
 import { attributeNamed, type XmlElement } from '../xml/xmlStructure';
-import { escapeMarkdown } from './markdown';
+import { escapeMarkdown, inlineCode } from './markdown';
+import { describeLibraryDefinitions, indexedLocation } from './project';
 
 function lineOf(document: TextDocument, offset: number): number {
   return document.positionAt(offset).line + 1;
@@ -23,15 +25,15 @@ function cueFacts(element: XmlElement): string[] {
   }
   const namespace = value('namespace');
   if (namespace) {
-    facts.push(`Namespace \`${escapeMarkdown(namespace)}\``);
+    facts.push(`Namespace ${inlineCode(namespace)}`);
   }
   const ref = value('ref');
   if (ref) {
-    facts.push(`Instance of \`${escapeMarkdown(ref)}\``);
+    facts.push(`Instance of ${inlineCode(ref)}`);
   }
   const purpose = value('purpose');
   if (purpose) {
-    facts.push(`Purpose \`${escapeMarkdown(purpose)}\``);
+    facts.push(`Purpose ${inlineCode(purpose)}`);
   }
   const params = element.children
     .find((child) => child.name === 'params')
@@ -39,13 +41,14 @@ function cueFacts(element: XmlElement): string[] {
     .map((param) => attributeNamed(param, 'name')?.value)
     .filter((name): name is string => name !== undefined && name !== '');
   if (params && params.length > 0) {
-    facts.push(`Parameters: ${params.map((name) => `\`${escapeMarkdown(name)}\``).join(', ')}`);
+    facts.push(`Parameters: ${params.map(inlineCode).join(', ')}`);
   }
   return facts;
 }
 
 /** Hover text for a label, cue, library or interrupt library item. */
-export function describeNamedItem(occurrence: NamedOccurrence, document: TextDocument): string {
+export function describeNamedItem(occurrence: NamedOccurrence, document: TextDocument, index?: ScriptIndex): string {
+  const elsewhere = otherScriptDefinitions(occurrence, index);
   const defined = occurrence.items.filter((item) => item.definitions.length > 0);
   const definitions = defined.flatMap((item) => item.definitions);
   const first = definitions[0];
@@ -56,7 +59,7 @@ export function describeNamedItem(occurrence: NamedOccurrence, document: TextDoc
   }
   if (occurrence.kind === 'label' && defined.length === 1 && defined[0].owner) {
     const min = attributeNamed(defined[0].owner, 'min')?.value;
-    facts.push(min === undefined ? 'In an attention block' : `In the attention block for \`${escapeMarkdown(min)}\``);
+    facts.push(min === undefined ? 'In an attention block' : `In the attention block for ${inlineCode(min)}`);
   }
   if (facts.length > 0) {
     lines.push('', facts.join(' · '));
@@ -72,12 +75,25 @@ export function describeNamedItem(occurrence: NamedOccurrence, document: TextDoc
     where = occurrence.kind === 'label' ? 'Resolved in the script that uses this interrupt library' : 'Resolved in the script that includes this library';
   } else if (occurrence.kind === 'label' || occurrence.kind === 'cue') {
     where = 'Not defined in this script';
+  } else if (index) {
+    where = elsewhere.length > 0 ? 'Defined in another script' : 'Not defined in any known script';
   } else {
     where = 'Defined in another script';
   }
   const references = new Set(occurrence.items.flatMap((item) => item.references)).size;
-  lines.push('', `${where} · Referenced ${references} time${references === 1 ? '' : 's'}`);
+  lines.push('', `${where} · Referenced ${references} time${references === 1 ? '' : 's'} here`);
+  if (index && elsewhere.length > 0) {
+    lines.push('', describeLibraryDefinitions(index, elsewhere));
+  }
   return lines.join('\n');
+}
+
+/** Interrupt library items that other scripts define, for a reference this script does not define. */
+function otherScriptDefinitions(occurrence: NamedOccurrence, index: ScriptIndex | undefined): IndexedLibraryItem[] {
+  if (!index || occurrence.kind === 'label' || occurrence.kind === 'cue' || occurrence.items.some((item) => item.definitions.length > 0)) {
+    return [];
+  }
+  return index.libraryItems(occurrence.kind, occurrence.name);
 }
 
 /** The named item occurrence under a caret. */
@@ -85,9 +101,10 @@ export function namedItemAt(analysis: DocumentAnalysis, offset: number): NamedOc
   return analysis.names?.occurrenceAt(offset);
 }
 
-/** Where the items an occurrence defines or names are defined in the document. */
-export function namedItemDefinitions(occurrence: NamedOccurrence, document: TextDocument): Location[] {
-  return occurrence.items.flatMap((item) => item.definitions).map((definition) => Location.create(document.uri, rangeOf(document, definition)));
+/** Where the items an occurrence defines or names are defined: in the document, else, for interrupt library items, in other scripts. */
+export function namedItemDefinitions(occurrence: NamedOccurrence, document: TextDocument, index?: ScriptIndex): Location[] {
+  const here = occurrence.items.flatMap((item) => item.definitions).map((definition) => Location.create(document.uri, rangeOf(document, definition)));
+  return here.length > 0 ? here : otherScriptDefinitions(occurrence, index).map((item) => indexedLocation(item.position));
 }
 
 const completionKinds: Record<NamedItemKind, CompletionItemKind> = {
@@ -98,14 +115,18 @@ const completionKinds: Record<NamedItemKind, CompletionItemKind> = {
   conditions: CompletionItemKind.Function,
 };
 
-/** Completion items for the items of a kind that a reference written in the element may name. */
+/**
+ * Completion items for the items of a kind that a reference written in the element may name: those of
+ * the document, and for interrupt library items also those other scripts define.
+ */
 export function namedItemCompletionItems(
   names: DocumentNames,
   kind: NamedItemKind,
   element: XmlElement,
   document: TextDocument,
   range: Range,
-  prefix: string
+  prefix: string,
+  index?: ScriptIndex
 ): CompletionItem[] {
   const items: CompletionItem[] = [];
   const seen = new Set<string>();
@@ -122,6 +143,22 @@ export function namedItemCompletionItems(
       documentation: { kind: 'markdown', value: describeNamedItem(definition, document) },
       textEdit: { range, newText: item.name },
     });
+  }
+  if (index && kind !== 'label' && kind !== 'cue') {
+    for (const name of index.libraryItemNames(kind)) {
+      if (seen.has(name) || !name.startsWith(prefix)) {
+        continue;
+      }
+      seen.add(name);
+      const definitions = index.libraryItems(kind, name);
+      items.push({
+        label: name,
+        kind: completionKinds[kind],
+        detail: `${itemNoun({ kind }).toLowerCase()} of ${definitions[0]?.script ?? 'another script'}`,
+        documentation: { kind: 'markdown', value: describeLibraryDefinitions(index, definitions) },
+        textEdit: { range, newText: name },
+      });
+    }
   }
   items.sort((a, b) => a.label.localeCompare(b.label));
   return items;

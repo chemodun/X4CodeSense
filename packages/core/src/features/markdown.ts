@@ -9,6 +9,17 @@ export function escapeMarkdown(text: string): string {
   return text.replace(/[\\`*_{}[\]<>#+!|]/g, (character) => (character === '<' ? '&lt;' : character === '>' ? '&gt;' : `\\${character}`));
 }
 
+/**
+ * Text as inline code. Markdown takes code literally, so nothing is escaped: `run_actions` stays as it
+ * is. The fence is longer than any run of backticks in the text.
+ */
+export function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = '`'.repeat(longest + 1);
+  const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+  return `${fence}${pad}${text}${pad}${fence}`;
+}
+
 function definedIn(location: SourceLocation | undefined): string[] {
   return location ? [`*Defined in ${escapeMarkdown(path.basename(location.file))}*`] : [];
 }

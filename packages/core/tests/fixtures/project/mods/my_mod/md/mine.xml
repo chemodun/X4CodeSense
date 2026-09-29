@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test script for X4CodeSense: refers to the game's Setup script, its own cue and a cue a patch adds. -->
+<mdscript name="Mine">
+  <cues>
+    <cue name="Own">
+      <actions>
+        <signal_cue_instantly cue="md.Setup.Start" />
+        <signal_cue_instantly cue="md.Setup.Added" />
+        <signal_cue_instantly cue="md.Mine.Own" />
+      </actions>
+    </cue>
+  </cues>
+</mdscript>

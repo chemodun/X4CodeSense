@@ -12,9 +12,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     run: { module: serverModule, transport: TransportKind.ipc },
     debug: { module: serverModule, transport: TransportKind.ipc, options: { execArgv: ['--nolazy', '--inspect=6009'] } },
   };
+  // Scripts and text files of the workspace change on disk too (checkouts, other editors): the server reads them again.
+  const xmlFiles = vscode.workspace.createFileSystemWatcher('**/*.xml');
+  context.subscriptions.push(xmlFiles);
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: 'file', language: 'xml' }],
-    synchronize: { configurationSection: 'x4CodeSense' },
+    synchronize: { configurationSection: 'x4CodeSense', fileEvents: xmlFiles },
     outputChannelName: 'X4CodeSense',
   };
   client = new LanguageClient('x4CodeSense', 'X4CodeSense', serverOptions, clientOptions);

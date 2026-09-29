@@ -63,17 +63,25 @@ async function documentInfo(uri: string): Promise<DocumentInfoResult> {
   return connection.sendRequest<DocumentInfoResult>(DocumentInfoRequestMethod, { uri });
 }
 
-/** Resolves with the next diagnostics the server publishes for the uri. Call before sending the change that triggers them. */
-function nextDiagnostics(uri: string): Promise<PublishDiagnosticsParams> {
+/**
+ * Resolves with the next diagnostics the server publishes for the uri, or with the first that `accept`
+ * takes when given: a change may be published more than once, for example again when the script index
+ * has been built. Call before sending the change that triggers them.
+ */
+function nextDiagnostics(uri: string, accept: (params: PublishDiagnosticsParams) => boolean = () => true): Promise<PublishDiagnosticsParams> {
   return new Promise((resolve) => {
     const disposable = connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
-      if (params.uri === uri) {
+      if (params.uri === uri && accept(params)) {
         disposable.dispose();
         resolve(params);
       }
     });
   });
 }
+
+/** Waits for published diagnostics of a uri with this many entries. */
+const diagnosticsCount = (uri: string, count: number): Promise<PublishDiagnosticsParams> =>
+  nextDiagnostics(uri, (params) => params.diagnostics.length === count);
 
 function summarize(params: PublishDiagnosticsParams): string[] {
   return params.diagnostics.map((diagnostic) => `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} ${diagnostic.code}`);
@@ -415,26 +423,26 @@ describe('texts', () => {
     expect(summarize(await open(uri, lines.join('\n')))).toEqual([`5:${lines[4].indexOf('{91001,1}') + 1} text-undefined`]);
 
     clientSettings.extensionsFolder = '..';
-    const withNeighbours = nextDiagnostics(uri);
+    const withNeighbours = diagnosticsCount(uri, 0);
     await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
     expect(summarize(await withNeighbours)).toEqual([]);
 
     clientSettings.extensionsFolder = '';
-    const restored = nextDiagnostics(uri);
+    const restored = diagnosticsCount(uri, 1);
     await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
     expect(summarize(await restored)).toHaveLength(1);
-    // Clean up, and wait until the server has published everything that causes, so no later test sees it.
-    const reanalysed = nextDiagnostics(uri);
+    // Without the workspace folder neither text is found.
+    const reanalysed = diagnosticsCount(uri, 2);
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
     await reanalysed;
-    const closed = nextDiagnostics(uri);
+    const closed = diagnosticsCount(uri, 0);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
     expect((await closed).diagnostics).toEqual([]);
   });
 
   it('follows a text file while it is edited, and forgets unsaved texts on close', async () => {
     // One waiter at a time: the connection keeps a single handler per notification.
-    const added = nextDiagnostics(scriptUri);
+    const added = diagnosticsCount(scriptUri, 0);
     await connection.sendNotification(DidOpenTextDocumentNotification.type, {
       textDocument: {
         uri: textUri,
@@ -444,8 +452,52 @@ describe('texts', () => {
       },
     });
     expect(summarize(await added)).toEqual([]);
-    const removed = nextDiagnostics(scriptUri);
+    const removed = diagnosticsCount(scriptUri, 1);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: textUri } });
     expect(summarize(await removed)).toEqual([missing]);
+  });
+});
+
+describe('script index', () => {
+  it('follows an interrupt library while it is edited in another document', async () => {
+    const mod = path.join(workDir, 'ailib');
+    const libraryFile = path.join(mod, 'aiscripts', 'lib.mine.xml');
+    const orderFile = path.join(mod, 'aiscripts', 'order.mine.xml');
+    const libraryText = (handler: string): string =>
+      `<aiscript name="lib.mine">\n  <interrupts>\n    <library>\n      <handler name="${handler}"/>\n    </library>\n  </interrupts>\n  <attention min="unknown">\n    <actions/>\n  </attention>\n</aiscript>\n`;
+    const orderText =
+      '<aiscript name="order.mine">\n  <interrupts>\n    <handler ref="MineHandler"/>\n  </interrupts>\n  <attention min="unknown">\n    <actions/>\n  </attention>\n</aiscript>\n';
+    mkdirSync(path.dirname(libraryFile), { recursive: true });
+    writeFileSync(libraryFile, libraryText('MineHandler'));
+    writeFileSync(orderFile, orderText);
+    const workspace = { uri: pathToFileURL(mod).toString(), name: 'ailib' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+
+    const orderUri = pathToFileURL(orderFile).toString();
+    const libraryUri = pathToFileURL(libraryFile).toString();
+    expect(summarize(await open(orderUri, orderText))).toEqual([]);
+
+    // Renaming the handler in the editor makes the reference of the other script unknown, before saving.
+    const renamed = diagnosticsCount(orderUri, 1);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: libraryUri, languageId: 'xml', version: 1, text: libraryText('MineHandler') },
+    });
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: libraryUri, version: 2 },
+      contentChanges: [{ text: libraryText('RenamedHandler') }],
+    });
+    expect(summarize(await renamed)).toEqual(['3:19 library-undefined']);
+
+    // Closing without saving: the file on disk counts again.
+    const restored = diagnosticsCount(orderUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: libraryUri } });
+    expect(summarize(await restored)).toEqual([]);
+
+    const removed = diagnosticsCount(orderUri, 0);
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+    await removed;
+    const closed = diagnosticsCount(orderUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: orderUri } });
+    await closed;
   });
 });

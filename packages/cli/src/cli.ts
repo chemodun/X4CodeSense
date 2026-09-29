@@ -28,6 +28,8 @@ interface Options {
   roots: string[];
   /** The extracted game files, whose `libraries` folder holds the schemas. */
   unpacked?: string;
+  /** Folders of other extensions the checked ones depend on: read for texts and scripts, not checked. */
+  extensions: string[];
   /** Check the order and completeness of child elements. */
   structure: boolean;
   help: boolean;
@@ -41,13 +43,15 @@ Checks every *.xml file in the md and aiscripts folders found directly under eac
 Options:
   --unpacked <folder>   extracted vanilla game files; enables validation against the game schemas
                         (also read from the X4_UNPACKED environment variable)
+  --extensions <folder> other extensions the checked ones refer to: their texts and scripts are
+                        read, they are not checked; may be given several times
   --no-structure        do not check the order and completeness of child elements
   -h, --help            show this help
 
 Exit code 1 when there are findings, 2 on a usage error.`;
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = { roots: [], structure: true, help: false };
+  const options: Options = { roots: [], extensions: [], structure: true, help: false };
   const unpacked = process.env.X4_UNPACKED;
   if (unpacked !== undefined && unpacked !== '') {
     options.unpacked = unpacked;
@@ -62,6 +66,14 @@ function parseOptions(argv: string[]): Options {
       options.unpacked = value;
     } else if (argument.startsWith('--unpacked=')) {
       options.unpacked = argument.slice('--unpacked='.length);
+    } else if (argument === '--extensions') {
+      const value = argv[++index];
+      if (value === undefined) {
+        throw new Error('--extensions needs a folder');
+      }
+      options.extensions.push(value);
+    } else if (argument.startsWith('--extensions=')) {
+      options.extensions.push(argument.slice('--extensions='.length));
     } else if (argument === '--no-structure') {
       options.structure = false;
     } else if (argument === '-h' || argument === '--help') {
@@ -168,8 +180,15 @@ async function main(argv: string[]): Promise<number> {
       console.error(`Not a folder: ${libraries}`);
       return 2;
     }
-    // The checked folders' own texts count as well: an extension refers to the texts it ships.
-    const game = loadGameData(unpacked, { extensionFolders: options.roots.map((root) => path.resolve(root)) });
+    for (const folder of options.extensions) {
+      if (!(await isDirectory(path.resolve(folder)))) {
+        console.error(`Not a folder: ${path.resolve(folder)}`);
+        return 2;
+      }
+    }
+    // The checked folders count as well: an extension refers to its own texts and scripts.
+    const extensionFolders = [...options.extensions, ...options.roots].map((folder) => path.resolve(folder));
+    const game = loadGameData(unpacked, { extensionFolders, index: true });
     for (const problem of game.problems) {
       console.error(problem);
     }
@@ -178,6 +197,9 @@ async function main(argv: string[]): Promise<number> {
     }
     context.schemas = game.schemas;
     context.texts = game.texts;
+    if (game.index) {
+      context.index = game.index;
+    }
     if (game.properties) {
       context.properties = game.properties;
     }

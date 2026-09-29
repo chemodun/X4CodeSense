@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test script for X4CodeSense: a game script other scripts refer to. -->
+<mdscript name="Setup">
+  <cues>
+    <cue name="Start" instantiate="true" namespace="this">
+      <cues>
+        <cue name="Inner" />
+      </cues>
+    </cue>
+    <library name="Reward" purpose="run_actions">
+      <params>
+        <param name="Amount" />
+      </params>
+    </library>
+  </cues>
+</mdscript>

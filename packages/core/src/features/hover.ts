@@ -7,7 +7,9 @@ import type { GameData } from '../gameData';
 import { offsetInValue, type XmlAttribute } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
 import { describeAttribute, describeCandidates, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
+import { mdReferenceAt } from '../project/mdReferences';
 import { textReferenceAt } from '../texts/textDatabase';
+import { describeMdReference } from './project';
 import { describeNamedItem, namedItemAt } from './namedItems';
 import { describeText, type TextDisplayOptions } from './texts';
 import { describeVariable, variableAt } from './variables';
@@ -60,6 +62,12 @@ function hoverInValue(
   if (isInsideString(tokenize(value), index)) {
     return undefined;
   }
+  const md = game?.index ? mdReferenceAt(attribute.element, attribute, offsetInValue(attribute, index)) : undefined;
+  if (game?.index && md) {
+    const reference = md.reference;
+    const [start, end] = md.part === 'script' ? [reference.scriptStart, reference.scriptEnd] : [reference.cueStart ?? 0, reference.cueEnd ?? 0];
+    return hover(analysis, describeMdReference(game.index, reference, md.part), start, end);
+  }
   const found = chainAtToken(value, index);
   if (!found) {
     return undefined;
@@ -86,7 +94,7 @@ export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameDa
   }
   const named = namedItemAt(analysis, offset);
   if (named) {
-    return hover(analysis, describeNamedItem(named, analysis.document), named.start, named.end);
+    return hover(analysis, describeNamedItem(named, analysis.document, game?.index), named.start, named.end);
   }
   const context = positionContext(analysis, offset, schemaOf(game, analysis));
   switch (context.kind) {

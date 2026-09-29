@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test extension for X4CodeSense: patches a game script and refers to the game's scripts. -->
+<content id="my_mod" name="My Mod" version="100" />

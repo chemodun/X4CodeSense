@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test script for X4CodeSense: uses the game's interrupt library. -->
+<aiscript name="order.mine">
+  <params>
+    <param name="target" />
+  </params>
+  <interrupts>
+    <handler ref="TargetInvalidHandler" />
+  </interrupts>
+  <attention min="unknown">
+    <actions>
+      <include_interrupt_actions ref="CheckTarget" />
+    </actions>
+  </attention>
+</aiscript>

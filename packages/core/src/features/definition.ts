@@ -5,10 +5,12 @@ import { isInsideString, tokenize } from '../expressions/lexer';
 import { chainAtToken, resolveChain } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
 import type { SourceLocation } from '../sourceLocation';
-import type { XmlAttribute } from '../xml/xmlStructure';
+import { offsetInValue, type XmlAttribute } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
+import { mdReferenceAt } from '../project/mdReferences';
 import { textReferenceAt } from '../texts/textDatabase';
 import { namedItemAt, namedItemDefinitions } from './namedItems';
+import { mdReferenceDefinitions } from './project';
 import { textDefinitions, type TextDisplayOptions } from './texts';
 import { variableAt, variableDefinitions } from './variables';
 
@@ -36,6 +38,10 @@ function definitionInValue(analysis: DocumentAnalysis, attribute: XmlAttribute, 
   const schema = analysis.detection.script?.schema;
   if (!properties || !schema || !isExpressionAttribute(declared) || isInsideString(tokenize(value), index)) {
     return [];
+  }
+  const md = game.index ? mdReferenceAt(attribute.element, attribute, offsetInValue(attribute, index)) : undefined;
+  if (game.index && md) {
+    return mdReferenceDefinitions(game.index, md.reference, md.part);
   }
   const found = chainAtToken(value, index);
   if (!found) {
@@ -66,7 +72,7 @@ export function definitionAt(analysis: DocumentAnalysis, offset: number, game: G
   }
   const named = namedItemAt(analysis, offset);
   if (named) {
-    return namedItemDefinitions(named, analysis.document);
+    return namedItemDefinitions(named, analysis.document, game?.index);
   }
   if (!game) {
     return [];

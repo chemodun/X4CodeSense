@@ -3,7 +3,7 @@ import { CompletionItemKind, Location, Range, type CompletionItem, type TextEdit
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { XmlElement } from '../xml/xmlStructure';
 import type { DocumentVariables, ScriptVariable, VariableOccurrence, VariableTable } from '../variables/variables';
-import { escapeMarkdown } from './markdown';
+import { escapeMarkdown, inlineCode } from './markdown';
 
 function describeTable(table: VariableTable): string {
   switch (table.kind) {
@@ -12,9 +12,9 @@ function describeTable(table: VariableTable): string {
     case 'global':
       return 'the global table';
     case 'remote':
-      return `\`${escapeMarkdown(table.name)}\``;
+      return inlineCode(table.name);
     default:
-      return `${table.kind} \`${escapeMarkdown(table.name)}\``;
+      return `${table.kind} ${inlineCode(table.name)}`;
   }
 }
 

@@ -1,6 +1,7 @@
 import {
   createConnection,
   DidChangeConfigurationNotification,
+  FileChangeType,
   ProposedFeatures,
   TextDocuments,
   TextDocumentSyncKind,
@@ -28,6 +29,9 @@ import {
   prepareRenameAt,
   referencesAt,
   renameAt,
+  ScriptIndex,
+  scriptFiles,
+  scriptFolders,
   type AnalysisContext,
   type DocumentAnalysis,
   type DocumentInfoParams,
@@ -35,6 +39,7 @@ import {
   type GameData,
   type TextDisplayOptions,
   type TextLoadOptions,
+  type XmlStructure,
 } from 'x4-script-core';
 
 /** Settings under the `x4CodeSense` section, mirrored from the client's package.json. */
@@ -71,6 +76,10 @@ let game: GameData | undefined;
 let workspaceFolders: string[] = [];
 /** What the loaded texts were read with, so they are read again only when that changes. */
 let textSources: string | undefined;
+/** What the script index is built from, so it is built again only when that changes. */
+let indexSources: string | undefined;
+/** Counts index builds: a build that is no longer the latest stops. */
+let indexGeneration = 0;
 
 /** The latest analysis of each open document. */
 const analysisByUri = new Map<string, DocumentAnalysis>();
@@ -133,6 +142,7 @@ function refreshGameData(): void {
   if (folder === game?.folder || (folder === undefined && game === undefined)) {
     return;
   }
+  indexSources = undefined;
   if (folder === undefined) {
     game = undefined;
     warn('x4CodeSense.unpackedFileLocation is not set: scripts are not validated against the game schemas and have no property completion');
@@ -205,15 +215,109 @@ function refreshTexts(): void {
   }
 }
 
+/**
+ * Builds the script index again when the folders it comes from changed. It is built in slices, so
+ * requests are answered meanwhile; until it is complete, what needs it is left out, then every open
+ * document is analysed again. A newer build stops an older one.
+ */
+async function refreshIndex(): Promise<void> {
+  if (!game) {
+    return;
+  }
+  const folders = scriptFolders(game.folder, extensionFolders());
+  const sources = JSON.stringify(folders);
+  if (sources === indexSources) {
+    return;
+  }
+  indexSources = sources;
+  const generation = ++indexGeneration;
+  const target = game;
+  const current = (): boolean => generation === indexGeneration && target === game;
+  const started = performance.now();
+  const index = new ScriptIndex();
+  for (const folder of folders) {
+    index.addFolder(folder.folder, folder.source);
+  }
+  const files = scriptFiles(folders);
+  let slice = performance.now();
+  for (const source of files) {
+    if (!current()) {
+      return;
+    }
+    try {
+      index.setText(source.file, readFileSync(source.file, 'utf8'), source.source);
+    } catch {
+      // A file that cannot be read is left out.
+    }
+    if (performance.now() - slice > 25) {
+      await new Promise((resolve) => setImmediate(resolve));
+      slice = performance.now();
+    }
+  }
+  if (!current()) {
+    return;
+  }
+  for (const document of documents.all()) {
+    indexOpenDocument(document, index);
+  }
+  target.index = index;
+  log(`indexed ${files.length} script files in ${(performance.now() - started).toFixed(0)} ms`);
+  reanalyzeAll();
+}
+
+/**
+ * Indexes an open script as it is in the editor, when it lies in an indexed script folder. Returns true
+ * when what other scripts see of it changed.
+ */
+function indexOpenDocument(document: TextDocument, index: ScriptIndex, structure?: XmlStructure): boolean {
+  const file = filePathOf(document.uri);
+  const source = file ? index.sourceOf(file) : undefined;
+  if (!file || !source) {
+    return false;
+  }
+  return structure ? index.setStructure(file, document.getText(), structure, source) : index.setText(file, document.getText(), source);
+}
+
+/** Reads a file of the index or the texts again from disk, or forgets it; returns true when that changed something. */
+function rereadFromDisk(file: string): boolean {
+  if (!game) {
+    return false;
+  }
+  let changed = false;
+  const exists = existsSync(file);
+  if (isTextFile(file)) {
+    const inReadFolder = game.texts.folders.some((folder) => path.resolve(folder).toLowerCase() === path.resolve(path.dirname(file)).toLowerCase());
+    const language = languageOfTextFile(path.basename(file));
+    const wanted = !textOptions().languages || language === '*' || (language !== undefined && textOptions().languages?.has(language));
+    if (!exists) {
+      changed = game.texts.hasFile(file);
+      game.texts.removeFile(file);
+    } else if (wanted && (inReadFolder || game.texts.hasFile(file))) {
+      game.texts.setFile(file, readFileSync(file, 'utf8'));
+      changed = true;
+    }
+  }
+  const source = game.index?.sourceOf(file);
+  if (game.index && source) {
+    changed = (exists ? game.index.setText(file, readFileSync(file, 'utf8'), source) : game.index.removeFile(file)) || changed;
+  }
+  return changed;
+}
+
 /** How hover, definition and completion show texts. */
 function textDisplay(): TextDisplayOptions {
   return { language: settings.languageNumber || '44', limitLanguage: settings.limitLanguageOutput };
 }
 
-/** The path of a document that is a text file (`t/0001-l044.xml`), or undefined. */
+/** True for a text file: `0001-l044.xml` or another language in a `t` folder. */
+function isTextFile(file: string): boolean {
+  return languageOfTextFile(path.basename(file)) !== undefined && path.basename(path.dirname(file)).toLowerCase() === 't';
+}
+
+/** The path of a document that is a text file, or undefined. */
 function textFileOf(uri: string): string | undefined {
   const file = filePathOf(uri);
-  return file && languageOfTextFile(path.basename(file)) !== undefined && path.basename(path.dirname(file)).toLowerCase() === 't' ? file : undefined;
+  return file && isTextFile(file) ? file : undefined;
 }
 
 /** Open text files count as they are in the editor, not as they are on disk. */
@@ -237,6 +341,7 @@ async function refreshSettings(): Promise<void> {
   );
   refreshGameData();
   refreshTexts();
+  void refreshIndex();
 }
 
 connection.onInitialized(async () => {
@@ -245,6 +350,7 @@ connection.onInitialized(async () => {
     await refreshSettings();
   } else {
     refreshGameData();
+    void refreshIndex();
   }
   if (workspaceFolderSupport) {
     connection.workspace.onDidChangeWorkspaceFolders((event) => {
@@ -253,9 +359,26 @@ connection.onInitialized(async () => {
       workspaceFolders = [...workspaceFolders.filter((folder) => !removed.has(folder)), ...added];
       refreshTexts();
       reanalyzeAll();
+      void refreshIndex();
     });
   }
   log('server initialized');
+});
+
+connection.onDidChangeWatchedFiles((params) => {
+  let changed = false;
+  for (const change of params.changes) {
+    const file = filePathOf(change.uri);
+    // An open document counts as it is in the editor.
+    if (!file || documents.get(change.uri)) {
+      continue;
+    }
+    changed = rereadFromDisk(file) || changed;
+    debug(`${change.uri}: ${change.type === FileChangeType.Deleted ? 'deleted' : 'changed'} on disk`);
+  }
+  if (changed) {
+    reanalyzeAll();
+  }
 });
 
 connection.onDidChangeConfiguration(async () => {
@@ -263,9 +386,11 @@ connection.onDidChangeConfiguration(async () => {
   reanalyzeAll();
 });
 
-function reanalyzeAll(): void {
+function reanalyzeAll(except?: string): void {
   for (const document of documents.all()) {
-    analyze(document);
+    if (document.uri !== except) {
+      analyze(document);
+    }
   }
 }
 
@@ -277,15 +402,22 @@ function analysisContext(): AnalysisContext {
     if (game.properties) {
       context.properties = game.properties;
     }
+    if (game.index) {
+      context.index = game.index;
+    }
   }
   return context;
 }
 
-/** Analyses one document and publishes its diagnostics. */
+/** Analyses one document and publishes its diagnostics; when other scripts see it differently now, they are analysed again. */
 function analyze(document: TextDocument): void {
   const started = performance.now();
   const analysis = analyzeDocument(document, analysisContext());
   analysisByUri.set(document.uri, analysis);
+  if (game?.index && analysis.structure && indexOpenDocument(document, game.index, analysis.structure)) {
+    debug(`${document.uri}: names seen by other scripts changed`);
+    reanalyzeAll(document.uri);
+  }
   const detection = analysis.detection;
   const description = detection.script
     ? `${detection.script.schema} '${detection.script.name}'`
@@ -310,14 +442,9 @@ documents.onDidChangeContent((event) => {
 documents.onDidClose((event) => {
   analysisByUri.delete(event.document.uri);
   void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
-  const textFile = textFileOf(event.document.uri);
-  if (textFile && game) {
-    // Back to the file on disk, which may not have the unsaved changes.
-    if (existsSync(textFile)) {
-      game.texts.setFile(textFile, readFileSync(textFile, 'utf8'));
-    } else {
-      game.texts.removeFile(textFile);
-    }
+  // Back to the file on disk, which may not have the unsaved changes.
+  const file = filePathOf(event.document.uri);
+  if (file && rereadFromDisk(file)) {
     reanalyzeAll();
   }
 });

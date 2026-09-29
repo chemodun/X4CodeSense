@@ -12,6 +12,8 @@ import { collectVariables, type DocumentVariables } from '../variables/variables
 import { validateVariables } from '../variables/validateVariables';
 import { collectNames, type DocumentNames } from '../names/namedItems';
 import { validateNames } from '../names/validateNames';
+import type { ScriptIndex } from '../project/scriptIndex';
+import { validateMdReferences } from '../project/validateMdReferences';
 import type { TextDatabase } from '../texts/textDatabase';
 import { validateTexts } from '../texts/validateTexts';
 
@@ -48,6 +50,16 @@ export interface AnalysisContext {
   texts?: TextDatabase;
   /** Report text references that no loaded text file defines. Defaults to true; needs `texts`. */
   validateTexts?: boolean;
+  /**
+   * The scripts of the game and the extensions. With it, and `validateNames`, interrupt library
+   * references that no script defines are reported.
+   */
+  index?: ScriptIndex;
+  /**
+   * Report `md.<Script>.<Cue>` naming a script or cue that no indexed script defines. Defaults to true;
+   * needs `index`, and is only as complete as the configured extension folders.
+   */
+  validateRemoteCues?: boolean;
 }
 
 /** Names of the cues and libraries of a script: they may start a chain like a keyword. */
@@ -137,8 +149,14 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     });
     if (context.validateNames ?? true) {
       analysis.diagnostics.push(
-        ...validateNames(analysis.names as DocumentNames, document, diagnosticSource, { cueReferences: context.validateCueReferences ?? true })
+        ...validateNames(analysis.names as DocumentNames, document, diagnosticSource, {
+          cueReferences: context.validateCueReferences ?? true,
+          ...(context.index ? { index: context.index } : {}),
+        })
       );
+    }
+    if (context.index && (context.validateRemoteCues ?? true)) {
+      analysis.diagnostics.push(...validateMdReferences(analysis, schema, context.index, document, diagnosticSource));
     }
     if (context.texts && (context.validateTexts ?? true)) {
       analysis.diagnostics.push(...validateTexts(structure, validation.declarations, schema, context.texts, document, diagnosticSource));

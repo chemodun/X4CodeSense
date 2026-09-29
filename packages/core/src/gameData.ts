@@ -5,6 +5,7 @@ import { Location, Range } from 'vscode-languageserver-types';
 import { loadScriptProperties } from './properties/loadScriptProperties';
 import type { ScriptProperties } from './properties/scriptProperties';
 import type { SourceLocation } from './sourceLocation';
+import { loadScriptIndex, type ScriptIndex } from './project/scriptIndex';
 import { loadTexts, type TextDatabase, type TextLoadOptions } from './texts/textDatabase';
 import { loadSchemas, type SchemaSet } from './xsd/loadSchemas';
 
@@ -17,14 +18,25 @@ export interface GameData {
   properties?: ScriptProperties;
   /** Texts of the game and of the extension folders it was loaded with; replaceable when those change. */
   texts: TextDatabase;
+  /**
+   * The scripts of the game and of the extension folders, for references between scripts. Absent until
+   * built: `loadGameData` builds it when asked, a server may build it later without blocking.
+   */
+  index?: ScriptIndex;
   /** Problems found while loading, for logging. */
   problems: string[];
   /** Converts a location in a game data file into an LSP location. */
   locationOf(location: SourceLocation): Location | undefined;
 }
 
-/** Loads the schemas, the script properties and the texts of an unpacked game folder, and the texts of extension folders. Never throws. */
-export function loadGameData(unpackedFolder: string, textOptions: TextLoadOptions = {}): GameData {
+export interface GameDataOptions extends TextLoadOptions {
+  /** Also index the scripts of the game and of the extension folders. */
+  index?: boolean;
+}
+
+/** Loads the schemas, the script properties and the texts of an unpacked game folder, the texts of extension folders, and optionally the script index. Never throws. */
+export function loadGameData(unpackedFolder: string, options: GameDataOptions = {}): GameData {
+  const textOptions: TextLoadOptions = options;
   const libraries = path.join(unpackedFolder, 'libraries');
   const schemas = loadSchemas(libraries);
   const properties = loadScriptProperties(libraries);
@@ -61,6 +73,9 @@ export function loadGameData(unpackedFolder: string, textOptions: TextLoadOption
   const data: GameData = { folder: unpackedFolder, schemas, problems, locationOf, texts: gameTexts };
   if (properties) {
     data.properties = properties;
+  }
+  if (options.index) {
+    data.index = loadScriptIndex(unpackedFolder, options.extensionFolders);
   }
   return data;
 }

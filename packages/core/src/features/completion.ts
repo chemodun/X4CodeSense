@@ -12,6 +12,7 @@ import type { VariableTable } from '../variables/variables';
 import { referenceKindOf } from '../names/namedItems';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
 import { namedItemCompletionItems } from './namedItems';
+import { mdCueCompletionItems, mdScriptCompletionItems } from './project';
 import { textIdCompletionItems, textPageCompletionItems, type TextDisplayOptions } from './texts';
 import { variableCompletionItems } from './variables';
 
@@ -171,7 +172,8 @@ class Completer {
     if (referenceKind && names) {
       // A label or interrupt library item, written as is: the whole value is the name.
       const range = this.range(attribute.valueStart, attribute.valueEnd);
-      for (const item of namedItemCompletionItems(names, referenceKind, element, this.analysis.document, range, expression.slice(0, index).trim())) {
+      const prefix = expression.slice(0, index).trim();
+      for (const item of namedItemCompletionItems(names, referenceKind, element, this.analysis.document, range, prefix, this.game?.index)) {
         this.add(item);
       }
       return;
@@ -192,6 +194,20 @@ class Completer {
     if (chain?.partial) {
       const partial = chain.partial;
       const range = this.range(offsetInValue(attribute, partial.start), offsetInValue(attribute, partial.end));
+      // `md.<Script>.<Cue>`: the names come from the scripts of the game and the extensions.
+      const scriptIndex = this.game?.index;
+      const [head, script] = chain.steps;
+      if (scriptIndex && head?.kind === 'identifier' && head.text === 'md') {
+        if (chain.steps.length === 1) {
+          for (const item of mdScriptCompletionItems(scriptIndex, range, partial.text)) {
+            this.add(item);
+          }
+        } else if (chain.steps.length === 2 && script.kind === 'identifier') {
+          for (const item of mdCueCompletionItems(scriptIndex, script.text, range, partial.text)) {
+            this.add(item);
+          }
+        }
+      }
       for (const completion of completeChain(chain, properties, schema)) {
         const item: CompletionItem = {
           label: completion.label,

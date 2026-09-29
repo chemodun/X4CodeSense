@@ -1,8 +1,9 @@
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
+import type { ScriptIndex } from '../project/scriptIndex';
 import type { DocumentNames, NamedItem, NamedOccurrence } from './namedItems';
 
-export type NameDiagnosticCode = 'label-undefined' | 'name-duplicate' | 'cue-undefined';
+export type NameDiagnosticCode = 'label-undefined' | 'name-duplicate' | 'cue-undefined' | 'library-undefined';
 
 export interface NameValidationOptions {
   /**
@@ -11,6 +12,8 @@ export interface NameValidationOptions {
    * on vanilla 9.00 the check finds 20 names, all vanilla defects (see the names corpus test).
    */
   cueReferences?: boolean;
+  /** The scripts of the game and the extensions: with it, interrupt library references no script defines are reported. */
+  index?: ScriptIndex;
 }
 
 /** What an item is called in messages. */
@@ -64,8 +67,12 @@ export function validateNames(names: DocumentNames, document: TextDocument, sour
     if (occurrence.kind === 'label') {
       const where = occurrence.items[0].scope.startsWith('attention#') ? 'in this attention block' : 'in any attention block';
       report(occurrence, 'label-undefined', `Label '${occurrence.name}' is not defined ${where}`);
-    } else if (occurrence.kind === 'cue' && (options.cueReferences ?? true) && !occurrence.guarded) {
-      report(occurrence, 'cue-undefined', `'${occurrence.name}' is no keyword and no cue of this script`);
+    } else if (occurrence.kind === 'cue') {
+      if ((options.cueReferences ?? true) && !occurrence.guarded) {
+        report(occurrence, 'cue-undefined', `'${occurrence.name}' is no keyword and no cue of this script`);
+      }
+    } else if (options.index && options.index.libraryItems(occurrence.kind, occurrence.name).length === 0) {
+      report(occurrence, 'library-undefined', `${itemNoun(occurrence)} '${occurrence.name}' is not defined in any known script`);
     }
   }
   diagnostics.sort((a, b) => a.range.start.line - b.range.start.line || a.range.start.character - b.range.start.character);

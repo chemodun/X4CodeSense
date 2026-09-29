@@ -152,6 +152,34 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     }
   });
 
+  it('reads other extensions for references without checking them', async () => {
+    const dependency = path.join(workDir, 'dependencies', 'dep_mod');
+    mkdirSync(path.join(dependency, 'aiscripts'), { recursive: true });
+    // A broken script there would be a finding if the folder were checked.
+    writeFileSync(
+      path.join(dependency, 'aiscripts', 'lib.dep.xml'),
+      '<aiscript name="lib.dep">\n  <interrupts>\n    <library>\n      <handler name="DepHandler"/>\n    </library>\n  </interrupts>\n  <attention min="1"><actions><bogus/></actions></attention>\n</aiscript>\n'
+    );
+    const user = path.join(extension, 'aiscripts', 'order.user.xml');
+    await withFile(
+      user,
+      '<aiscript name="order.user">\n  <interrupts>\n    <handler ref="DepHandler"/>\n  </interrupts>\n  <attention min="1"><actions/></attention>\n</aiscript>\n',
+      async () => {
+        const alone = await run('--unpacked', unpacked, extension);
+        expect(alone.code).toBe(1);
+        expect(lines(alone)).toEqual([
+          `${user}:3:19: Interrupt handler 'DepHandler' is not defined in any known script [library-undefined]`,
+          '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 1 finding(s)',
+        ]);
+        const withDependency = await run('--unpacked', unpacked, '--extensions', path.dirname(dependency), extension);
+        expect(withDependency.code).toBe(0);
+        expect(lines(withDependency)).toEqual(['4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 0 finding(s)']);
+        expect((await run('--unpacked', unpacked, `--extensions=${path.join(workDir, 'missing')}`, extension)).code).toBe(2);
+        expect((await run('--unpacked', unpacked, extension, '--extensions')).code).toBe(2);
+      }
+    ).finally(() => rmSync(path.dirname(dependency), { recursive: true, force: true }));
+  });
+
   it('finds extensions one level below the given folder', async () => {
     const result = await run(workDir);
     expect(result.code).toBe(0);
