@@ -60,7 +60,7 @@ Then, in the package's settings on npmjs.com, _Require two-factor authentication
 
 ## Lineage and credits
 
-X4CodeSense is the successor of [X4CodeComplete](https://github.com/archenovalis/X4CodeComplete) (MIT), started by Cgetty and continued by archenovalis and Chem O'Dun, who did much of the work on it. X4CodeSense is written anew around a language server, and builds on the ideas of that extension and the experience gained with it.
+X4CodeSense is the successor of [X4CodeComplete](https://github.com/archenovalis/X4CodeComplete) (MIT), started by Cgetty and continued by archenovalis. It is written anew around a language server, building on the ideas of X4CodeComplete and on the valuable experience gained during its development.
 
 - [Egosoft](https://www.egosoft.com) for the game.
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.

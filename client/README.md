@@ -63,7 +63,7 @@ Also in the menu the status bar item opens.
 ## Credits
 
 - [Egosoft](https://www.egosoft.com) for the game.
-- Cgetty, who started X4CodeComplete, and archenovalis, who continued it with Chem O'Dun: this extension builds on its ideas and the experience gained with it.
+- Cgetty, who started X4CodeComplete, and archenovalis, who continued it: this extension builds on its ideas and on the valuable experience gained during its development.
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## Changelog
