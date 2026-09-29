@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   CodeActionRequest,
   CompletionRequest,
@@ -36,13 +36,23 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
+  WorkDoneProgress,
+  WorkDoneProgressCreateRequest,
   type CodeAction,
   type DocumentSymbol,
   type Location,
   type ProtocolConnection,
   type PublishDiagnosticsParams,
 } from 'vscode-languageserver/node';
-import { DocumentInfoRequestMethod, type DocumentInfoResult } from '../../core/src';
+import {
+  DocumentInfoRequestMethod,
+  loadGameData,
+  PatchComparisonRequestMethod,
+  StatusNotificationMethod,
+  type DocumentInfoResult,
+  type PatchComparisonResult,
+  type ServerStatus,
+} from '../../core/src';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverEntry = path.resolve(here, '../src/server.ts');
@@ -63,8 +73,31 @@ const clientSettings: Record<string, unknown> = {
 const mdText = '<?xml version="1.0"?>\n<mdscript name="Sample" xsi:noNamespaceSchemaLocation="md.xsd">\n  <cues />\n</mdscript>\n';
 const aiText = '<aiscript name="order.sample" version="1">\n</aiscript>\n';
 
+/** Every status the server sent, and its progress as `begin: message`, `report: message` and `end`. */
+const statuses: ServerStatus[] = [];
+const progress: string[] = [];
+/** Waiting for a status: each returns true once it took one. The connection has one handler per method. */
+const statusWaiters = new Set<(status: ServerStatus) => boolean>();
+
 async function documentInfo(uri: string): Promise<DocumentInfoResult> {
   return connection.sendRequest<DocumentInfoResult>(DocumentInfoRequestMethod, { uri });
+}
+
+/** Resolves with the latest status when `accept` takes it, else with the next one it takes. */
+function statusWhere(accept: (status: ServerStatus) => boolean): Promise<ServerStatus> {
+  const latest = statuses[statuses.length - 1];
+  if (latest && accept(latest)) {
+    return Promise.resolve(latest);
+  }
+  return new Promise((resolve) => {
+    statusWaiters.add((status) => {
+      if (accept(status)) {
+        resolve(status);
+        return true;
+      }
+      return false;
+    });
+  });
 }
 
 /**
@@ -113,11 +146,26 @@ beforeAll(async () => {
   connection = createProtocolConnection(new StreamMessageReader(child.stdout!), new StreamMessageWriter(child.stdin!));
   connection.onRequest(ConfigurationRequest.type, (params) => params.items.map(() => ({ ...clientSettings })));
   connection.onRequest(RegistrationRequest.type, () => undefined);
+  connection.onNotification(StatusNotificationMethod, (status: ServerStatus) => {
+    statuses.push(status);
+    for (const waiter of [...statusWaiters]) {
+      if (waiter(status)) {
+        statusWaiters.delete(waiter);
+      }
+    }
+  });
+  connection.onRequest(WorkDoneProgressCreateRequest.type, ({ token }) => {
+    connection.onProgress(WorkDoneProgress.type, token, (value) => progress.push(value.kind === 'end' ? 'end' : `${value.kind}: ${value.message}`));
+  });
   connection.listen();
   const result = await connection.sendRequest(InitializeRequest.type, {
     processId: process.pid,
     rootUri: null,
-    capabilities: { workspace: { configuration: true, workspaceFolders: true }, textDocument: { completion: { completionItem: { snippetSupport: true } } } },
+    capabilities: {
+      workspace: { configuration: true, workspaceFolders: true },
+      textDocument: { completion: { completionItem: { snippetSupport: true } } },
+      window: { workDoneProgress: true },
+    },
   });
   expect(result.capabilities.textDocumentSync).toBe(TextDocumentSyncKind.Incremental);
   expect(result.capabilities.completionProvider?.triggerCharacters).toEqual(expect.arrayContaining(['<', '/', '@', "'"]));
@@ -139,6 +187,29 @@ afterAll(async () => {
     child.kill();
     rmSync(workDir, { recursive: true, force: true });
   }
+});
+
+describe('status', () => {
+  it('tells the client what it reads and when it is ready, with progress meanwhile', async () => {
+    const ready = await statusWhere((status) => status.state === 'ready');
+    expect(ready).toEqual({
+      state: 'ready',
+      gameFolder: unpacked,
+      schemas: ['aiscripts', 'diff', 'md'],
+      properties: true,
+      texts: ready.texts,
+      textFiles: 2,
+      scripts: 0,
+      dlcs: [],
+      extensions: [],
+      problems: loadGameData(unpacked).problems.length,
+    });
+    expect(ready.texts).toBeGreaterThan(0);
+    expect(statuses.map((status) => status.state)).toEqual(['loading', 'indexing', 'ready']);
+    expect(statuses[0].gameFolder).toBeUndefined();
+    // The fixture's index is built before the client has made room for its progress, which then only ends.
+    await vi.waitFor(() => expect(progress).toEqual(['begin: reading the game files', 'end', 'end']));
+  });
 });
 
 describe('language server over stdio', () => {
@@ -241,11 +312,23 @@ describe('diagnostics', () => {
     const withoutSchemas = nextDiagnostics(uri);
     await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
     expect(summarize(await withoutSchemas)).toEqual([]);
+    expect(await statusWhere((status) => status.gameFolder === undefined)).toEqual({
+      state: 'ready',
+      schemas: [],
+      properties: false,
+      texts: 0,
+      textFiles: 0,
+      scripts: 0,
+      dlcs: [],
+      extensions: [],
+      problems: 0,
+    });
 
     clientSettings.unpackedFileLocation = unpacked;
     const restored = nextDiagnostics(uri);
     await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
     expect(summarize(await restored).length).toBe(3);
+    expect((await statusWhere((status) => status.state === 'ready' && status.gameFolder === unpacked)).schemas).toHaveLength(3);
   });
 
   it('publishes nothing for XML that is not a script', async () => {
@@ -658,6 +741,23 @@ describe('patches', () => {
     const workspace = { uri: pathToFileURL(mods).toString(), name: 'patchmods' };
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
     expect(summarize(await open(patchUri, patchText))).toEqual([]);
+    expect((await statusWhere((status) => status.state === 'ready' && status.extensions.includes('patcher'))).extensions).toEqual(['base', 'patcher']);
+
+    // What the status bar tells of a patch, and the comparison of its target before and after it.
+    expect((await documentInfo(patchUri)).patchTarget).toEqual({
+      name: 'extensions/base/md/api.xml',
+      file: fileURLToPath(apiUri),
+      source: 'base',
+      earlier: [],
+    });
+    const compared = await connection.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, { uri: patchUri });
+    expect(compared).toEqual({
+      name: 'extensions/base/md/api.xml',
+      file: fileURLToPath(apiUri),
+      before: apiText,
+      after: apiText.replace('<cue name="Register"/>', '<cue name="Register" instantiate="true"/>'),
+    });
+    expect(await connection.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, { uri: 'file:///mod/md/Sample.xml' })).toBeNull();
 
     // Renaming the cue in the editor leaves the patch's path without a match, before saving.
     const unmatched = diagnosticsCount(patchUri, 1);

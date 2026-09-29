@@ -6,6 +6,7 @@ import type { Range } from 'vscode-languageserver-types';
 import {
   analyzeText,
   attributeNamed,
+  comparePatch,
   completionAt,
   definitionAt,
   evaluateXPath,
@@ -19,6 +20,7 @@ import {
   renameAt,
   scriptFolders,
   sourceRange,
+  sourcesOf,
   type AnalysisContext,
   type DocumentAnalysis,
   type PatchNode,
@@ -80,6 +82,20 @@ describe('patch targets', () => {
       'mods/late_mod/extensions/absent_mod/md late_mod -> extensions/absent_mod/md',
       'mods/late_mod/extensions/base_mod/md late_mod -> extensions/base_mod/md at mods/base_mod/md',
     ]);
+  });
+
+  it('tells the DLCs in the game folder from the other extensions', () => {
+    const folders = [
+      { folder: path.join(gameFolder, 'md'), source: 'game' },
+      { folder: path.join(gameFolder, 'extensions', 'ego_dlc_a', 'md'), source: 'ego_dlc_a' },
+      { folder: path.join(gameFolder, 'Extensions', 'ego_dlc_a', 'aiscripts'), source: 'ego_dlc_a' },
+      { folder: path.join(modsFolder, 'base_mod', 'md'), source: 'ws_12345' },
+      { folder: path.join(modsFolder, 'late_mod', 'extensions', 'base_mod', 'md'), source: 'late_mod' },
+      { folder: path.join(`${gameFolder}_other`, 'extensions', 'near', 'md'), source: 'near' },
+    ];
+    expect(sourcesOf(folders, gameFolder)).toEqual({ dlcs: ['ego_dlc_a'], extensions: ['ws_12345', 'late_mod', 'near'] });
+    expect(sourcesOf(folders, undefined)).toEqual({ dlcs: [], extensions: ['ego_dlc_a', 'ws_12345', 'late_mod', 'near'] });
+    expect(sourcesOf(scriptFolders(gameFolder, [modsFolder]), gameFolder)).toEqual({ dlcs: [], extensions: ['ws_12345', 'early_mod', 'late_mod'] });
   });
 
   it('ties a patch to the file it changes, or tells why there is none', () => {
@@ -208,7 +224,7 @@ describe('what a patch brings in, checked where it lands', () => {
     expect(back('<cue name="Late" />')).toBe('<cue name="Late" />');
     expect(back('<set_value name="$b" exact="2" />')).toBe('<set_value name="$b" exact="2" />');
     // A value set by `replace .../@exact`, and an attribute added with `type="@instantiate"`: name and value.
-    expect(back('exact="2">', '2')).toBe('2');
+    expect(back('exact="2"/>', '2')).toBe('2');
     expect(back('instantiate="true"', 'instantiate')).toBe('instantiate');
     expect(back('instantiate="true"', 'true')).toBe('true');
     // The target's own text is no piece of the patch.
@@ -440,6 +456,56 @@ describe('editor features in patches', () => {
   });
 });
 
+describe('the target before and after a patch', () => {
+  const target = readFileSync(setup, 'utf8');
+  const withEarly = target.replace('<cue name="Later" />\n', '<cue name="Later" />\n    <cue name="Early" />\n');
+
+  it('writes the target as its file has it, then with each change in place', () => {
+    const early = comparePatch(analyzeFile(earlyPatch).patch!, index);
+    expect(early).toEqual({ name: 'md/setup.xml', file: setup, before: target, after: withEarly });
+    // Before: early_mod's patch applied. After: only the lines the patch changes differ; what it brings in
+    // keeps its indentation from the patch, a changed self-closing element stays so.
+    const late = comparePatch(analyzeFile(latePatch).patch!, index);
+    expect(late?.before).toBe(withEarly);
+    expect(late?.after).toBe(
+      withEarly
+        .replace(
+          '<set_value name="$count" exact="1" />\n        <!-- patchmarker -->\n',
+          '<set_value name="$count" exact="2"/>\n    <set_value name="$a" exact="1" />\n    <set_value name="$b" exact="2" />\n'
+        )
+        .replace('<cue name="Later" />', '<cue name="Later" instantiate="true"/>')
+        .replace('<cue name="Early" />\n', '<cue name="Early" />\n    <cue name="Late" />\n')
+    );
+  });
+
+  it("keeps each line's own line break", () => {
+    const edited = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const crlf = target.replace(/\n/g, '\r\n');
+    edited.setStructure(setup, crlf, parseXml(crlf), 'game', true);
+    const compared = comparePatch(analyzeFile(earlyPatch, undefined, { ...context, index: edited }).patch!, edited);
+    expect(compared?.before).toBe(crlf);
+    expect(compared?.after).toBe(crlf.replace('<cue name="Later" />\r\n', '<cue name="Later" />\r\n    <cue name="Early" />\n'));
+  });
+
+  it('keeps the start of the file: a byte order mark, the XML declaration, both or neither', () => {
+    const body = target.slice(target.indexOf('<!--'));
+    const declaration = target.slice(0, target.indexOf('<!--'));
+    const byteOrderMark = String.fromCharCode(0xfeff);
+    for (const start of ['', byteOrderMark, declaration, byteOrderMark + declaration]) {
+      const edited = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+      edited.setStructure(setup, start + body, parseXml(start + body), 'game', true);
+      const compared = comparePatch(analyzeFile(earlyPatch, undefined, { ...context, index: edited }).patch!, edited);
+      expect(compared?.before, JSON.stringify(start)).toBe(start + body);
+      expect(compared?.after, JSON.stringify(start)).toBe(start + body.replace('<cue name="Later" />\n', '<cue name="Later" />\n    <cue name="Early" />\n'));
+    }
+  });
+
+  it('has nothing to compare without a target file', () => {
+    expect(comparePatch(analyzeFile(misplacedPatch).patch!, index)).toBeUndefined();
+    expect(comparePatch(analyzeFile(absentPatch).patch!, index)).toBeUndefined();
+  });
+});
+
 describe('patch documents without the index', () => {
   const text = [
     '<diff>',
@@ -502,6 +568,16 @@ describe('patches while typing', () => {
     const later = patched?.elements.find((element) => element.name === 'cue' && attributeNamed(element, 'name')?.value === 'Later');
     expect(later?.parent?.name).toBe('cues');
     expect(covered(analysis, 'unknown-attribute')).toEqual(['exa']);
+  });
+
+  it('compares a half-typed patch with its target, which it leaves as it was before', () => {
+    const before = comparePatch(analyzeFile(latePatch).patch!, index)?.before;
+    for (let cut = full.indexOf('<diff>') + '<diff>'.length; cut <= full.length; cut += 7) {
+      const analysis = analyzeFile(latePatch, full.slice(0, cut));
+      const compared = analysis.patch && comparePatch(analysis.patch, index);
+      expect(compared?.before, `cut at ${cut}`).toBe(before);
+      expect(compared?.after.startsWith('<?xml'), `cut at ${cut}`).toBe(true);
+    }
   });
 
   it('reports a half-typed path at the point where it stops', () => {

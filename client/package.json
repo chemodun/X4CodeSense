@@ -46,8 +46,63 @@
         "command": "x4CodeSense.restartServer",
         "title": "Restart Language Server",
         "category": "X4CodeSense"
+      },
+      {
+        "command": "x4CodeSense.selectGameFolder",
+        "title": "Select the Extracted Game Files...",
+        "category": "X4CodeSense"
+      },
+      {
+        "command": "x4CodeSense.showOutput",
+        "title": "Show Output",
+        "category": "X4CodeSense"
+      },
+      {
+        "command": "x4CodeSense.openSettings",
+        "title": "Open Settings",
+        "category": "X4CodeSense"
+      },
+      {
+        "command": "x4CodeSense.openPatchTarget",
+        "title": "Open the File This Patch Changes",
+        "category": "X4CodeSense",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "x4CodeSense.comparePatch",
+        "title": "Show What This Patch Changes",
+        "category": "X4CodeSense",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "x4CodeSense.showMenu",
+        "title": "Show Menu",
+        "category": "X4CodeSense"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "x4CodeSense.openPatchTarget",
+          "when": "x4CodeSense.documentKind == patch"
+        },
+        {
+          "command": "x4CodeSense.comparePatch",
+          "when": "x4CodeSense.documentKind == patch"
+        },
+        {
+          "command": "x4CodeSense.showMenu",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "x4CodeSense.comparePatch",
+          "when": "x4CodeSense.documentKind == patch && resourceScheme == file && resourceLangId == xml",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "X4CodeSense",
       "properties": {

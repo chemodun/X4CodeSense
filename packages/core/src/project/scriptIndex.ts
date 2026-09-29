@@ -1083,6 +1083,23 @@ export function scriptFolders(gameFolder: string | undefined, extensionFolders: 
   return folders;
 }
 
+/**
+ * The extensions whose script folders are read, by id in load order: those that lie in the game folder's
+ * `extensions` (its DLCs), and the others.
+ */
+export function sourcesOf(folders: readonly ScriptFolder[], gameFolder: string | undefined): { dlcs: string[]; extensions: string[] } {
+  const inGame = gameFolder === undefined ? undefined : `${keyOf(path.join(gameFolder, 'extensions'))}${path.sep}`;
+  const dlcs: string[] = [];
+  const extensions: string[] = [];
+  for (const folder of folders) {
+    if (folder.source === 'game' || dlcs.includes(folder.source) || extensions.includes(folder.source)) {
+      continue;
+    }
+    (inGame !== undefined && keyOf(folder.folder).startsWith(inGame) ? dlcs : extensions).push(folder.source);
+  }
+  return { dlcs, extensions };
+}
+
 /** Every script file of the given script folders, in order. */
 export function scriptFiles(folders: readonly ScriptFolder[]): ScriptSource[] {
   return folders.flatMap((folder) => xmlFiles(folder.folder).map((file) => ({ file, source: folder.source })));

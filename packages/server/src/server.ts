@@ -16,6 +16,7 @@ import {
   type InitializeParams,
   type InitializeResult,
   type Location,
+  type WorkDoneProgressServerReporter,
   type WorkspaceEdit,
 } from 'vscode-languageserver/node';
 import { existsSync, readFileSync } from 'node:fs';
@@ -24,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   analyzeDocument,
+  comparePatch,
   completionAt,
   definitionAt,
   DocumentInfoRequestMethod,
@@ -33,6 +35,7 @@ import {
   loadGameData,
   loadTexts,
   parseXml,
+  PatchComparisonRequestMethod,
   prepareRenameAt,
   quickFixes,
   referencesAt,
@@ -40,11 +43,16 @@ import {
   ScriptIndex,
   scriptFiles,
   scriptFolders,
+  sourcesOf,
+  StatusNotificationMethod,
   type AnalysisContext,
   type DocumentAnalysis,
   type DocumentInfoParams,
   type DocumentInfoResult,
   type GameData,
+  type PatchComparisonParams,
+  type PatchComparisonResult,
+  type ServerStatus,
   type TextDisplayOptions,
   type TextLoadOptions,
   type XmlStructure,
@@ -89,6 +97,14 @@ let textSources: string | undefined;
 let indexSources: string | undefined;
 /** Counts index builds: a build that is no longer the latest stops. */
 let indexGeneration = 0;
+/** The game folder being read, while it is. */
+let loadingFolder: string | undefined;
+/** True while the latest index build runs. */
+let indexing = false;
+/** What the latest complete index was built from: script files, and by id in load order the game's DLCs and the other extensions. */
+let indexed = { scripts: 0, dlcs: [] as string[], extensions: [] as string[] };
+/** The status last sent, so that only a change is sent. */
+let sentStatus: string | undefined;
 
 /** The latest analysis of each open document. */
 const analysisByUri = new Map<string, DocumentAnalysis>();
@@ -105,6 +121,34 @@ function debug(message: string): void {
   if (settings.debug) {
     log(message);
   }
+}
+
+/** Sends the client what the server is doing and what it has read, when that changed since it was last sent. */
+function sendStatus(): void {
+  const status: ServerStatus = {
+    state: loadingFolder !== undefined ? 'loading' : indexing ? 'indexing' : 'ready',
+    schemas: game ? [...Object.keys(game.schemas.schemas), ...(game.schemas.diff ? ['diff'] : [])].sort() : [],
+    properties: game?.properties !== undefined,
+    texts: game?.texts.textCount ?? 0,
+    textFiles: game?.texts.fileCount ?? 0,
+    scripts: game?.index ? indexed.scripts : 0,
+    dlcs: game?.index ? indexed.dlcs : [],
+    extensions: game?.index ? indexed.extensions : [],
+    problems: game?.problems.length ?? 0,
+  };
+  if (game) {
+    status.gameFolder = game.folder;
+  }
+  const sent = JSON.stringify(status);
+  if (sent !== sentStatus) {
+    sentStatus = sent;
+    void connection.sendNotification(StatusNotificationMethod, status);
+  }
+}
+
+/** Lets the messages sent so far go out before synchronous work holds the event loop. */
+function flush(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 /** The file system path of a `file:` uri; its plain path when the platform rejects it (no drive letter on Windows). */
@@ -147,10 +191,18 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   };
 });
 
-/** Loads the schemas and script properties of the unpacked game files, once per folder. */
-function refreshGameData(): void {
-  const folder = settings.unpackedFileLocation.trim() === '' ? undefined : settings.unpackedFileLocation;
-  if (folder === game?.folder || (folder === undefined && game === undefined)) {
+/** The game folder the settings ask for. */
+function wantedGameFolder(): string | undefined {
+  return settings.unpackedFileLocation.trim() === '' ? undefined : settings.unpackedFileLocation;
+}
+
+/**
+ * Loads the schemas and script properties of the unpacked game files, once per folder. The client shows
+ * progress meanwhile; a folder the settings no longer ask for when its turn comes is not read.
+ */
+async function refreshGameData(): Promise<void> {
+  const folder = wantedGameFolder();
+  if (folder === game?.folder || (folder === undefined && game === undefined) || (folder !== undefined && folder === loadingFolder)) {
     return;
   }
   indexSources = undefined;
@@ -159,21 +211,36 @@ function refreshGameData(): void {
     warn('x4CodeSense.unpackedFileLocation is not set: scripts are not validated against the game schemas and have no property completion');
     return;
   }
-  const started = performance.now();
-  const options = textOptions();
-  game = loadGameData(folder, options);
-  textSources = JSON.stringify(options, (_key, value: unknown) => (value instanceof Set ? [...(value as Set<string>)] : value));
-  overlayOpenTextFiles();
-  const schemas = Object.keys(game.schemas.schemas);
-  const properties = game.properties;
-  log(
-    `loaded ${schemas.length > 0 ? `schemas ${schemas.join(', ')}` : 'no schemas'}${properties ? `, ${properties.datatypes.size} datatypes and ${properties.keywords.length} keywords` : ', no script properties'}, ${game.texts.textCount} texts from ${game.texts.fileCount} files, from ${folder} in ${(performance.now() - started).toFixed(0)} ms`
-  );
-  for (const problem of game.problems.slice(0, 50)) {
-    warn(problem);
-  }
-  if (game.problems.length > 50) {
-    warn(`${game.problems.length - 50} more problems not shown`);
+  loadingFolder = folder;
+  sendStatus();
+  const progress = await connection.window.createWorkDoneProgress();
+  progress.begin('X4CodeSense', undefined, 'reading the game files');
+  await flush();
+  try {
+    if (wantedGameFolder() !== folder) {
+      return;
+    }
+    const started = performance.now();
+    const options = textOptions();
+    game = loadGameData(folder, options);
+    textSources = JSON.stringify(options, (_key, value: unknown) => (value instanceof Set ? [...(value as Set<string>)] : value));
+    overlayOpenTextFiles();
+    const schemas = Object.keys(game.schemas.schemas);
+    const properties = game.properties;
+    log(
+      `loaded ${schemas.length > 0 ? `schemas ${schemas.join(', ')}` : 'no schemas'}${properties ? `, ${properties.datatypes.size} datatypes and ${properties.keywords.length} keywords` : ', no script properties'}, ${game.texts.textCount} texts from ${game.texts.fileCount} files, from ${folder} in ${(performance.now() - started).toFixed(0)} ms`
+    );
+    for (const problem of game.problems.slice(0, 50)) {
+      warn(problem);
+    }
+    if (game.problems.length > 50) {
+      warn(`${game.problems.length - 50} more problems not shown`);
+    }
+  } finally {
+    if (loadingFolder === folder) {
+      loadingFolder = undefined;
+    }
+    progress.done();
   }
 }
 
@@ -244,36 +311,68 @@ async function refreshIndex(): Promise<void> {
   const generation = ++indexGeneration;
   const target = game;
   const current = (): boolean => generation === indexGeneration && target === game;
-  const started = performance.now();
-  const index = new ScriptIndex(target.schemas);
-  for (const folder of folders) {
-    index.addFolder(folder);
-  }
-  const files = scriptFiles(folders);
-  let slice = performance.now();
-  for (const source of files) {
+  indexing = true;
+  sendStatus();
+  // The build starts at once; progress shows once the client has made room for it, if it still runs then.
+  let finished = false;
+  let progress: WorkDoneProgressServerReporter | undefined;
+  void connection.window.createWorkDoneProgress().then((reporter) => {
+    if (finished) {
+      reporter.done();
+    } else {
+      progress = reporter;
+      reporter.begin('X4CodeSense', 0, 'indexing scripts');
+    }
+  });
+  try {
+    const started = performance.now();
+    const index = new ScriptIndex(target.schemas);
+    for (const folder of folders) {
+      index.addFolder(folder);
+    }
+    const files = scriptFiles(folders);
+    let slice = performance.now();
+    let reported = slice;
+    for (const [done, source] of files.entries()) {
+      if (!current()) {
+        return;
+      }
+      try {
+        index.setText(source.file, readFileSync(source.file, 'utf8'), source.source);
+      } catch {
+        // A file that cannot be read is left out.
+      }
+      if (performance.now() - slice > 25) {
+        if (slice - reported > 250) {
+          progress?.report(Math.floor((100 * done) / files.length), `indexing scripts: ${done} of ${files.length}`);
+          reported = slice;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        slice = performance.now();
+      }
+    }
     if (!current()) {
       return;
     }
-    try {
-      index.setText(source.file, readFileSync(source.file, 'utf8'), source.source);
-    } catch {
-      // A file that cannot be read is left out.
+    for (const document of documents.all()) {
+      indexOpenDocument(document, index);
     }
-    if (performance.now() - slice > 25) {
-      await new Promise((resolve) => setImmediate(resolve));
-      slice = performance.now();
+    target.index = index;
+    const { dlcs, extensions } = sourcesOf(folders, target.folder);
+    indexed = { scripts: files.length, dlcs, extensions };
+    log(
+      `indexed ${files.length} script files of the game, ${dlcs.length} DLC(s) and ${extensions.length} extension(s) in ${(performance.now() - started).toFixed(0)} ms`
+    );
+    debug(`DLCs and extensions, in load order: ${[...dlcs, ...extensions].join(', ')}`);
+    reanalyzeAll();
+  } finally {
+    finished = true;
+    progress?.done();
+    if (generation === indexGeneration) {
+      indexing = false;
+      sendStatus();
     }
   }
-  if (!current()) {
-    return;
-  }
-  for (const document of documents.all()) {
-    indexOpenDocument(document, index);
-  }
-  target.index = index;
-  log(`indexed ${files.length} script files in ${(performance.now() - started).toFixed(0)} ms`);
-  reanalyzeAll();
 }
 
 /**
@@ -351,9 +450,10 @@ async function refreshSettings(): Promise<void> {
   log(
     `settings: unpackedFileLocation='${settings.unpackedFileLocation}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} debug=${settings.debug}`
   );
-  refreshGameData();
+  await refreshGameData();
   refreshTexts();
   void refreshIndex();
+  sendStatus();
 }
 
 connection.onInitialized(async () => {
@@ -361,8 +461,9 @@ connection.onInitialized(async () => {
     await connection.client.register(DidChangeConfigurationNotification.type, { section: 'x4CodeSense' });
     await refreshSettings();
   } else {
-    refreshGameData();
+    await refreshGameData();
     void refreshIndex();
+    sendStatus();
   }
   if (workspaceFolderSupport) {
     connection.workspace.onDidChangeWorkspaceFolders((event) => {
@@ -372,6 +473,7 @@ connection.onInitialized(async () => {
       refreshTexts();
       reanalyzeAll();
       void refreshIndex();
+      sendStatus();
     });
   }
   log('server initialized');
@@ -391,6 +493,7 @@ connection.onDidChangeWatchedFiles((params) => {
   }
   if (changed) {
     reanalyzeAll();
+    sendStatus();
   }
 });
 
@@ -555,12 +658,22 @@ connection.onCodeAction((params): CodeAction[] => {
 });
 
 connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): DocumentInfoResult => {
-  const detection = analysisByUri.get(params.uri)?.detection;
+  const analysis = analysisByUri.get(params.uri);
+  const detection = analysis?.detection;
+  const patch = analysis?.patch;
+  const source = patch?.target.file === undefined ? undefined : game?.index?.sourceOf(patch.target.file);
   return {
     metadata: detection?.script,
     isDiff: detection?.isDiff ?? false,
     rootElement: detection?.rootElement,
+    patchTarget: patch ? { ...patch.target, ...(source ? { source } : {}), earlier: patch.earlier } : undefined,
   };
+});
+
+// The file a patch changes, before and after the patch, for the client to compare.
+connection.onRequest(PatchComparisonRequestMethod, (params: PatchComparisonParams): PatchComparisonResult => {
+  const patch = analysisByUri.get(params.uri)?.patch;
+  return (patch && game?.index && comparePatch(patch, game.index)) || null;
 });
 
 documents.listen(connection);

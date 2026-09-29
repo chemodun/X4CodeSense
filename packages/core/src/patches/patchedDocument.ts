@@ -9,8 +9,8 @@
  * that it closes where it ends and does not take in the nodes after it; a cut-off start tag whose values
  * are all closed is copied as written, with the whitespace after them, where a caret may be. Between
  * children, the text that separated them in their file is kept when they were neighbours there; otherwise
- * a line break is added. Added text (line breaks, `>`, quotes, the end tag of an element that had none)
- * comes from no file.
+ * the line breaks and indentation the next one has before it in its file are added. Added text (line
+ * breaks, indentation, `>`, quotes, the end tag of an element that had none) comes from no file.
  *
  * The text is analysed as the target script; the pieces take what the analysis finds back to the files,
  * and a caret in a file to its place in the text.
@@ -140,16 +140,19 @@ function writeSetAttribute(writer: Writer, attribute: PatchNodeAttribute, operat
   writer.add(quote);
 }
 
-/** The start tag of an element written out whole: as written when its attributes are, rebuilt otherwise. */
-function writeStartTag(writer: Writer, node: PatchNode, element: XmlElement): void {
+/**
+ * The start tag of an element written out whole: as written when its attributes are, rebuilt otherwise.
+ * An element written self-closing that still has no children stays so.
+ */
+function writeStartTag(writer: Writer, node: PatchNode, element: XmlElement, empty: boolean): void {
   const source = node.source;
   writer.starts.set(node, writer.offset);
   const kept =
     node.attributes.length === element.attributes.length &&
     node.attributes.every((attribute, index) => attribute.setBy === undefined && attribute.written === element.attributes[index]);
   if (kept && element.startTagClosed) {
-    writer.copy(source, element.start, element.selfClosing ? element.startTagEnd - 2 : element.startTagEnd);
-    if (element.selfClosing) {
+    writer.copy(source, element.start, element.selfClosing && !empty ? element.startTagEnd - 2 : element.startTagEnd);
+    if (element.selfClosing && !empty) {
       writer.add('>');
     }
     return;
@@ -170,7 +173,7 @@ function writeStartTag(writer: Writer, node: PatchNode, element: XmlElement): vo
       writeAttribute(writer, source, attribute.written);
     }
   }
-  writer.add('>');
+  writer.add(empty ? '/>' : '>');
 }
 
 interface Cursor {
@@ -178,7 +181,12 @@ interface Cursor {
   offset: number;
 }
 
-/** The text between two neighbours in the same file, or a line break when they were not neighbours there. */
+/**
+ * The text between two neighbours in the same file. When they were not neighbours there, the spaces and
+ * the line break that end the line of the one before, then the empty lines and indentation the next one
+ * has before it in its file, so that a comparison with the target shows only what changed; a line break
+ * when the next one has none before it.
+ */
 function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource, to: number | undefined): void {
   if (from && to !== undefined && from.source === source && from.offset <= to) {
     const markup = source.text.indexOf('<', from.offset);
@@ -187,7 +195,25 @@ function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource,
       return;
     }
   }
-  writer.add('\n');
+  let start = to ?? 0;
+  while (start > 0 && /\s/.test(source.text[start - 1])) {
+    start--;
+  }
+  const space = to === undefined ? '' : source.text.slice(start, to);
+  const lineBreak = space.search(/[\r\n]/);
+  if (lineBreak === -1) {
+    writer.add('\n');
+    return;
+  }
+  const rest = space.slice(lineBreak);
+  const before = from?.source.text ?? '';
+  const lineEnd = from?.offset ?? 0;
+  let end = lineEnd;
+  while (before[end] === ' ' || before[end] === '\t') {
+    end++;
+  }
+  const ending = before.startsWith('\r\n', end) ? 2 : before[end] === '\n' || before[end] === '\r' ? 1 : 0;
+  writer.add(ending === 0 ? rest : before.slice(lineEnd, end + ending) + rest.slice(rest.startsWith('\r\n') ? 2 : 1));
 }
 
 function writeChildren(writer: Writer, node: PatchNode, from: Cursor | undefined, to: number | undefined): void {
@@ -212,14 +238,25 @@ function writeNode(writer: Writer, node: PatchNode): void {
   }
   const element = node.element;
   if (!element) {
-    writeChildren(writer, node, { source, offset: 0 }, source.text.length);
+    // The XML declaration, which is no node of the tree, after the byte order mark when there is one.
+    const text = source.text;
+    const start = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+    const end = text.startsWith('<?xml', start) ? text.indexOf('?>', start) : -1;
+    const next = text.indexOf('<', start + 1);
+    const declaration = end !== -1 && (next === -1 || next > end) ? end + 2 : 0;
+    writer.copy(source, 0, declaration);
+    writeChildren(writer, node, { source, offset: declaration }, source.text.length);
     return;
   }
   if (!node.changed && isComplete(element, source.text)) {
     writer.copy(source, element.start, element.end);
     return;
   }
-  writeStartTag(writer, node, element);
+  const empty = element.selfClosing && element.startTagClosed && node.children.length === 0;
+  writeStartTag(writer, node, element, empty);
+  if (empty) {
+    return;
+  }
   const closed = element.endTag && source.text.charCodeAt(element.endTag.end - 1) === 0x3e;
   writeChildren(writer, node, element.selfClosing ? undefined : { source, offset: element.startTagEnd }, closed ? element.endTag?.start : undefined);
   if (closed && element.endTag) {

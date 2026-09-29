@@ -4,7 +4,8 @@
  * committed, applied to the file it changes after the patches loaded before it, and what it brings in
  * checked in the patched file. Every operation of the DLCs applies and their patches get no diagnostic;
  * in the extensions, what does not apply and what is wrong where it lands is pinned with the reason. The
- * editor features see each operation's target as it found it, and what it brings in where it lands.
+ * editor features see each operation's target as it found it, and what it brings in where it lands. The
+ * target before and after each patch, as the client compares them, differ only where the patch changes it.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -12,16 +13,20 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeText,
+  attributeNamed,
+  comparePatch,
   hoverAt,
   loadGameData,
   offsetInValue,
+  parseXml,
   pathNamesOf,
   referencesAt,
   scriptSchemaOf,
   type AnalysisContext,
   type DocumentAnalysis,
+  type PatchComparison,
 } from '../src';
-import { bestOf, patchCeilingMs } from './timing';
+import { bestOf, fileCeilingMs, patchCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
 const mods = process.env.X4_MODS;
@@ -132,6 +137,71 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     expect(inserted).toBeGreaterThan(600);
     expect(names).toBeGreaterThan(400);
     expect(wrong).toEqual([]);
+  });
+
+  it('compares every patch with its target, where only what it changes differs', () => {
+    const wrong: string[] = [];
+    let compared = 0;
+    let asFiled = 0;
+    let addOnly = 0;
+    let slowest = { ms: 0, run: (): void => undefined, where: '' };
+    for (const { file, analysis } of analyses) {
+      const patch = analysis.patch;
+      if (!index || !patch?.target.file) {
+        continue;
+      }
+      const where = `${path.basename(path.dirname(path.dirname(file)))}/${path.basename(file)}`;
+      const run = (): PatchComparison | undefined => comparePatch(patch, index);
+      const started = performance.now();
+      const comparison = run();
+      const ms = performance.now() - started;
+      if (ms > slowest.ms) {
+        slowest = { ms, run, where };
+      }
+      if (!comparison) {
+        wrong.push(`${where}: nothing to compare`);
+        continue;
+      }
+      compared++;
+      // Without earlier patches, the target as its file has it, to the byte order mark and the line breaks.
+      if (patch.earlier.length === 0) {
+        asFiled++;
+        if (comparison.before !== readFileSync(patch.target.file, 'utf8')) {
+          wrong.push(`${where}: before is not the file`);
+        }
+      }
+      if (parseXml(comparison.after).problems.length > 0) {
+        wrong.push(`${where}: after is not well-formed`);
+      }
+      // A patch that only adds elements keeps every line of the target in order; a self-closing element that
+      // gets children loses its slash.
+      const operations = analysis.structure?.roots[0]?.children ?? [];
+      if (operations.every((operation) => operation.name === 'add' && !attributeNamed(operation, 'type'))) {
+        addOnly++;
+        const after = comparison.after.split('\n');
+        let at = 0;
+        for (const line of comparison.before.split('\n')) {
+          const opened = line.replace(/\s*\/>(\r?)$/, '>$1');
+          while (at < after.length && after[at] !== line && after[at].replace(/\s*>(\r?)$/, '>$1') !== opened) {
+            at++;
+          }
+          if (at === after.length) {
+            wrong.push(`${where}: lost the line ${line.trim()}`);
+            break;
+          }
+          at++;
+        }
+      }
+    }
+    const best = bestOf(5, slowest.run);
+    console.log(
+      `${compared} patches compared with their targets, ${asFiled} of them without earlier patches, ${addOnly} adding elements only; slowest ${slowest.where}: first ${slowest.ms.toFixed(1)} ms, best of 5 ${best.toFixed(1)} ms`
+    );
+    expect(compared).toBeGreaterThan(100);
+    expect(asFiled).toBeGreaterThan(50);
+    expect(addOnly).toBeGreaterThan(70);
+    expect(wrong).toEqual([]);
+    expect(best).toBeLessThan(fileCeilingMs);
   });
 
   // A patch document's analysis includes the file it changes: twice the ceiling of a file.

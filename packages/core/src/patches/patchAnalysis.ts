@@ -10,7 +10,7 @@
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { PatchTarget, ScriptIndex } from '../project/scriptIndex';
 import type { XmlElement } from '../xml/xmlStructure';
-import type { PatchedText } from './patchedDocument';
+import { writePatchedTree, type PatchedText } from './patchedDocument';
 import { applyPatch, documentTree, type PatchNode, type PatchOperation, type PatchSource } from './patchTree';
 
 export interface PatchAnalysis {
@@ -83,4 +83,29 @@ export function treeBefore(patch: PatchAnalysis, operation: XmlElement, index: S
   }
   applyPatch(tree.document, patch.source, tree.uncertain, operation);
   return tree.document;
+}
+
+/** The file a patch changes, written out as the game loads it before the patch and after it. */
+export interface PatchComparison {
+  /** How the patch names the file: `md/setup.xml`. */
+  name: string;
+  file: string;
+  /** With the earlier patches applied. */
+  before: string;
+  /** With this patch applied too. */
+  after: string;
+}
+
+/**
+ * The target of a patch before and after it, both written out the same way, so that only what the patch
+ * changes differs between them. Undefined when the patch has no target file.
+ */
+export function comparePatch(patch: PatchAnalysis, index: ScriptIndex): PatchComparison | undefined {
+  const file = patch.target.file;
+  const tree = file === undefined || !patch.document ? undefined : earlierTree(patch.source.file, file, index);
+  if (file === undefined || !tree || !patch.document) {
+    return undefined;
+  }
+  const after = patch.patched?.written ?? writePatchedTree(patch.document);
+  return { name: patch.target.name, file, before: writePatchedTree(tree.document).text, after: after.text };
 }

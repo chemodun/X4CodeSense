@@ -1,10 +1,44 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
-import { DocumentInfoRequestMethod, schemaDisplayName, type DocumentInfoParams, type DocumentInfoResult } from 'x4-script-core';
+import {
+  DocumentInfoRequestMethod,
+  PatchComparisonRequestMethod,
+  schemaDisplayName,
+  StatusNotificationMethod,
+  type DocumentInfoParams,
+  type DocumentInfoResult,
+  type PatchComparisonParams,
+  type PatchComparisonResult,
+  type ScriptSchema,
+  type ServerStatus,
+} from 'x4-script-core';
+
+/** The scheme of the two sides of a patch comparison: the patch document's uri and the side are in the query. */
+const comparisonScheme = 'x4codesense-patch';
+
+/** The commands the status bar's tooltip may run. */
+const tooltipCommands = [
+  'x4CodeSense.selectGameFolder',
+  'x4CodeSense.showOutput',
+  'x4CodeSense.openSettings',
+  'x4CodeSense.restartServer',
+  'x4CodeSense.openPatchTarget',
+  'x4CodeSense.comparePatch',
+];
+
+const shortSchemaName: Record<ScriptSchema, string> = { md: 'MD', aiscripts: 'AI' };
 
 let client: LanguageClient | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
+/** What the server last said it does and has read; undefined while it starts. */
+let serverStatus: ServerStatus | undefined;
+/** What the server said of the active document. */
+let activeInfo: { document: vscode.TextDocument; info: DocumentInfoResult } | undefined;
+/** The value of the `x4CodeSense.documentKind` context key: `md`, `aiscripts`, `patch` or empty. */
+let documentKind = '';
+/** Counts status bar updates: an answer to an older one is dropped. */
+let statusRequests = 0;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const serverModule = context.asAbsolutePath(path.join('dist', 'server.js'));
@@ -20,27 +54,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     synchronize: { configurationSection: 'x4CodeSense', fileEvents: xmlFiles },
     outputChannelName: 'X4CodeSense',
   };
-  client = new LanguageClient('x4CodeSense', 'X4CodeSense', serverOptions, clientOptions);
+  const languageClient = new LanguageClient('x4CodeSense', 'X4CodeSense', serverOptions, clientOptions);
+  client = languageClient;
+  languageClient.onNotification(StatusNotificationMethod, (status: ServerStatus) => {
+    serverStatus = status;
+    void updateStatusBar();
+  });
 
   statusBarItem = vscode.window.createStatusBarItem('x4CodeSense.documentInfo', vscode.StatusBarAlignment.Right, 100);
   statusBarItem.name = 'X4CodeSense';
-  statusBarItem.command = 'x4CodeSense.restartServer';
+  statusBarItem.command = 'x4CodeSense.showMenu';
   context.subscriptions.push(statusBarItem);
 
+  const comparisons = new PatchComparisons();
+  let changeTimer: NodeJS.Timeout | undefined;
   context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(comparisonScheme, comparisons),
     vscode.window.onDidChangeActiveTextEditor(() => void updateStatusBar()),
     vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document === vscode.window.activeTextEditor?.document) {
-        void updateStatusBar();
+      if (event.document.languageId !== 'xml' || event.document.uri.scheme !== 'file' || event.contentChanges.length === 0) {
+        return;
       }
+      // A change to a patch or to the file it changes: the status bar and open comparisons follow when typing pauses.
+      clearTimeout(changeTimer);
+      changeTimer = setTimeout(() => {
+        void updateStatusBar();
+        comparisons.refreshAll();
+      }, 300);
     }),
+    { dispose: () => clearTimeout(changeTimer) },
     vscode.commands.registerCommand('x4CodeSense.restartServer', async () => {
-      await client?.restart();
+      serverStatus = undefined;
       await updateStatusBar();
-    })
+      await client?.restart();
+    }),
+    vscode.commands.registerCommand('x4CodeSense.showOutput', () => client?.outputChannel.show(true)),
+    vscode.commands.registerCommand('x4CodeSense.openSettings', () =>
+      vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
+    ),
+    vscode.commands.registerCommand('x4CodeSense.selectGameFolder', selectGameFolder),
+    vscode.commands.registerCommand('x4CodeSense.openPatchTarget', openPatchTarget),
+    vscode.commands.registerCommand('x4CodeSense.comparePatch', () => comparePatch(comparisons)),
+    vscode.commands.registerCommand('x4CodeSense.showMenu', showMenu)
   );
 
-  await client.start();
+  await languageClient.start();
   await updateStatusBar();
 }
 
@@ -49,27 +107,304 @@ export async function deactivate(): Promise<void> {
   client = undefined;
 }
 
+/** The kind of script the server found the document to be, `patch`, or undefined. */
+function kindOf(info: DocumentInfoResult | undefined): ScriptSchema | 'patch' | undefined {
+  return info?.metadata?.schema ?? (info?.isDiff ? 'patch' : undefined);
+}
+
+function setDocumentKind(kind: string | undefined): void {
+  if ((kind ?? '') !== documentKind) {
+    documentKind = kind ?? '';
+    void vscode.commands.executeCommand('setContext', 'x4CodeSense.documentKind', documentKind);
+  }
+}
+
+/** True when the game files are known to be missing: not set, or no schemas in them. */
+function gameFilesMissing(): boolean {
+  return serverStatus !== undefined && serverStatus.state !== 'loading' && serverStatus.schemas.length === 0;
+}
+
+/** Asks the server about the document in the active editor; the answer is undefined when it cannot tell now. */
+async function activeDocumentInfo(): Promise<{ document: vscode.TextDocument; info: DocumentInfoResult } | undefined> {
+  const document = vscode.window.activeTextEditor?.document;
+  if (!client || !document || document.languageId !== 'xml' || document.uri.scheme !== 'file') {
+    return undefined;
+  }
+  try {
+    const params: DocumentInfoParams = { uri: document.uri.toString() };
+    return { document, info: await client.sendRequest<DocumentInfoResult>(DocumentInfoRequestMethod, params) };
+  } catch {
+    // The server is starting or stopping.
+    return undefined;
+  }
+}
+
+/**
+ * Shows the active script or patch in the status bar: its kind and name, or the file a patch changes. A
+ * spinner while the server reads the game files or indexes the scripts, a warning when the game files
+ * are not set or hold no schemas. The tooltip tells what the server has read; a click opens the menu.
+ */
 async function updateStatusBar(): Promise<void> {
-  if (!statusBarItem || !client) {
+  const item = statusBarItem;
+  if (!item) {
     return;
   }
-  const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== 'xml' || editor.document.uri.scheme !== 'file') {
-    statusBarItem.hide();
+  const request = ++statusRequests;
+  const active = await activeDocumentInfo();
+  if (request !== statusRequests) {
     return;
   }
-  const params: DocumentInfoParams = { uri: editor.document.uri.toString() };
-  const result = await client.sendRequest<DocumentInfoResult>(DocumentInfoRequestMethod, params);
-  if (result.metadata) {
-    const kind = schemaDisplayName[result.metadata.schema];
-    statusBarItem.text = `$(symbol-namespace) X4 ${kind}: ${result.metadata.name || '(unnamed)'}`;
-    statusBarItem.tooltip = `X4CodeSense: ${kind} '${result.metadata.name}'. Click to restart the language server.`;
-    statusBarItem.show();
-  } else if (result.isDiff) {
-    statusBarItem.text = '$(diff) X4 patch';
-    statusBarItem.tooltip = 'X4CodeSense: diff patch document. Click to restart the language server.';
-    statusBarItem.show();
+  activeInfo = active;
+  const kind = kindOf(active?.info);
+  setDocumentKind(kind);
+  if (!active || !kind) {
+    item.hide();
+    return;
+  }
+  const info = active.info;
+  const target = info.patchTarget;
+  const label = info.metadata
+    ? `X4 ${shortSchemaName[info.metadata.schema]}: ${info.metadata.name || '(unnamed)'}`
+    : `X4 patch${target ? `: ${target.name}` : ''}`;
+  const busy = serverStatus === undefined || serverStatus.state !== 'ready';
+  const missing = gameFilesMissing();
+  const icon = busy ? '$(sync~spin)' : missing ? '$(warning)' : kind === 'patch' ? '$(diff)' : '$(symbol-namespace)';
+  item.text = `${icon} ${label}`;
+  item.backgroundColor = missing ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+  item.tooltip = tooltip(info);
+  item.show();
+}
+
+/** Text as Markdown shows it literally: names such as extension ids may hold `_` or `*`. */
+function escaped(text: string): string {
+  return text.replace(/[\\`*_{}[\]()#+\-.!|<>~]/g, '\\$&');
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function listed(items: readonly string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+function plural(count: number, word: string, suffix = 's'): string {
+  return `${count.toLocaleString('en')} ${word}${count === 1 ? '' : suffix}`;
+}
+
+/**
+ * The tooltip of the status bar item. VS Code pads code spans in hovers, so no punctuation follows one:
+ * it would look detached.
+ */
+function tooltip(info: DocumentInfoResult): vscode.MarkdownString {
+  const lines: string[] = [];
+  const target = info.patchTarget;
+  if (info.metadata) {
+    lines.push(`**${schemaDisplayName[info.metadata.schema]}** \`${info.metadata.name}\``);
+  } else if (target?.file) {
+    const whose = target.source === 'game' ? "the game's file" : target.source ? `the file of ${escaped(target.source)}` : 'the file';
+    const earlier = target.earlier.length === 0 ? '' : `, after ${plural(target.earlier.length, 'earlier patch', 'es')}`;
+    lines.push(
+      `**Patch** of \`${target.name}\` (${whose}${earlier})`,
+      '',
+      '[Open the file it changes](command:x4CodeSense.openPatchTarget) · [Show what it changes](command:x4CodeSense.comparePatch)'
+    );
+  } else if (target) {
+    lines.push(`**Patch** of \`${target.name}\` has nothing to patch: ${escaped(target.missing ?? 'the file is not found')}`);
   } else {
-    statusBarItem.hide();
+    lines.push('**Patch**: the file it changes is known once the scripts are indexed');
+  }
+  lines.push('', '---', '');
+  const status = serverStatus;
+  if (!status) {
+    lines.push('$(sync~spin) The language server is starting.');
+  } else if (status.state === 'loading') {
+    lines.push('$(sync~spin) Reading the game files.');
+  } else if (status.gameFolder === undefined) {
+    lines.push(
+      '$(warning) The extracted game files are not set, so scripts are only checked for well-formedness. [Select the folder](command:x4CodeSense.selectGameFolder)'
+    );
+  } else if (status.schemas.length === 0) {
+    lines.push(
+      `$(warning) The game files hold no schemas, so scripts are only checked for well-formedness. [Select another folder](command:x4CodeSense.selectGameFolder) instead of \`${status.gameFolder}\``
+    );
+  } else {
+    const properties = status.properties ? 'script properties' : 'no script properties';
+    lines.push(`Game files: schemas ${status.schemas.join(', ')}, ${properties} and ${plural(status.texts, 'text')}, read from \`${status.gameFolder}\``);
+  }
+  if (status?.state === 'indexing') {
+    lines.push('', '$(sync~spin) Indexing the scripts.');
+  } else if (status?.state === 'ready' && status.gameFolder !== undefined) {
+    const sources = ['the game'];
+    if (status.dlcs.length > 0) {
+      sources.push(`its ${plural(status.dlcs.length, 'DLC')}`);
+    }
+    if (status.extensions.length > 5) {
+      sources.push(plural(status.extensions.length, 'extension'));
+    } else if (status.extensions.length > 0) {
+      sources.push(`the extension${status.extensions.length === 1 ? '' : 's'} ${listed(status.extensions.map(escaped))}`);
+    }
+    lines.push('', `Indexed: ${plural(status.scripts, 'script')} of ${listed(sources)}.`);
+  }
+  if (status && status.problems > 0) {
+    lines.push(
+      '',
+      `$(warning) ${status.problems} problem${status.problems === 1 ? '' : 's'} reading the game files: [see the output](command:x4CodeSense.showOutput)`
+    );
+  }
+  lines.push(
+    '',
+    '---',
+    '',
+    '[Output](command:x4CodeSense.showOutput) · [Settings](command:x4CodeSense.openSettings) · [Restart](command:x4CodeSense.restartServer)'
+  );
+  const markdown = new vscode.MarkdownString(lines.join('\n'), true);
+  markdown.isTrusted = { enabledCommands: tooltipCommands };
+  return markdown;
+}
+
+/** The commands of the status bar item, with those for a patch when the active document is one. */
+async function showMenu(): Promise<void> {
+  type Entry = vscode.QuickPickItem & { command: string };
+  const entries: Entry[] = [];
+  const target = activeInfo?.info.patchTarget;
+  if (kindOf(activeInfo?.info) === 'patch') {
+    entries.push(
+      { label: '$(go-to-file) Open the File This Patch Changes', description: target?.name, command: 'x4CodeSense.openPatchTarget' },
+      { label: '$(diff) Show What This Patch Changes', command: 'x4CodeSense.comparePatch' }
+    );
+  }
+  entries.push(
+    {
+      label: '$(folder-opened) Select the Extracted Game Files...',
+      description: serverStatus?.gameFolder ?? 'not set',
+      command: 'x4CodeSense.selectGameFolder',
+    },
+    { label: '$(output) Show Output', command: 'x4CodeSense.showOutput' },
+    { label: '$(settings-gear) Open Settings', command: 'x4CodeSense.openSettings' },
+    { label: '$(debug-restart) Restart Language Server', description: 'reads the game files and the scripts again', command: 'x4CodeSense.restartServer' }
+  );
+  const picked = await vscode.window.showQuickPick(entries, { title: 'X4CodeSense', placeHolder: 'Choose an action' });
+  if (picked) {
+    await vscode.commands.executeCommand(picked.command);
+  }
+}
+
+/** Asks for the folder of the extracted game files and sets it where the setting is set: the workspace, else the user settings. */
+async function selectGameFolder(): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration('x4CodeSense');
+  const current = configuration.get<string>('unpackedFileLocation', '').trim();
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    title: 'The extracted game files: the folder holding aiscripts, md, libraries and t',
+    openLabel: 'Use These Game Files',
+    ...(current ? { defaultUri: vscode.Uri.file(current) } : {}),
+  });
+  const folder = picked?.[0];
+  if (!folder) {
+    return;
+  }
+  const schemas = await Promise.all(['md.xsd', 'aiscripts.xsd'].map((file) => exists(vscode.Uri.joinPath(folder, 'libraries', file))));
+  if (!schemas.some(Boolean)) {
+    const useAnyway = 'Use It Anyway';
+    const choice = await vscode.window.showWarningMessage(
+      `${folder.fsPath} holds no libraries/md.xsd or libraries/aiscripts.xsd: it does not look like the extracted game files.`,
+      { modal: true },
+      useAnyway
+    );
+    if (choice !== useAnyway) {
+      return;
+    }
+  }
+  const inWorkspace = configuration.inspect<string>('unpackedFileLocation')?.workspaceValue !== undefined;
+  await configuration.update('unpackedFileLocation', folder.fsPath, inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+}
+
+async function exists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The patch document in the active editor, with what the server knows of it; tells the user when there is none. */
+async function activePatch(): Promise<{ document: vscode.TextDocument; info: DocumentInfoResult } | undefined> {
+  const active = await activeDocumentInfo();
+  if (!active || !active.info.isDiff) {
+    void vscode.window.showInformationMessage('X4CodeSense: the active editor holds no patch document.');
+    return undefined;
+  }
+  if (!active.info.patchTarget) {
+    void vscode.window.showInformationMessage('X4CodeSense: the file this patch changes is known once the scripts are indexed.');
+    return undefined;
+  }
+  if (!active.info.patchTarget.file) {
+    void vscode.window.showWarningMessage(
+      `X4CodeSense: nothing to patch: ${active.info.patchTarget.missing ?? `${active.info.patchTarget.name} is not found`}.`
+    );
+    return undefined;
+  }
+  return active;
+}
+
+async function openPatchTarget(): Promise<void> {
+  const file = (await activePatch())?.info.patchTarget?.file;
+  if (file) {
+    await vscode.window.showTextDocument(vscode.Uri.file(file));
+  }
+}
+
+/** Opens a diff of the file the active patch changes: as the game loads it before the patch, and after it. */
+async function comparePatch(comparisons: PatchComparisons): Promise<void> {
+  const patch = await activePatch();
+  const target = patch?.info.patchTarget;
+  if (!patch || !target) {
+    return;
+  }
+  const before = comparisons.uriOf(patch.document.uri, target.name, 'before');
+  const after = comparisons.uriOf(patch.document.uri, target.name, 'after');
+  comparisons.refresh(before, after);
+  const earlier = target.earlier.length === 0 ? '' : ` after ${target.earlier.length} earlier`;
+  await vscode.commands.executeCommand('vscode.diff', before, after, `${path.basename(target.name)}: without and with this patch${earlier}`);
+}
+
+/** The two sides of patch comparisons, asked from the server whenever the editor shows them. */
+class PatchComparisons implements vscode.TextDocumentContentProvider {
+  private readonly changed = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this.changed.event;
+
+  uriOf(patch: vscode.Uri, targetName: string, side: 'before' | 'after'): vscode.Uri {
+    return vscode.Uri.from({
+      scheme: comparisonScheme,
+      path: `/${side}/${targetName}`,
+      query: new URLSearchParams({ patch: patch.toString(), side }).toString(),
+    });
+  }
+
+  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+    const query = new URLSearchParams(uri.query);
+    const params: PatchComparisonParams = { uri: query.get('patch') ?? '' };
+    let compared: PatchComparisonResult = null;
+    try {
+      compared = client ? await client.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, params) : null;
+    } catch {
+      // The server is starting or stopping.
+    }
+    if (!compared) {
+      return '<!-- X4CodeSense: open the patch document to compare it with the file it changes. -->\n';
+    }
+    return query.get('side') === 'before' ? compared.before : compared.after;
+  }
+
+  refresh(...uris: vscode.Uri[]): void {
+    for (const uri of uris) {
+      this.changed.fire(uri);
+    }
+  }
+
+  /** Asks again for every side the editor shows. */
+  refreshAll(): void {
+    this.refresh(...vscode.workspace.textDocuments.filter((document) => document.uri.scheme === comparisonScheme).map((document) => document.uri));
   }
 }
