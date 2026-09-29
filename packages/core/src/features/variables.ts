@@ -110,25 +110,3 @@ export function variableCompletionItems(
 export function tableAt(analysis: DocumentAnalysis, element: XmlElement): VariableTable | undefined {
   return analysis.variables?.tableOf(element);
 }
-
-/** All occurrences of the variable under the caret, or nothing when the caret is not on a variable. */
-export function referencesAt(analysis: DocumentAnalysis, offset: number): Location[] {
-  const found = variableAt(analysis, offset);
-  return found ? variableReferences(found.variable, analysis.document) : [];
-}
-
-/** The range of the variable under the caret and its current name, for a rename prompt. */
-export function prepareRenameAt(analysis: DocumentAnalysis, offset: number): { range: Range; placeholder: string } | undefined {
-  const found = variableAt(analysis, offset);
-  if (!found) {
-    return undefined;
-  }
-  const written = analysis.document.getText().slice(found.occurrence.start, found.occurrence.end);
-  return { range: rangeOf(analysis.document, found.occurrence), placeholder: written };
-}
-
-/** Edits that rename the variable under the caret, or nothing when the caret is not on a variable. */
-export function renameAt(analysis: DocumentAnalysis, offset: number, newName: string): TextEdit[] {
-  const found = variableAt(analysis, offset);
-  return found ? renameVariable(found.variable, newName, analysis.document) : [];
-}

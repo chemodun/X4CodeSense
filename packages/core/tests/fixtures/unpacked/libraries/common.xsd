@@ -43,6 +43,19 @@
       <xs:pattern value="[a-zA-Z_][a-zA-Z0-9_]*" />
     </xs:restriction>
   </xs:simpleType>
+  <xs:simpleType name="namestring">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[^']*" />
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="scriptname">
+    <xs:annotation>
+      <xs:documentation>Name of a script, cue or library: starts with a capital letter.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[A-Z][A-Za-z0-9_]*" />
+    </xs:restriction>
+  </xs:simpleType>
   <xs:simpleType name="classlookup">
     <xs:restriction base="xs:string">
       <xs:enumeration value="ship">

@@ -207,6 +207,7 @@ export class ScriptProperties {
   /** Texts of every file the model was built from, by path, to turn locations into positions. */
   readonly sources = new Map<string, string>();
   private readonly imports = new Map<string, ParsedSource | null>();
+  private keywordsByName: Map<string, ScriptKeyword[]> | undefined;
 
   private constructor(private readonly input: PropertySources) {}
 
@@ -237,11 +238,20 @@ export class ScriptProperties {
 
   /** The keyword usable in a script kind: the one declared for that kind, else the shared one. */
   keyword(name: string, schema?: ScriptSchema): ScriptKeyword | undefined {
-    let shared: ScriptKeyword | undefined;
-    for (const keyword of this.keywords) {
-      if (keyword.name !== name) {
-        continue;
+    // Every name in every expression is looked up here; the keywords are complete once `parse` returns.
+    if (!this.keywordsByName) {
+      this.keywordsByName = new Map();
+      for (const keyword of this.keywords) {
+        const same = this.keywordsByName.get(keyword.name);
+        if (same) {
+          same.push(keyword);
+        } else {
+          this.keywordsByName.set(keyword.name, [keyword]);
+        }
       }
+    }
+    let shared: ScriptKeyword | undefined;
+    for (const keyword of this.keywordsByName.get(name) ?? []) {
       if (keyword.script === undefined) {
         shared = keyword;
       } else if (keyword.script === schema) {

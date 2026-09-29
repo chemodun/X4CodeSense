@@ -216,8 +216,22 @@ export function enumerationsOf(type: XsdSimpleType): XsdEnumeration[] {
   return result;
 }
 
-/** Names of all named types the type is built from: itself, restriction bases, union members and list items. */
-export function typeNamesOf(type: XsdSimpleType): Set<string> {
+const typeNamesCache = new WeakMap<XsdSimpleType, ReadonlySet<string>>();
+
+/**
+ * Names of all named types the type is built from: itself, restriction bases, union members and list
+ * items. Computed once per type: every expression check asks it for every attribute.
+ */
+export function typeNamesOf(type: XsdSimpleType): ReadonlySet<string> {
+  let cached = typeNamesCache.get(type);
+  if (!cached) {
+    cached = collectTypeNames(type);
+    typeNamesCache.set(type, cached);
+  }
+  return cached;
+}
+
+function collectTypeNames(type: XsdSimpleType): Set<string> {
   const names = new Set<string>();
   const visit = (current: XsdSimpleType): void => {
     if (current.name !== undefined) {

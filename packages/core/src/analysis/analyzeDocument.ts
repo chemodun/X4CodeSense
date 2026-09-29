@@ -10,6 +10,8 @@ import { validateStructure } from '../xsd/validateStructure';
 import { validateExpressions } from '../expressions/validateExpressions';
 import { collectVariables, type DocumentVariables } from '../variables/variables';
 import { validateVariables } from '../variables/validateVariables';
+import { collectNames, type DocumentNames } from '../names/namedItems';
+import { validateNames } from '../names/validateNames';
 
 /** `source` of every diagnostic this library produces. */
 export const diagnosticSource = 'X4CodeSense';
@@ -30,6 +32,16 @@ export interface AnalysisContext {
    * single document cannot tell until scripts are indexed across files.
    */
   validateVariables?: boolean;
+  /**
+   * Check labels, cues and interrupt library items: names defined twice where they must be unique, and
+   * labels no reachable attention block defines. Defaults to true; needs the schemas.
+   */
+  validateNames?: boolean;
+  /**
+   * With `validateNames`, also report bare names in Mission Director expressions that are no keyword and
+   * no cue of the script. Defaults to true; see `NameValidationOptions.cueReferences`.
+   */
+  validateCueReferences?: boolean;
 }
 
 /** Names of the cues and libraries of a script: they may start a chain like a keyword. */
@@ -56,6 +68,8 @@ export interface DocumentAnalysis {
   declarations: Map<XmlElement, XsdElement>;
   /** The script's variables and their tables; present for scripts analysed with schemas, collected on first access. */
   readonly variables?: DocumentVariables;
+  /** Labels, cues and interrupt library items with their references; present for scripts analysed with schemas. */
+  readonly names?: DocumentNames;
   /** Diagnostics in document order of discovery. */
   diagnostics: Diagnostic[];
 }
@@ -109,6 +123,16 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     });
     if (context.validateVariables ?? false) {
       analysis.diagnostics.push(...validateVariables(analysis.variables as DocumentVariables, document, diagnosticSource));
+    }
+    let names: DocumentNames | undefined;
+    Object.defineProperty(analysis, 'names', {
+      enumerable: true,
+      get: () => (names ??= collectNames(analysis, scriptSchema, schema, context.properties)),
+    });
+    if (context.validateNames ?? true) {
+      analysis.diagnostics.push(
+        ...validateNames(analysis.names as DocumentNames, document, diagnosticSource, { cueReferences: context.validateCueReferences ?? true })
+      );
     }
   }
   return analysis;

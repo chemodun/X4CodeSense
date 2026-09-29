@@ -340,4 +340,30 @@ describe('references and rename', () => {
     expect(edit?.changes?.[uri].map((change) => change.newText)).toEqual(['$counter', '$counter']);
     expect(await connection.sendRequest(RenameRequest.type, { textDocument: { uri }, position: { line: 1, character: 3 }, newName: '$z' })).toBeNull();
   });
+
+  it('renames a label and reports one that no block defines', async () => {
+    const labelUri = 'file:///mod/aiscripts/order.rename.xml';
+    const labelLines = [
+      '<aiscript name="order.rename">',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <label name="start"/>',
+      '      <resume label="start"/>',
+      '      <resume label="nowhere"/>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+      '',
+    ];
+    expect(summarize(await open(labelUri, labelLines.join('\n')))).toEqual([`6:${labelLines[5].indexOf('nowhere') + 1} label-undefined`]);
+    const labelPosition = { line: 4, character: labelLines[4].indexOf('start') + 2 };
+    const locations = await connection.sendRequest(ReferencesRequest.type, {
+      textDocument: { uri: labelUri },
+      position: labelPosition,
+      context: { includeDeclaration: true },
+    });
+    expect((locations ?? []).map((location) => location.range.start.line)).toEqual([3, 4]);
+    const edit = await connection.sendRequest(RenameRequest.type, { textDocument: { uri: labelUri }, position: labelPosition, newName: 'begin' });
+    expect(edit?.changes?.[labelUri].map((change) => change.newText)).toEqual(['begin', 'begin']);
+  });
 });

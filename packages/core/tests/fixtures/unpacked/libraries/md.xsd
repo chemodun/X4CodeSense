@@ -3,12 +3,16 @@
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
   <xs:include schemaLocation="common.xsd" />
   <xs:simpleType name="cuename">
-    <xs:restriction base="name" />
+    <xs:annotation>
+      <xs:documentation>Cue name</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="expression" />
   </xs:simpleType>
   <xs:group name="mdactions">
     <xs:annotation>
       <xs:documentation>The common actions and the ones only the Mission Director has.</xs:documentation>
     </xs:annotation>
+    <xs:sequence>
     <xs:choice minOccurs="0" maxOccurs="unbounded">
       <xs:group ref="actions" />
       <xs:element name="include_actions">
@@ -19,7 +23,19 @@
           <xs:attribute name="ref" type="expression" use="required" />
         </xs:complexType>
       </xs:element>
+      <xs:element name="signal_cue_instantly">
+        <xs:complexType>
+          <xs:attribute name="cue" type="cuename" use="required" />
+          <xs:attribute name="param" type="expression" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="cancel_cue">
+        <xs:complexType>
+          <xs:attribute name="cue" type="cuename" use="required" />
+        </xs:complexType>
+      </xs:element>
     </xs:choice>
+    </xs:sequence>
   </xs:group>
   <xs:complexType name="cuepatch">
     <xs:annotation>
@@ -61,8 +77,8 @@
       </xs:element>
       <xs:group ref="cuebody" />
     </xs:sequence>
-    <xs:attribute name="name" type="cuename" use="required" />
-    <xs:attribute name="ref" type="cuename" />
+    <xs:attribute name="name" type="scriptname" use="required" />
+    <xs:attribute name="ref" type="expression" />
     <xs:attribute name="instantiate" type="boolean" />
     <xs:attribute name="namespace">
       <xs:simpleType>
@@ -95,7 +111,7 @@
       </xs:element>
       <xs:group ref="cuebody" />
     </xs:sequence>
-    <xs:attribute name="name" type="cuename" use="required" />
+    <xs:attribute name="name" type="scriptname" use="required" />
   </xs:complexType>
   <xs:complexType name="cues">
     <xs:sequence>

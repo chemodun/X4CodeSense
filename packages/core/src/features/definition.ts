@@ -7,6 +7,7 @@ import type { GameData } from '../gameData';
 import type { SourceLocation } from '../sourceLocation';
 import type { XmlAttribute } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
+import { namedItemAt, namedItemDefinitions } from './namedItems';
 import { variableAt, variableDefinitions } from './variables';
 
 function locations(game: GameData, sources: (SourceLocation | undefined)[]): Location[] {
@@ -56,6 +57,10 @@ export function definitionAt(analysis: DocumentAnalysis, offset: number, game: G
   const variable = variableAt(analysis, offset);
   if (variable) {
     return variableDefinitions(variable.variable, analysis.document);
+  }
+  const named = namedItemAt(analysis, offset);
+  if (named) {
+    return namedItemDefinitions(named, analysis.document);
   }
   if (!game) {
     return [];

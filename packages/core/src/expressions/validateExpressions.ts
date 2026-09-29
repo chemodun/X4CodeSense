@@ -5,7 +5,8 @@ import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlElement } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdElement } from '../xsd/schema';
 import { isChainNode, stepsOf, type ChainNode } from './astChain';
-import { parseExpression, walkExpression, type Expression } from './parser';
+import { parsedValue } from './attributeExpression';
+import { walkExpression, type Expression } from './parser';
 import { resolveChain } from './propertyChain';
 
 export type ExpressionDiagnosticCode =
@@ -61,7 +62,7 @@ export function validateExpressions(
           source,
         });
       };
-      const parsed = parseExpression(text);
+      const parsed = parsedValue(attribute);
       for (const error of parsed.errors) {
         report(`expression-${error.code}`, error.message, error.start, error.end, DiagnosticSeverity.Error);
       }

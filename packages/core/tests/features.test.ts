@@ -99,6 +99,7 @@ describe('completion', () => {
     expect(labels(cue('<actions/>\n      <|'))).toEqual(['cues', 'patch']);
     expect(labels(cue('<ac|\n'))).toEqual(['actions']);
     expect(labels(cue('<actions>\n        <|\n      </actions>'))).toEqual([
+      'cancel_cue',
       'create_ship',
       'debug_text',
       'deliver',
@@ -107,6 +108,7 @@ describe('completion', () => {
       'include_actions',
       'remove_value',
       'set_value',
+      'signal_cue_instantly',
     ]);
     expect(labels(actions('<do_if value="1"><|</do_if>'))).toContain('set_value');
   });
@@ -145,13 +147,14 @@ describe('completion', () => {
     expect(labels(actions('<set_value name="$x" exact="player.ship.cargo.|"/>'))).toEqual(['{$ware}', 'energycells', 'ore', 'list']);
     const keywords = game.properties?.keywordsFor('md').map((keyword) => keyword.name) ?? [];
     expect(keywords.slice(0, 6)).toEqual(['player', 'true', 'this', 'class', 'ware', 'skilltype']);
-    expect(labels(actions('<set_value name="$x" exact="|"/>'))).toEqual(keywords);
+    // The keywords, then the cues of the script (`A`).
+    expect(labels(actions('<set_value name="$x" exact="|"/>'))).toEqual([...keywords, 'A']);
     expect(labels(actions('<set_value name="$x" exact="pl|"/>'))).toEqual(['player']);
     expect(labels(actions('<set_value name="$x" exact="1 + pl|"/>'))).toEqual(['player']);
     expect(labels(actions('<set_value name="$x" exact="\'pla|\'"/>'))).toEqual([]);
     expect(labels(actions('<set_value name="$x" comment="pla|"/>'))).toEqual([]);
     expect(labels(actions('<set_value name="$x" exact="player.ship |"/>'))).toEqual([]);
-    expect(labels(actions('<find_ship name="$s" class="|"/>'))).toEqual(['ship', 'station', ...keywords]);
+    expect(labels(actions('<find_ship name="$s" class="|"/>'))).toEqual(['ship', 'station', ...keywords, 'A']);
   });
 
   it('inserts a placeholder as braces and maps ranges back through entities', () => {
@@ -320,5 +323,99 @@ describe('variables', () => {
     );
     expect(positions(referencesAt(ai.analysis, ai.offset))).toEqual(['3:18', '7:35']);
     expect(renameAt(ai.analysis, ai.offset, '$baz').map((edit) => edit.newText)).toEqual(['baz', '$baz']);
+  });
+});
+
+describe('labels, cues and interrupt library items', () => {
+  /**
+   * An AI script with an interrupt library (lines 4 and 5), a handler whose actions are line 9, and two
+   * attention blocks that both define `start` (lines 15 and 21); line 16 is the first block's body.
+   */
+  const ai = (attention: string, handler = ''): string =>
+    [
+      '<aiscript name="a">',
+      '  <interrupts>',
+      '    <library>',
+      '      <actions name="LibActions"/>',
+      '      <handler name="LibHandler"/>',
+      '    </library>',
+      '    <handler>',
+      '      <actions>',
+      `        ${handler}`,
+      '      </actions>',
+      '    </handler>',
+      '  </interrupts>',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <label name="start"/>',
+      `      ${attention}`,
+      '    </actions>',
+      '  </attention>',
+      '  <attention min="visible">',
+      '    <actions>',
+      '      <label name="start"/>',
+      '      <label name="other"/>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+      '',
+    ].join('\n');
+  const lines = (locations: { range: { start: { line: number } } }[]): number[] => locations.map((location) => location.range.start.line + 1);
+
+  it('completes the labels and library items a reference may name', () => {
+    expect(labels(ai('<resume label="|"/>'))).toEqual(['start']);
+    expect(labels(ai('<resume label="o|"/>'))).toEqual([]);
+    expect(labels(ai('', '<abort_called_scripts resume="|"/>'))).toEqual(['other', 'start']);
+    expect(labels(ai('', '<include_interrupt_actions ref="|"/>'))).toEqual(['LibActions']);
+    expect(labels(ai('<resume label="st|\n'))).toEqual(['start']);
+    const { analysis, offset } = at(ai('<resume label="s|t"/>'));
+    const item = completionAt(analysis, offset, game).find((candidate) => candidate.label === 'start');
+    expect(item?.textEdit).toMatchObject({ newText: 'start', range: { start: { line: 15, character: 21 }, end: { line: 15, character: 23 } } });
+    expect(item?.detail).toBe('label');
+  });
+
+  it('completes cue names in Mission Director expressions', () => {
+    expect(labels(actions('<cancel_cue cue="A|"/>'))).toEqual(['A']);
+    expect(labels(actions('<set_value name="$x" exact="1 + A|"/>'))).toEqual(['A']);
+    expect(labels(actions('<set_value name="$x" exact="player.A|"/>'))).toEqual([]);
+  });
+
+  it('describes labels, library items and cues', () => {
+    const label = hoverText(ai('<resume label="st|art"/>'));
+    expect(label).toContain('**start** *(label)*');
+    expect(label).toContain('In the attention block for `unknown`');
+    expect(label).toContain('Defined at line 15 · Referenced 1 time');
+    expect(hoverText(ai('', '<abort_called_scripts resume="st|art"/>'))).toContain('Defined at lines 15, 21 in 2 attention blocks');
+    expect(hoverText(ai('<label name="ot|her"/>'))).toContain('**other** *(label)*');
+    expect(hoverText(ai('', '<include_interrupt_actions ref="LibAc|tions"/>'))).toContain('**LibActions** *(interrupt actions)*');
+    expect(hoverText(ai('', '<include_interrupt_actions ref="Elsew|here"/>'))).toContain('Defined in another script');
+    const cueHover = hoverText(actions('<cancel_cue cue="|A"/>'));
+    expect(cueHover).toContain('**A** *(cue)*');
+    expect(cueHover).toContain('Defined at line 3 · Referenced 1 time');
+    expect(hoverText(actions('<cancel_cue cue="Nowh|ere"/>'))).toContain('Not defined in this script');
+  });
+
+  it('goes to the definitions of a label, a library item and a cue', () => {
+    const inBlock = at(ai('<resume label="st|art"/>'));
+    expect(lines(definitionAt(inBlock.analysis, inBlock.offset, game))).toEqual([15]);
+    const fromHandler = at(ai('', '<abort_called_scripts resume="st|art"/>'));
+    expect(lines(definitionAt(fromHandler.analysis, fromHandler.offset, game))).toEqual([15, 21]);
+    const library = at(ai('', '<include_interrupt_actions ref="LibActi|ons"/>'));
+    expect(lines(definitionAt(library.analysis, library.offset, game))).toEqual([4]);
+    const cueReference = at(actions('<set_value name="$x" exact="A|.$y"/>'));
+    expect(lines(definitionAt(cueReference.analysis, cueReference.offset, game))).toEqual([3]);
+  });
+
+  it('finds references and renames everything a handler ties together', () => {
+    const { analysis, offset } = at(ai('<resume label="start"/>', '<abort_called_scripts resume="st|art"/>'));
+    expect(lines(referencesAt(analysis, offset))).toEqual([9, 15, 16, 21]);
+    expect(prepareRenameAt(analysis, offset)).toMatchObject({ placeholder: 'start', range: { start: { line: 8, character: 38 } } });
+    expect(renameAt(analysis, offset, ' begin ').map((edit) => edit.newText)).toEqual(['begin', 'begin', 'begin', 'begin']);
+    expect(renameAt(analysis, offset, '  ')).toEqual([]);
+    const other = at(ai('<label name="ot|her"/>'));
+    expect(lines(referencesAt(other.analysis, other.offset))).toEqual([16]);
+    const cueRename = at(actions('<cancel_cue cue="A"/>\n        <set_value name="$x" exact="md.S.A|.$y"/>'));
+    expect(lines(referencesAt(cueRename.analysis, cueRename.offset))).toEqual([3, 5, 6]);
+    expect(renameAt(cueRename.analysis, cueRename.offset, 'Begin').map((edit) => edit.range.start.character)).toEqual([15, 25, 41]);
   });
 });

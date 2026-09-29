@@ -2,15 +2,160 @@
 <!-- Test schema for X4CodeSense: a small stand-in for the game's aiscripts.xsd. -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
   <xs:include schemaLocation="common.xsd" />
+  <xs:simpleType name="labelname">
+    <xs:annotation>
+      <xs:documentation>Label name</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="namestring" />
+  </xs:simpleType>
+  <xs:simpleType name="interrupt_conditionsref">
+    <xs:annotation>
+      <xs:documentation>Name of a library interrupt condition set</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="namestring" />
+  </xs:simpleType>
+  <xs:simpleType name="interrupt_actionsref">
+    <xs:annotation>
+      <xs:documentation>Name of a library interrupt action set</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="namestring" />
+  </xs:simpleType>
+  <xs:simpleType name="interrupt_handlerref">
+    <xs:annotation>
+      <xs:documentation>Name of a library interrupt handler</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="namestring" />
+  </xs:simpleType>
+  <xs:group name="aiactions">
+    <xs:annotation>
+      <xs:documentation>The common actions and the ones only AI scripts have.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:group ref="actions" />
+      <xs:element name="resume">
+        <xs:annotation>
+          <xs:documentation>Resume the script at a label</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:attribute name="label" type="labelname" use="required" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="abort_called_scripts">
+        <xs:complexType>
+          <xs:attribute name="resume" type="labelname" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="include_interrupt_actions">
+        <xs:annotation>
+          <xs:documentation>Perform the referenced library interrupt actions in the current script context</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:attribute name="ref" type="namestring" use="required" />
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+    </xs:sequence>
+  </xs:group>
+  <xs:group name="actionswithlabel">
+    <xs:sequence>
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:group ref="aiactions" />
+      <xs:element name="label">
+        <xs:annotation>
+          <xs:documentation>Label to resume at</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:attribute name="name" type="labelname" use="required" />
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+    </xs:sequence>
+  </xs:group>
+  <xs:complexType name="attention_actions">
+    <xs:group ref="actionswithlabel" />
+  </xs:complexType>
   <xs:complexType name="interrupt_actions">
-    <xs:group ref="actions" />
+    <xs:group ref="aiactions" />
   </xs:complexType>
   <xs:complexType name="interrupt_actions_withref">
     <xs:complexContent>
       <xs:extension base="interrupt_actions">
-        <xs:attribute name="ref" type="name" />
+        <xs:attribute name="ref" type="interrupt_actionsref" />
       </xs:extension>
     </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="interrupt_conditions">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="check_value">
+        <xs:complexType>
+          <xs:attribute name="value" type="booleanexpression" use="required" />
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+  </xs:complexType>
+  <xs:complexType name="interrupt_conditions_withref">
+    <xs:complexContent>
+      <xs:extension base="interrupt_conditions">
+        <xs:attribute name="ref" type="interrupt_conditionsref" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="interrupt_handler">
+    <xs:sequence>
+      <xs:element name="conditions" type="interrupt_conditions_withref" minOccurs="0" />
+      <xs:element name="actions" type="interrupt_actions_withref" minOccurs="0" />
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="interrupt_handler_withref">
+    <xs:complexContent>
+      <xs:extension base="interrupt_handler">
+        <xs:attribute name="ref" type="interrupt_handlerref" />
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="interrupt_library">
+    <xs:annotation>
+      <xs:documentation>Library of named interrupts and interrupt conditions in global namespace</xs:documentation>
+    </xs:annotation>
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="handler">
+        <xs:annotation>
+          <xs:documentation>Library definition of a global interrupt handler. Can be referenced by any AI script.</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+          <xs:complexContent>
+            <xs:extension base="interrupt_handler">
+              <xs:attribute name="name" type="namestring" use="required" />
+            </xs:extension>
+          </xs:complexContent>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="conditions">
+        <xs:complexType>
+          <xs:complexContent>
+            <xs:extension base="interrupt_conditions">
+              <xs:attribute name="name" type="namestring" use="required" />
+            </xs:extension>
+          </xs:complexContent>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="actions">
+        <xs:complexType>
+          <xs:complexContent>
+            <xs:extension base="interrupt_actions">
+              <xs:attribute name="name" type="namestring" use="required" />
+            </xs:extension>
+          </xs:complexContent>
+        </xs:complexType>
+      </xs:element>
+    </xs:choice>
+  </xs:complexType>
+  <xs:complexType name="interrupts">
+    <xs:sequence>
+      <xs:element name="library" type="interrupt_library" minOccurs="0" maxOccurs="1" />
+      <xs:element name="handler" type="interrupt_handler_withref" minOccurs="0" maxOccurs="unbounded" />
+    </xs:sequence>
   </xs:complexType>
   <xs:element name="aiscript">
     <xs:complexType>
@@ -28,11 +173,12 @@
             </xs:sequence>
           </xs:complexType>
         </xs:element>
+        <xs:element name="interrupts" type="interrupts" minOccurs="0" />
         <xs:element name="init" type="interrupt_actions" minOccurs="0" />
         <xs:element name="attention" minOccurs="1" maxOccurs="unbounded">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="actions" type="interrupt_actions_withref" />
+              <xs:element name="actions" type="attention_actions" />
             </xs:sequence>
             <xs:attribute name="min" type="expression" use="required" />
           </xs:complexType>

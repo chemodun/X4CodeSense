@@ -14,7 +14,8 @@
  */
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { isChainNode, stepsOf } from '../expressions/astChain';
-import { parseExpression, type Expression } from '../expressions/parser';
+import { parsedValue } from '../expressions/attributeExpression';
+import type { Expression } from '../expressions/parser';
 import { resolveChain } from '../expressions/propertyChain';
 import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
@@ -368,8 +369,7 @@ class Collector {
   }
 
   private collectAttribute(element: XmlElement, attribute: XmlAttribute, lvalue: boolean): void {
-    const text = attribute.value;
-    const parsed = parseExpression(text);
+    const parsed = parsedValue(attribute);
     const whole = parsed.expression;
     const kindOfWhole: OccurrenceKind = lvalue ? (element.name === 'remove_value' ? 'removal' : 'definition') : 'reference';
     const record = (table: VariableTable, name: string, start: number, end: number, node: Expression, guarded: boolean): VariableOccurrence =>
@@ -481,8 +481,7 @@ class Collector {
       if (!attribute || attribute.value.trim() === '' || !isExpressionAttribute(declaration?.attributes.get(source))) {
         continue;
       }
-      const parsed = parseExpression(attribute.value);
-      const node = parsed.expression;
+      const node = parsedValue(attribute).expression;
       const datatype = this.datatypeOf(node, attribute.value);
       if (datatype !== undefined) {
         this.variableOf(occurrence).types.add(datatype);

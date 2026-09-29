@@ -9,7 +9,9 @@ import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute, type XsdElement } from '../xsd/schema';
 import type { VariableTable } from '../variables/variables';
+import { referenceKindOf } from '../names/namedItems';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
+import { namedItemCompletionItems } from './namedItems';
 import { variableCompletionItems } from './variables';
 
 export interface CompletionOptions {
@@ -160,6 +162,16 @@ class Completer {
         this.add(item);
       }
     }
+    const referenceKind = referenceKindOf(element, attribute.name, declared);
+    const names = this.analysis.names;
+    if (referenceKind && names) {
+      // A label or interrupt library item, written as is: the whole value is the name.
+      const range = this.range(attribute.valueStart, attribute.valueEnd);
+      for (const item of namedItemCompletionItems(names, referenceKind, element, this.analysis.document, range, expression.slice(0, index).trim())) {
+        this.add(item);
+      }
+      return;
+    }
     const properties = this.game?.properties;
     const schema = this.schema;
     if (!properties || !schema || !isExpressionAttribute(declared)) {
@@ -202,7 +214,7 @@ class Completer {
       }
       return;
     }
-    this.keywords(tokens, expression, index, attribute, properties, schema);
+    this.keywords(tokens, expression, index, element, attribute, properties, schema);
   }
 
   /** Variables, when the caret is on a `$name` token: of the element's table, or of the cue named before the dot. */
@@ -241,6 +253,7 @@ class Completer {
     tokens: ReturnType<typeof tokenize>,
     expression: string,
     index: number,
+    element: XmlElement,
     attribute: XmlAttribute,
     properties: ScriptProperties,
     schema: ScriptSchema
@@ -282,6 +295,13 @@ class Completer {
         documentation: markdown(describeKeyword(keyword)),
         textEdit: { range, newText: keyword.name },
       });
+    }
+    const names = this.analysis.names;
+    if (schema === 'md' && names) {
+      // A cue name starts a chain like a keyword does: `Start.$x`, `signal_cue cue="Start"`.
+      for (const item of namedItemCompletionItems(names, 'cue', element, this.analysis.document, range, prefix)) {
+        this.add(item);
+      }
     }
   }
 }

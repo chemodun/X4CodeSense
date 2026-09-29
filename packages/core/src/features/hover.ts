@@ -7,6 +7,7 @@ import type { GameData } from '../gameData';
 import { offsetInValue, type XmlAttribute } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdAttribute } from '../xsd/schema';
 import { describeAttribute, describeCandidates, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
+import { describeNamedItem, namedItemAt } from './namedItems';
 import { describeVariable, variableAt } from './variables';
 
 function hover(analysis: DocumentAnalysis, value: string, start: number, end: number): Hover {
@@ -75,6 +76,10 @@ export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameDa
   const variable = variableAt(analysis, offset);
   if (variable) {
     return hover(analysis, describeVariable(variable.variable, analysis.document), variable.occurrence.start, variable.occurrence.end);
+  }
+  const named = namedItemAt(analysis, offset);
+  if (named) {
+    return hover(analysis, describeNamedItem(named, analysis.document), named.start, named.end);
   }
   const context = positionContext(analysis, offset, schemaOf(game, analysis));
   switch (context.kind) {

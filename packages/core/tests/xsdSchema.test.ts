@@ -42,7 +42,7 @@ describe('loadSchemas', () => {
 describe('element declarations', () => {
   it('resolves attributes and children through named types, groups and extensions', () => {
     expect([...cue.attributes.keys()]).toEqual(['name', 'ref', 'instantiate', 'namespace']);
-    expect(cue.attributes.get('name')).toMatchObject({ required: true, typeName: 'cuename' });
+    expect(cue.attributes.get('name')).toMatchObject({ required: true, typeName: 'scriptname' });
     expect(cue.documentation).toBe('A cue.');
     expect([...cue.contentModel.declarations.keys()]).toEqual(['param', 'conditions', 'delay', 'actions', 'patch', 'cues']);
 
@@ -75,10 +75,16 @@ describe('element declarations', () => {
 
   it('resolves the aiscript root and an extended type', () => {
     const root = aiscripts.root('aiscript') as XsdElement;
-    expect([...root.contentModel.declarations.keys()]).toEqual(['params', 'init', 'attention']);
+    expect([...root.contentModel.declarations.keys()]).toEqual(['params', 'interrupts', 'init', 'attention']);
+    const handlerActions = declaration(aiscripts, 'aiscript', 'interrupts', 'handler', 'actions');
+    expect([...handlerActions.attributes.keys()]).toEqual(['ref']);
+    expect(handlerActions.attributes.get('ref')?.typeName).toBe('interrupt_actionsref');
+    expect(handlerActions.child('debug_text')).toBeDefined();
+    expect(handlerActions.child('resume')).toBeDefined();
+    expect(handlerActions.child('label')).toBeUndefined();
     const attentionActions = declaration(aiscripts, 'aiscript', 'attention', 'actions');
-    expect([...attentionActions.attributes.keys()]).toEqual(['ref']);
-    expect(attentionActions.child('debug_text')).toBeDefined();
+    expect(attentionActions.child('label')).toBeDefined();
+    expect(declaration(aiscripts, 'aiscript', 'interrupts', 'library', 'actions').attributes.get('name')?.typeName).toBe('namestring');
     expect(declaration(aiscripts, 'aiscript', 'init').child('set_value')).toBeDefined();
   });
 });
@@ -138,7 +144,10 @@ describe('simple types', () => {
     expect(acceptsValue(chance, 'x')).toBe(false);
     expect(acceptsValue(name, 'Start')).toBe(true);
     expect(acceptsValue(name, '1x')).toBe(false);
-    expect(typeNamesOf(name)).toEqual(new Set(['cuename', 'name']));
+    expect(acceptsValue(name, 'start')).toBe(false);
+    expect(typeNamesOf(name)).toEqual(new Set(['scriptname']));
+    const cueReference = actions.child('cancel_cue')?.attributes.get('cue')?.type;
+    expect(cueReference && typeNamesOf(cueReference)).toEqual(new Set(['cuename', 'expression']));
     expect(version.builtin).toBe('integer');
     expect(acceptsValue(version, '3')).toBe(true);
     expect(acceptsValue(version, '3.5')).toBe(false);
@@ -250,7 +259,7 @@ describe('structure validation', () => {
       '</mdscript>',
     ].join('\n');
     expect(report(text)).toEqual([
-      "3:16 invalid-attribute-value: Invalid value '1bad' for attribute 'name' in 'cue'. Expected a value of type 'cuename'",
+      "3:16 invalid-attribute-value: Invalid value '1bad' for attribute 'name' in 'cue'. Expected a value of type 'scriptname'",
       "3:35 invalid-attribute-value: Invalid value 'maybe' for attribute 'instantiate' in 'cue'. Expected one of 'true', 'false'",
       "3:53 invalid-attribute-value: Invalid value 'global' for attribute 'namespace' in 'cue'. Expected one of 'this', 'static'",
       "5:41 invalid-attribute-value: Invalid value 'multiply' for attribute 'operation' in 'set_value'. Expected one of 'set', 'add', 'subtract'",
@@ -263,7 +272,7 @@ describe('structure validation', () => {
 
   it('reports missing required children', () => {
     expect(report('<aiscript name="x">\n  <params/>\n</aiscript>')).toEqual([
-      "1:2 missing-child-element: Element 'aiscript' is missing a required child. Expected 'attention', 'init'",
+      "1:2 missing-child-element: Element 'aiscript' is missing a required child. Expected 'attention', 'init', 'interrupts'",
     ]);
     expect(report('<aiscript name="x">\n  <attention min="1"/>\n</aiscript>')).toEqual([
       "2:4 missing-child-element: Element 'attention' is missing a required child. Expected 'actions'",
