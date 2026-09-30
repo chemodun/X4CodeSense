@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.2.0...x4codesense@v0.2.1) (2026-09-30)
+
+
+### Miscellaneous Chores
+
+* **client:** drop the preview flag ([4ece765](https://github.com/chemodun/X4CodeSense/commit/4ece765f622595cd4362902dc179856fb46b9058))
+
 ## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.1.1...x4codesense@v0.2.0) (2026-09-30)
 
 
