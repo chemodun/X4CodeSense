@@ -4,7 +4,7 @@ Language support for [b]X4: Foundations[/b] scripts in Visual Studio Code: AI sc
 
 X4CodeSense is the successor of X4CodeComplete, written anew around a language server, so the same analysis also runs from the command line and in CI. It replaces X4CodeComplete and offers to take its settings.
 
-[quote][b]Preview:[/b] while the version is 0.x, features and settings may still change from one version to the next.[/quote]
+[quote]While the version is 0.x, features and settings may still change from one version to the next.[/quote]
 
 [size=3][u][b]✨ Features[/b][/u][/size]
 
@@ -173,6 +173,13 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=3][u][b]🛠 Changelog[/b][/u][/size]
 
+[size=3][u][i][0.2.1] - 2026-09-30[/i][/u][/size]
+[list]
+[*] Changed
+[list]
+[*] No longer marked as a preview on the Marketplace.
+[/list]
+[/list]
 [size=3][u][i][0.2.0] - 2026-09-30[/i][/u][/size]
 [list]
 [*] Added
