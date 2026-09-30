@@ -694,6 +694,66 @@ describe('texts', () => {
   });
 });
 
+describe('Lua files', () => {
+  const uri = 'file:///mod/ui/menu.lua';
+  const lines = ['local PAGE_ID = 1001', 'local label = ReadText(PAGE_ID, 1)', 'function f(id) return ReadText(PAGE_ID, id) end', ''];
+
+  async function hoverAt(line: number, character: number): Promise<{ value: string; range?: string } | null> {
+    const hover = await connection.sendRequest(HoverRequest.type, { textDocument: { uri }, position: { line, character } });
+    if (!hover) {
+      return null;
+    }
+    const value = typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '';
+    const range = hover.range && `${hover.range.start.line}:${hover.range.start.character}-${hover.range.end.line}:${hover.range.end.character}`;
+    return { value, range };
+  }
+
+  it('shows the text of a ReadText call between its parentheses, and nothing else', async () => {
+    // Diagnostics published until those of an XML document opened after the Lua one: none for the Lua one.
+    const xmlUri = 'file:///mod/md/AfterLua.xml';
+    const published: string[] = [];
+    const xmlPublished = new Promise<void>((resolve) => {
+      const disposable = connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
+        published.push(params.uri);
+        if (params.uri === xmlUri) {
+          disposable.dispose();
+          resolve();
+        }
+      });
+    });
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'lua', version: 1, text: lines.join('\n') } });
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri: xmlUri, languageId: 'xml', version: 1, text: mdText } });
+    await xmlPublished;
+    expect(published).not.toContain(uri);
+
+    await statusWhere((status) => status.state === 'ready');
+    const open = lines[1].indexOf('(');
+    const hover = await hoverAt(1, open + 1);
+    expect(hover?.value).toContain('Hull');
+    expect(hover?.value).toContain('The page `PAGE_ID` is 1001, set on line 1.');
+    expect(hover?.range).toBe(`1:${open}-1:${lines[1].indexOf(')') + 1}`);
+    expect(await hoverAt(1, lines[1].indexOf('ReadText'))).toBeNull();
+    expect((await hoverAt(2, lines[2].lastIndexOf('id)')))?.value).toContain('The id `id` is not known here: a parameter of a function.');
+
+    const position = { line: 1, character: open + 1 };
+    const completion = await connection.sendRequest(CompletionRequest.type, { textDocument: { uri }, position });
+    expect(Array.isArray(completion) ? completion : completion?.items).toEqual([]);
+    expect(await connection.sendRequest(DefinitionRequest.type, { textDocument: { uri }, position })).toEqual([]);
+    expect(await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } })).toBeNull();
+    expect(await connection.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } })).toBeNull();
+
+    // An edit is seen at the next hover.
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri, version: 2 },
+      contentChanges: [{ range: { start: { line: 0, character: 16 }, end: { line: 0, character: 20 } }, text: '1002' }],
+    });
+    expect((await hoverAt(1, open + 1))?.value).toContain('The page `PAGE_ID` is 1002, set on line 1.');
+    for (const closed of [uri, xmlUri]) {
+      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: closed } });
+    }
+  });
+});
+
 describe('script index', () => {
   it('follows an interrupt library while it is edited in another document', async () => {
     const mod = path.join(workDir, 'ailib');

@@ -28,6 +28,10 @@ All of it keeps working while a tag, an attribute or a quote is still being type
 - Texts: pages after `{` and text ids after `{page,`. Hover over `{page, id}` or `page="…" line="…"`, in any XML file, shows the text as the game shows it.
 - Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, its type when it can be told, and how often it is read.
 
+### Texts in Lua files
+
+In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the text, as for `{page, id}` in scripts. The page and the id may be numbers, or names the file sets to one number, such as `local PAGE_ID = 1972092427`. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table, an expression. The Lua extension you use keeps its own hover and everything else. `.xpl` files count when VS Code opens them as Lua, for example with `"files.associations": { "*.xpl": "lua" }`.
+
 ### Navigation and rename
 
 - Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, interrupt library item or text where it is defined.
@@ -74,7 +78,8 @@ npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
 - Without the extracted game files, scripts are only checked for well-formedness: the schemas, the script properties, the texts and the game's scripts all come from them.
 - Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
 - XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
-- AI scripts, Mission Director scripts and their patches are checked. Text files are read for the texts; other files of the game, such as Lua scripts or the `libraries`, are not checked.
+- AI scripts, Mission Director scripts and their patches are checked. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game, such as the `libraries`, are not checked.
+- In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
 - Semantic highlighting needs the extracted game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
 
 ## 🚀 Getting started
@@ -103,7 +108,7 @@ X4CodeSense reads the game's own files: the schemas `md.xsd`, `aiscripts.xsd`, `
 
 ### Coming from X4CodeComplete
 
-X4CodeSense replaces X4CodeComplete: uninstall X4CodeComplete, so the two do not check the same scripts. X4CodeComplete-Lua works on Lua files, which X4CodeSense does not read yet. Their settings stay in your settings files after an uninstall. When X4CodeSense starts where it has no settings of its own yet, in the user settings or in the workspace settings, it offers the ones found there: the extracted game files, the extensions folder, the language settings, the structure validation and verbose logging. **Use** copies them, **Show Them** lists them in the X4CodeSense output first, **Not Now** asks again at the next start, and **Never** stops asking.
+X4CodeSense replaces X4CodeComplete: uninstall X4CodeComplete, so the two do not check the same scripts. X4CodeComplete-Lua completes and describes the game's Lua functions, which X4CodeSense does not; both show the text of `ReadText` in Lua files. Their settings stay in your settings files after an uninstall. When X4CodeSense starts where it has no settings of its own yet, in the user settings or in the workspace settings, it offers the ones found there: the extracted game files, the extensions folder, the language settings, the structure validation and verbose logging. **Use** copies them, **Show Them** lists them in the X4CodeSense output first, **Not Now** asks again at the next start, and **Never** stops asking.
 
 A folder that no longer exists is not taken, nor a relative extensions folder, which X4CodeSense reads from the workspace folder and X4CodeComplete did not. Where both X4CodeComplete and X4CodeComplete-Lua have a setting, X4CodeComplete's is taken.
 
@@ -159,6 +164,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Added
   - Semantic highlighting of the expressions in AI scripts, Mission Director scripts and what patches bring in: variables, keywords, properties, lookup values, cues, labels, interrupt library items, numbers, strings and operators.
   - The settings of X4CodeComplete and X4CodeComplete-Lua are offered where X4CodeSense has none of its own yet.
+  - In Lua files, the hover between the parentheses of `ReadText(page, id)` shows the text; page and id may be names the file sets to a number.
 
 ### [0.1.0] - 2026-09-29
 

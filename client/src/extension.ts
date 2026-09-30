@@ -63,7 +63,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const xmlFiles = vscode.workspace.createFileSystemWatcher('**/*.xml');
   context.subscriptions.push(xmlFiles);
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: 'file', language: 'xml' }],
+    // Lua files only get the hover of `ReadText` calls, with the text they read.
+    documentSelector: [
+      { scheme: 'file', language: 'xml' },
+      { scheme: 'file', language: 'lua' },
+    ],
     synchronize: { configurationSection: 'x4CodeSense', fileEvents: xmlFiles },
     outputChannelName: 'X4CodeSense',
   };

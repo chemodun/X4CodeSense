@@ -6,7 +6,7 @@ Status: preview, 0.x. The npm packages are on npm; the extension is on the [Visu
 
 ## Layout
 
-- `packages/core` - `x4-script-core`, the editor-independent analysis library: script detection, XML structure, expression language, types, scopes, symbols, diagnostics. No `vscode` imports.
+- `packages/core` - `x4-script-core`, the editor-independent analysis library: script detection, XML structure, expression language, types, scopes, symbols, diagnostics, and the `ReadText` calls of Lua files. No `vscode` imports.
 - `packages/server` - `x4-script-language-server`, the LSP server on top of the core.
 - `packages/cli` - `x4-script-check`, a command-line checker for CI and tools, on top of the core.
 - `client` - the `X4CodeSense` VS Code extension (publisher `X4DevTools`). It bundles the server and the core into `client/dist`.

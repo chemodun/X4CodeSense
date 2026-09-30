@@ -44,6 +44,8 @@ import {
   positionTokens,
   prepareRenameAt,
   quickFixes,
+  readTextCalls,
+  readTextHover,
   referencesAt,
   renameAt,
   ScriptIndex,
@@ -60,6 +62,7 @@ import {
   type GameData,
   type PatchComparisonParams,
   type PatchComparisonResult,
+  type ReadTextCall,
   type ServerStatus,
   type TextDisplayOptions,
   type TextLoadOptions,
@@ -119,6 +122,13 @@ let sentStatus: string | undefined;
 const analysisByUri = new Map<string, DocumentAnalysis>();
 /** The semantic tokens builder of each open document: it keeps the last result, which a delta request refers to. */
 const tokenBuilders = new Map<string, SemanticTokensBuilder>();
+/** The `ReadText` calls of each open Lua document, found at the first hover after a change. */
+const readTextCallsByUri = new Map<string, { version: number; calls: ReadTextCall[] }>();
+
+/** Lua documents only get the hover of `ReadText`: they are never analysed as XML. */
+function isLua(document: TextDocument): boolean {
+  return document.languageId === 'lua';
+}
 
 function log(message: string): void {
   connection.console.log(`[X4CodeSense] ${message}`);
@@ -548,6 +558,9 @@ function analysisContext(): AnalysisContext {
 
 /** Analyses one document and publishes its diagnostics; when other scripts see it differently now, they are analysed again. */
 function analyze(document: TextDocument): void {
+  if (isLua(document)) {
+    return;
+  }
   const started = performance.now();
   const analysis = analyzeDocument(document, analysisContext());
   analysisByUri.set(document.uri, analysis);
@@ -600,6 +613,10 @@ documents.onDidChangeContent((event) => {
 documents.onDidClose((event) => {
   analysisByUri.delete(event.document.uri);
   tokenBuilders.delete(event.document.uri);
+  readTextCallsByUri.delete(event.document.uri);
+  if (isLua(event.document)) {
+    return;
+  }
   void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
   // Back to the file on disk, which may not have the unsaved changes.
   const file = filePathOf(event.document.uri);
@@ -631,7 +648,27 @@ connection.onCompletion((params): CompletionList | CompletionItem[] => {
   return { isIncomplete: false, items };
 });
 
+/** The `ReadText` calls of an open Lua document, as of its version. */
+function readTextCallsOf(document: TextDocument): ReadTextCall[] {
+  const known = readTextCallsByUri.get(document.uri);
+  if (known?.version === document.version) {
+    return known.calls;
+  }
+  const started = performance.now();
+  const calls = readTextCalls(document.getText());
+  readTextCallsByUri.set(document.uri, { version: document.version, calls });
+  debug(`${document.uri}: ${calls.length} ReadText call(s) in ${(performance.now() - started).toFixed(1)} ms`);
+  return calls;
+}
+
 connection.onHover((params): Hover | null => {
+  const document = documents.get(params.textDocument.uri);
+  if (document && isLua(document)) {
+    const texts = game?.texts;
+    return texts && texts.fileCount > 0
+      ? (readTextHover(document, readTextCallsOf(document), document.offsetAt(params.position), texts, textDisplay()) ?? null)
+      : null;
+  }
   const located = locate(params.textDocument.uri, params.position);
   return located ? (hoverAt(located.analysis, located.offset, game, textDisplay()) ?? null) : null;
 });
