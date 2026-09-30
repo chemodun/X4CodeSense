@@ -44,6 +44,11 @@ export class PatchNode implements XPathNode<PatchNode> {
   readonly attributes: PatchNodeAttribute[];
   /** True once a patch changed the node or something below it. */
   changed = false;
+  /**
+   * For a node an operation brought in: the node whose column it takes when written out, the one it
+   * replaces or is added next to, or, one step deeper, the one it is added into.
+   */
+  placed?: { anchor: PatchNode; deeper: boolean };
   private text: string | undefined;
 
   constructor(
@@ -182,9 +187,10 @@ function operationText(operation: XmlElement, source: PatchSource): string {
   return textOf(operation, source.text);
 }
 
-function insert(parent: PatchNode, index: number, nodes: PatchNode[]): void {
+function insert(parent: PatchNode, index: number, nodes: PatchNode[], anchor: PatchNode, deeper: boolean): void {
   for (const node of nodes) {
     node.parent = parent;
+    node.placed = { anchor, deeper };
   }
   parent.children.splice(index, 0, ...nodes);
   parent.markChanged();
@@ -287,13 +293,13 @@ export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = 
           refuse('Cannot add a node next to the root element');
           continue;
         }
-        insert(parent, parent.children.indexOf(target) + (pos === 'after' ? 1 : 0), content);
+        insert(parent, parent.children.indexOf(target) + (pos === 'after' ? 1 : 0), content, target, false);
         operation.parent = parent;
       } else if (target.kind !== 'element') {
         refuse('Cannot add a node into a comment');
         continue;
       } else {
-        insert(target, pos === 'prepend' ? 0 : target.children.length, content);
+        insert(target, pos === 'prepend' ? 0 : target.children.length, content, target, true);
         operation.parent = target;
       }
       operation.inserted = content;
@@ -326,7 +332,7 @@ export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = 
       }
       const index = parent.children.indexOf(target);
       parent.children.splice(index, 1);
-      insert(parent, index, content);
+      insert(parent, index, content, target, false);
       operation.parent = parent;
       operation.inserted = content;
     } else {

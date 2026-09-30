@@ -1,4 +1,6 @@
+import type { TextEdit } from 'vscode-languageserver-types';
 import type { PatchComparison } from './patches/patchAnalysis';
+import type { PatchWriteChange, PatchWriteRefusal } from './patches/patchWriter';
 import type { PatchTarget } from './project/scriptIndex';
 import type { ScriptMetadata } from './types';
 
@@ -64,4 +66,27 @@ export const PatchComparisonRequestMethod = 'x4codesense/patchComparison';
 
 export type PatchComparisonParams = DocumentInfoParams;
 
-export type PatchComparisonResult = PatchComparison | null;
+/** With the version of the patch document the answer was worked out for. */
+export type PatchComparisonResult = (PatchComparison & { version: number }) | null;
+
+/**
+ * Ask what a patch must become so that the file it changes, with the patch applied, is the edited text of
+ * the comparison's side with the patch.
+ */
+export const PatchWriteRequestMethod = 'x4codesense/patchWrite';
+
+export interface PatchWriteParams {
+  /** The patch document. */
+  uri: string;
+  /** The version of the patch document the side was last in step with. */
+  version: number;
+  /** The side's text. */
+  edited: string;
+}
+
+export interface PatchWriteResult {
+  /** The edits of the patch document; none when a change cannot be written. */
+  edits: TextEdit[];
+  changes: PatchWriteChange[];
+  refused: PatchWriteRefusal[];
+}

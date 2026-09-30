@@ -41,6 +41,7 @@ import {
   loadTexts,
   parseXml,
   PatchComparisonRequestMethod,
+  PatchWriteRequestMethod,
   positionTokens,
   prepareRenameAt,
   quickFixes,
@@ -55,6 +56,7 @@ import {
   semanticTokensLegend,
   sourcesOf,
   StatusNotificationMethod,
+  writePatch,
   type AnalysisContext,
   type DocumentAnalysis,
   type DocumentInfoParams,
@@ -62,6 +64,8 @@ import {
   type GameData,
   type PatchComparisonParams,
   type PatchComparisonResult,
+  type PatchWriteParams,
+  type PatchWriteResult,
   type ReadTextCall,
   type ServerStatus,
   type TextDisplayOptions,
@@ -784,7 +788,34 @@ connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): Do
 // The file a patch changes, before and after the patch, for the client to compare.
 connection.onRequest(PatchComparisonRequestMethod, (params: PatchComparisonParams): PatchComparisonResult => {
   const patch = analysisByUri.get(params.uri)?.patch;
-  return (patch && game?.index && comparePatch(patch, game.index)) || null;
+  const compared = patch && game?.index ? comparePatch(patch, game.index) : undefined;
+  // Every change of an open document is analysed as it comes, so the analysis is of the current version.
+  const version = documents.get(params.uri)?.version;
+  return compared && version !== undefined ? { ...compared, version } : null;
+});
+
+// What a patch must become for the edited side of its comparison.
+connection.onRequest(PatchWriteRequestMethod, (params: PatchWriteParams): PatchWriteResult => {
+  const document = documents.get(params.uri);
+  const patch = analysisByUri.get(params.uri)?.patch;
+  const refuse = (reason: string): PatchWriteResult => ({ edits: [], changes: [], refused: [{ line: 0, reason }] });
+  if (!document || !patch || !game?.index) {
+    return refuse('The patch is not open, or the file it changes is not known yet');
+  }
+  if (document.version !== params.version) {
+    // The side does not have what was changed in the patch since: writing it would undo that.
+    return refuse('The patch changed since this side was last in step with it: revert the side and make the change again');
+  }
+  const written = writePatch(patch, params.edited, game.index);
+  debug(`${params.uri}: side written, ${written.changes.length} change(s), ${written.refused.length} refused`);
+  return {
+    edits: written.edits.map((edit) => ({
+      range: { start: document.positionAt(edit.offset), end: document.positionAt(edit.offset + edit.length) },
+      newText: edit.text,
+    })),
+    changes: written.changes,
+    refused: written.refused,
+  };
 });
 
 documents.listen(connection);

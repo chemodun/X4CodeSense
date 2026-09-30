@@ -52,10 +52,12 @@ import {
   DocumentInfoRequestMethod,
   loadGameData,
   PatchComparisonRequestMethod,
+  PatchWriteRequestMethod,
   semanticTokensLegend,
   StatusNotificationMethod,
   type DocumentInfoResult,
   type PatchComparisonResult,
+  type PatchWriteResult,
   type ServerStatus,
 } from '../../core/src';
 
@@ -904,13 +906,35 @@ describe('patches', () => {
       earlier: [],
     });
     const compared = await connection.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, { uri: patchUri });
+    const after = apiText.replace('<cue name="Register"/>', '<cue name="Register" instantiate="true"/>');
+    // The value is the patch's own text: typing there goes into the patch, at the version compared.
     expect(compared).toEqual({
       name: 'extensions/base/md/api.xml',
       file: fileURLToPath(apiUri),
       before: apiText,
-      after: apiText.replace('<cue name="Register"/>', '<cue name="Register" instantiate="true"/>'),
+      after,
+      own: [{ start: after.indexOf('true'), end: after.indexOf('true') + 4, patchStart: patchText.indexOf('true') }],
+      version: 1,
     });
     expect(await connection.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, { uri: 'file:///mod/md/Sample.xml' })).toBeNull();
+
+    // The side edited: a cue added after Register becomes an operation, from the version compared only.
+    const edited = after.replace('<cue name="Register" instantiate="true"/>', '<cue name="Register" instantiate="true"/>\n    <cue name="Mine"/>');
+    const written = await connection.sendRequest<PatchWriteResult>(PatchWriteRequestMethod, { uri: patchUri, version: 1, edited });
+    expect(written.refused).toEqual([]);
+    expect(written.changes.map((change) => `${change.line} ${change.kind}: ${change.label}`)).toEqual(['3 operation: <cue> added']);
+    expect(written.edits).toEqual([
+      {
+        range: { start: { line: 2, character: 0 }, end: { line: 2, character: 0 } },
+        newText: `  <add sel="/mdscript/cues/cue[@name='Register']" pos="after">\n    <cue name="Mine"/>\n  </add>\n`,
+      },
+    ]);
+    const stale = await connection.sendRequest<PatchWriteResult>(PatchWriteRequestMethod, { uri: patchUri, version: 0, edited });
+    expect(stale).toEqual({
+      edits: [],
+      changes: [],
+      refused: [{ line: 0, reason: 'The patch changed since this side was last in step with it: revert the side and make the change again' }],
+    });
 
     // Renaming the cue in the editor leaves the patch's path without a match, before saving.
     const unmatched = diagnosticsCount(patchUri, 1);

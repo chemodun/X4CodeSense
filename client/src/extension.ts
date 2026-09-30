@@ -5,15 +5,20 @@ import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerO
 import {
   DocumentInfoRequestMethod,
   PatchComparisonRequestMethod,
+  PatchWriteRequestMethod,
   schemaDisplayName,
   StatusNotificationMethod,
   type DocumentInfoParams,
   type DocumentInfoResult,
   type PatchComparisonParams,
   type PatchComparisonResult,
+  type PatchTargetInfo,
+  type PatchWriteResult,
   type ScriptSchema,
   type ServerStatus,
 } from 'x4-script-core';
+import { PatchLayout } from './patchLayout';
+import { PatchedSides, patchedScheme } from './patchSides';
 import {
   offerDetails,
   offerMessage,
@@ -24,7 +29,7 @@ import {
   type SettingsScope,
 } from './x4CodeCompleteSettings';
 
-/** The scheme of the two sides of a patch comparison: the patch document's uri and the side are in the query. */
+/** The scheme of the left side of a patch comparison, the file before the patch: the patch document's uri is in the query. */
 const comparisonScheme = 'x4codesense-patch';
 
 /** Set when the offer of X4CodeComplete's settings was answered with Never; Settings Sync carries it to other machines. */
@@ -38,6 +43,7 @@ const tooltipCommands = [
   'x4CodeSense.restartServer',
   'x4CodeSense.openPatchTarget',
   'x4CodeSense.comparePatch',
+  'x4CodeSense.editPatchWithResult',
 ];
 
 const shortSchemaName: Record<ScriptSchema, string> = { md: 'MD', aiscripts: 'AI' };
@@ -73,10 +79,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   const languageClient = new LanguageClient('x4CodeSense', 'X4CodeSense', serverOptions, clientOptions);
   client = languageClient;
-  languageClient.onNotification(StatusNotificationMethod, (status: ServerStatus) => {
-    serverStatus = status;
-    void updateStatusBar();
-  });
 
   statusBarItem = vscode.window.createStatusBarItem('x4CodeSense.documentInfo', vscode.StatusBarAlignment.Right, 100);
   statusBarItem.name = 'X4CodeSense';
@@ -84,10 +86,40 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(statusBarItem);
 
   const comparisons = new PatchComparisons();
+  const sides = new PatchedSides({
+    compare: async (patch) => {
+      const params: PatchComparisonParams = { uri: patch };
+      return client ? await client.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, params) : null;
+    },
+    write: async (params) => {
+      if (!client) {
+        throw new Error('The language server is not running');
+      }
+      return await client.sendRequest<PatchWriteResult>(PatchWriteRequestMethod, params);
+    },
+    log: (line) => languageClient.outputChannel.appendLine(line),
+  });
+  const layout = new PatchLayout();
+  languageClient.onNotification(StatusNotificationMethod, (status: ServerStatus) => {
+    const nowReady = status.state === 'ready' && serverStatus?.state !== 'ready';
+    serverStatus = status;
+    void updateStatusBar();
+    if (nowReady) {
+      // Comparisons restored from the last session, or opened while the server was busy, get their text now.
+      comparisons.refreshAll();
+      sides.refreshAll();
+    }
+  });
   let changeTimer: NodeJS.Timeout | undefined;
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(comparisonScheme, comparisons),
-    vscode.window.onDidChangeActiveTextEditor(() => void updateStatusBar()),
+    vscode.workspace.registerFileSystemProvider(patchedScheme, sides, { isCaseSensitive: true }),
+    sides,
+    layout,
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      void updateStatusBar();
+      void followPatch(editor, layout, comparisons, sides);
+    }),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.languageId !== 'xml' || event.document.uri.scheme !== 'file' || event.contentChanges.length === 0) {
         return;
@@ -97,6 +129,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       changeTimer = setTimeout(() => {
         void updateStatusBar();
         comparisons.refreshAll();
+        sides.refreshAll();
       }, 300);
     }),
     { dispose: () => clearTimeout(changeTimer) },
@@ -111,7 +144,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.commands.registerCommand('x4CodeSense.selectGameFolder', selectGameFolder),
     vscode.commands.registerCommand('x4CodeSense.openPatchTarget', openPatchTarget),
-    vscode.commands.registerCommand('x4CodeSense.comparePatch', () => comparePatch(comparisons)),
+    vscode.commands.registerCommand('x4CodeSense.comparePatch', () => comparePatch(comparisons, sides)),
+    vscode.commands.registerCommand('x4CodeSense.editPatchWithResult', () => editPatchWithResult(comparisons, sides, layout)),
+    vscode.commands.registerCommand('x4CodeSense.writeSideIntoPatch', writeSideIntoPatch),
     vscode.commands.registerCommand('x4CodeSense.showMenu', showMenu)
   );
 
@@ -145,7 +180,11 @@ function gameFilesMissing(): boolean {
 
 /** Asks the server about the document in the active editor; the answer is undefined when it cannot tell now. */
 async function activeDocumentInfo(): Promise<{ document: vscode.TextDocument; info: DocumentInfoResult } | undefined> {
-  const document = vscode.window.activeTextEditor?.document;
+  return documentInfo(vscode.window.activeTextEditor?.document);
+}
+
+/** Asks the server about a document; the answer is undefined when it cannot tell now. */
+async function documentInfo(document: vscode.TextDocument | undefined): Promise<{ document: vscode.TextDocument; info: DocumentInfoResult } | undefined> {
   if (!client || !document || document.languageId !== 'xml' || document.uri.scheme !== 'file') {
     return undefined;
   }
@@ -223,7 +262,7 @@ function tooltip(info: DocumentInfoResult): vscode.MarkdownString {
     lines.push(
       `**Patch** of \`${target.name}\` (${whose}${earlier})`,
       '',
-      '[Open the file it changes](command:x4CodeSense.openPatchTarget) · [Show what it changes](command:x4CodeSense.comparePatch)'
+      '[Open the file it changes](command:x4CodeSense.openPatchTarget) · [Show what it changes](command:x4CodeSense.comparePatch) · [Edit above what it changes](command:x4CodeSense.editPatchWithResult)'
     );
   } else if (target) {
     lines.push(`**Patch** of \`${target.name}\` has nothing to patch: ${escaped(target.missing ?? 'the file is not found')}`);
@@ -287,7 +326,8 @@ async function showMenu(): Promise<void> {
   if (kindOf(activeInfo?.info) === 'patch') {
     entries.push(
       { label: '$(go-to-file) Open the File This Patch Changes', description: target?.name, command: 'x4CodeSense.openPatchTarget' },
-      { label: '$(diff) Show What This Patch Changes', command: 'x4CodeSense.comparePatch' }
+      { label: '$(diff) Show What This Patch Changes', command: 'x4CodeSense.comparePatch' },
+      { label: '$(split-vertical) Edit This Patch Above What It Changes', command: 'x4CodeSense.editPatchWithResult' }
     );
   }
   entries.push(
@@ -440,45 +480,83 @@ async function openPatchTarget(): Promise<void> {
 }
 
 /** Opens a diff of the file the active patch changes: as the game loads it before the patch, and after it. */
-async function comparePatch(comparisons: PatchComparisons): Promise<void> {
+async function comparePatch(comparisons: PatchComparisons, sides: PatchedSides): Promise<void> {
+  const patch = await activePatch();
+  if (patch?.info.patchTarget) {
+    await openComparison(patch.document, patch.info.patchTarget, comparisons, sides);
+  }
+}
+
+/**
+ * Puts the active patch in the upper part of the window, and the diff of the file it changes full width
+ * below it. From then on, files opened below go up, and the diff below follows the patch in front above.
+ */
+async function editPatchWithResult(comparisons: PatchComparisons, sides: PatchedSides, layout: PatchLayout): Promise<void> {
   const patch = await activePatch();
   const target = patch?.info.patchTarget;
   if (!patch || !target) {
     return;
   }
-  const before = comparisons.uriOf(patch.document.uri, target.name, 'before');
-  const after = comparisons.uriOf(patch.document.uri, target.name, 'after');
-  comparisons.refresh(before, after);
-  const earlier = target.earlier.length === 0 ? '' : ` after ${target.earlier.length} earlier`;
-  await vscode.commands.executeCommand('vscode.diff', before, after, `${path.basename(target.name)}: without and with this patch${earlier}`);
+  // Two groups, one above the other; the editors of any other groups move into them.
+  await vscode.commands.executeCommand('vscode.setEditorLayout', { orientation: 1, groups: [{ size: 0.4 }, { size: 0.6 }] });
+  await vscode.window.showTextDocument(patch.document, { viewColumn: vscode.ViewColumn.One, preview: false });
+  await openComparison(patch.document, target, comparisons, sides, { viewColumn: vscode.ViewColumn.Two, preserveFocus: true, preview: false });
+  layout.arrange();
 }
 
-/** The two sides of patch comparisons, asked from the server whenever the editor shows them. */
+/** Shows the diff of the patch that came to the front above, while the window is arranged so. */
+async function followPatch(editor: vscode.TextEditor | undefined, layout: PatchLayout, comparisons: PatchComparisons, sides: PatchedSides): Promise<void> {
+  const column = editor && layout.comparisonColumn(editor);
+  const patch = column && (await documentInfo(editor.document));
+  if (!column || !patch?.info.isDiff || !patch.info.patchTarget?.file) {
+    return;
+  }
+  await openComparison(patch.document, patch.info.patchTarget, comparisons, sides, { viewColumn: column, preserveFocus: true, preview: true });
+}
+
+/** Saves the active side with a patch, which writes its changes into the patch; without the save actions, which would change the game's text. */
+async function writeSideIntoPatch(): Promise<void> {
+  if (vscode.window.activeTextEditor?.document.uri.scheme !== patchedScheme) {
+    void vscode.window.showInformationMessage('X4CodeSense: click into the side with the patch first.');
+    return;
+  }
+  await vscode.commands.executeCommand('workbench.action.files.saveWithoutFormatting');
+}
+
+/** The diff of a patch's target without and with the patch; the side with it can be edited. */
+async function openComparison(
+  patch: vscode.TextDocument,
+  target: PatchTargetInfo,
+  comparisons: PatchComparisons,
+  sides: PatchedSides,
+  options?: vscode.TextDocumentShowOptions
+): Promise<void> {
+  const before = comparisons.uriOf(patch.uri, target.name);
+  comparisons.refresh(before);
+  sides.refreshAll();
+  const earlier = target.earlier.length === 0 ? '' : ` after ${target.earlier.length} earlier`;
+  const title = `${path.basename(target.name)}: without and with this patch${earlier}`;
+  await vscode.commands.executeCommand('vscode.diff', before, sides.uriOf(patch.uri, target.name), title, options);
+}
+
+/** The left sides of patch comparisons, asked from the server whenever the editor shows them. */
 class PatchComparisons implements vscode.TextDocumentContentProvider {
   private readonly changed = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this.changed.event;
 
-  uriOf(patch: vscode.Uri, targetName: string, side: 'before' | 'after'): vscode.Uri {
-    return vscode.Uri.from({
-      scheme: comparisonScheme,
-      path: `/${side}/${targetName}`,
-      query: new URLSearchParams({ patch: patch.toString(), side }).toString(),
-    });
+  uriOf(patch: vscode.Uri, targetName: string): vscode.Uri {
+    return vscode.Uri.from({ scheme: comparisonScheme, path: `/before/${targetName}`, query: new URLSearchParams({ patch: patch.toString() }).toString() });
   }
 
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-    const query = new URLSearchParams(uri.query);
-    const params: PatchComparisonParams = { uri: query.get('patch') ?? '' };
+    const params: PatchComparisonParams = { uri: new URLSearchParams(uri.query).get('patch') ?? '' };
     let compared: PatchComparisonResult = null;
     try {
       compared = client ? await client.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, params) : null;
     } catch {
       // The server is starting or stopping.
     }
-    if (!compared) {
-      return '<!-- X4CodeSense: open the patch document to compare it with the file it changes. -->\n';
-    }
-    return query.get('side') === 'before' ? compared.before : compared.after;
+    return compared?.before ?? '<!-- X4CodeSense: open the patch document to compare it with the file it changes. -->\n';
   }
 
   refresh(...uris: vscode.Uri[]): void {

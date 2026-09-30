@@ -12,6 +12,11 @@
  * the line breaks and indentation the next one has before it in its file are added. Added text (line
  * breaks, indentation, `>`, quotes, the end tag of an element that had none) comes from no file.
  *
+ * What an operation brings in is written at the column of the element it replaces or is added next to,
+ * or one step deeper than the element it is added into (as that element's other children are), and
+ * its lines move with it; lines inside attribute values and comments stay as written, their whitespace
+ * being part of them.
+ *
  * The text is analysed as the target script; the pieces take what the analysis finds back to the files,
  * and a caret in a file to its place in the text.
  */
@@ -27,6 +32,8 @@ export interface PatchedPiece {
   /** Offsets in the source's text; as long as the piece, except for a value that had to be escaped. */
   sourceStart: number;
   sourceEnd: number;
+  /** For a piece of what was moved to another column: the indentation its lines have in the source, and here. */
+  shift?: { from: string; to: string };
 }
 
 export interface PatchedText {
@@ -40,11 +47,55 @@ export interface PatchedText {
   starts: Map<PatchNode, number>;
 }
 
+/** Lines of a source written at another column: those starting with `from` start with `to`. */
+interface Shift {
+  source: PatchSource;
+  from: string;
+  to: string;
+}
+
+/** The whitespace between the start of the offset's line and the offset, when there is only whitespace. */
+function indentBefore(text: string, offset: number): string {
+  let start = offset;
+  while (start > 0 && (text.charCodeAt(start - 1) === 0x20 || text.charCodeAt(start - 1) === 0x09)) {
+    start--;
+  }
+  return start === 0 || text.charCodeAt(start - 1) === 0x0a || text.charCodeAt(start - 1) === 0x0d ? text.slice(start, offset) : '';
+}
+
+/** The stretches of a file whose whitespace belongs to them, attribute values and comments, sorted. */
+const verbatimStretches = new WeakMap<PatchSource, XmlRegion[]>();
+
+function insideVerbatim(source: PatchSource, offset: number): boolean {
+  let stretches = verbatimStretches.get(source);
+  if (!stretches) {
+    stretches = [
+      ...source.structure.comments,
+      ...source.structure.elements.flatMap((element) => element.attributes.map((attribute) => ({ start: attribute.valueStart, end: attribute.valueEnd }))),
+    ].sort((a, b) => a.start - b.start);
+    verbatimStretches.set(source, stretches);
+  }
+  let low = 0;
+  let high = stretches.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (stretches[middle].start < offset) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low > 0 && offset < stretches[low - 1].end;
+}
+
 class Writer {
   private readonly parts: string[] = [];
   private length = 0;
   readonly pieces: PatchedPiece[] = [];
   readonly starts = new Map<PatchNode, number>();
+  /** The column each node is written at, once asked. */
+  readonly columns = new Map<PatchNode, string>();
+  private readonly shifts: Shift[] = [];
 
   get offset(): number {
     return this.length;
@@ -55,24 +106,86 @@ class Writer {
     this.length += text.length;
   }
 
-  copy(source: PatchSource, start: number, end: number, text = source.text.slice(start, end)): void {
+  /** The innermost shift of a source, while its nodes are written at another column. */
+  private shiftOf(source: PatchSource): Shift | undefined {
+    for (let at = this.shifts.length - 1; at >= 0; at--) {
+      if (this.shifts[at].source === source) {
+        return this.shifts[at];
+      }
+    }
+    return undefined;
+  }
+
+  /** Writes with the lines of a source moved to another column. */
+  shifted(shift: Shift | undefined, write: () => void): void {
+    if (!shift || shift.from === shift.to) {
+      write();
+      return;
+    }
+    this.shifts.push(shift);
+    try {
+      write();
+    } finally {
+      this.shifts.pop();
+    }
+  }
+
+  /** An indentation of a source as it is written now. */
+  shiftedIndent(source: PatchSource, indent: string): string {
+    const shift = this.shiftOf(source);
+    return shift && indent.startsWith(shift.from) ? shift.to + indent.slice(shift.from.length) : indent;
+  }
+
+  /** Copies a stretch of a file; `text` when it is written differently, as an escaped value. */
+  copy(source: PatchSource, start: number, end: number, text?: string): void {
+    const shift = text === undefined ? this.shiftOf(source) : undefined;
+    if (!shift) {
+      this.piece(source, start, end, text ?? source.text.slice(start, end));
+      return;
+    }
+    // Each line that starts with the source's indentation gets the column's instead, outside values and comments.
+    const full = source.text;
+    let segment = start;
+    for (let at = start; at < end; at++) {
+      const code = full.charCodeAt(at);
+      if (code !== 0x0a && code !== 0x0d) {
+        continue;
+      }
+      if (code === 0x0d && full.charCodeAt(at + 1) === 0x0a) {
+        at++;
+      }
+      const lineStart = at + 1;
+      if (lineStart + shift.from.length > end || !full.startsWith(shift.from, lineStart) || insideVerbatim(source, lineStart)) {
+        continue;
+      }
+      this.piece(source, segment, lineStart, full.slice(segment, lineStart), shift);
+      this.add(shift.to);
+      segment = lineStart + shift.from.length;
+    }
+    this.piece(source, segment, end, full.slice(segment, end), shift);
+  }
+
+  private piece(source: PatchSource, start: number, end: number, text: string, shift?: Shift): void {
     if (text === '') {
       return;
     }
     const last = this.pieces[this.pieces.length - 1];
     const exact = text.length === end - start;
+    const moved = shift && { from: shift.from, to: shift.to };
     if (
       last &&
       exact &&
       last.source === source &&
       last.end === this.length &&
       last.sourceEnd === start &&
-      last.end - last.start === last.sourceEnd - last.sourceStart
+      last.end - last.start === last.sourceEnd - last.sourceStart &&
+      last.shift?.from === moved?.from &&
+      last.shift?.to === moved?.to
     ) {
       last.end += text.length;
       last.sourceEnd = end;
     } else {
-      this.pieces.push({ start: this.length, end: this.length + text.length, source, sourceStart: start, sourceEnd: end });
+      this.pieces.push({ start: this.length, end: this.length + text.length, source, sourceStart: start, sourceEnd: end, ...(moved ? { shift: moved } : {}) });
     }
     this.add(text);
   }
@@ -185,13 +298,20 @@ interface Cursor {
  * The text between two neighbours in the same file. When they were not neighbours there, the spaces and
  * the line break that end the line of the one before, then the empty lines and indentation the next one
  * has before it in its file, so that a comparison with the target shows only what changed; a line break
- * when the next one has none before it.
+ * when the next one has none before it. `indent`, for what an operation brings in, is the column the next
+ * one starts at instead of its own.
  */
-function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource, to: number | undefined): void {
+function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource, to: number | undefined, indent?: string): void {
   if (from && to !== undefined && from.source === source && from.offset <= to) {
     const markup = source.text.indexOf('<', from.offset);
     if (markup === -1 || markup >= to) {
-      writer.copy(source, from.offset, to);
+      const lastBreak = Math.max(source.text.lastIndexOf('\n', to - 1), source.text.lastIndexOf('\r', to - 1));
+      if (indent === undefined || lastBreak < from.offset) {
+        writer.copy(source, from.offset, to);
+      } else {
+        writer.copy(source, from.offset, lastBreak + 1);
+        writer.add(indent);
+      }
       return;
     }
   }
@@ -202,7 +322,7 @@ function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource,
   const space = to === undefined ? '' : source.text.slice(start, to);
   const lineBreak = space.search(/[\r\n]/);
   if (lineBreak === -1) {
-    writer.add('\n');
+    writer.add(indent === undefined ? '\n' : `\n${indent}`);
     return;
   }
   const rest = space.slice(lineBreak);
@@ -213,7 +333,52 @@ function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource,
     end++;
   }
   const ending = before.startsWith('\r\n', end) ? 2 : before[end] === '\n' || before[end] === '\r' ? 1 : 0;
-  writer.add(ending === 0 ? rest : before.slice(lineEnd, end + ending) + rest.slice(rest.startsWith('\r\n') ? 2 : 1));
+  const text = ending === 0 ? rest : before.slice(lineEnd, end + ending) + rest.slice(rest.startsWith('\r\n') ? 2 : 1);
+  // The indentation of the next one: its column when an operation brought it in, else its own as moved with what holds it.
+  const lastLine = Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1;
+  writer.add(text.slice(0, lastLine) + (indent ?? writer.shiftedIndent(source, text.slice(lastLine))));
+}
+
+/** The indentation of a node's line in its file, when nothing else is before it on the line. */
+function ownIndent(node: PatchNode): string {
+  const region = node.element ?? node.comment;
+  return region ? indentBefore(node.source.text, region.start) : '';
+}
+
+/**
+ * The column a node is written at. What an operation brought in takes the column of the node it replaces
+ * or is added next to, or of the other children of the node it is added into (one step deeper than that
+ * node when it has none); anything else its own, moved with the node an operation brought in that holds it.
+ */
+function columnOf(writer: Writer, node: PatchNode): string {
+  const known = writer.columns.get(node);
+  if (known !== undefined) {
+    return known;
+  }
+  let column = ownIndent(node);
+  if (node.placed) {
+    const { anchor, deeper } = node.placed;
+    const sibling = deeper ? anchor.children.find((child) => !child.placed && (child.element ?? child.comment)) : undefined;
+    if (!deeper) {
+      column = columnOf(writer, anchor);
+    } else if (sibling) {
+      column = columnOf(writer, sibling);
+    } else {
+      const own = columnOf(writer, anchor);
+      const outer = anchor.parent?.kind === 'element' ? columnOf(writer, anchor.parent) : undefined;
+      column = own + (outer !== undefined && own.length > outer.length && own.startsWith(outer) ? own.slice(outer.length) : own.includes('\t') ? '\t' : '  ');
+    }
+  } else {
+    for (let at = node.parent; at && at.source === node.source; at = at.parent) {
+      if (at.placed) {
+        const from = ownIndent(at);
+        column = column.startsWith(from) ? columnOf(writer, at) + column.slice(from.length) : column;
+        break;
+      }
+    }
+  }
+  writer.columns.set(node, column);
+  return column;
 }
 
 function writeChildren(writer: Writer, node: PatchNode, from: Cursor | undefined, to: number | undefined): void {
@@ -223,11 +388,13 @@ function writeChildren(writer: Writer, node: PatchNode, from: Cursor | undefined
     if (!region) {
       continue;
     }
-    writeGap(writer, cursor, child.source, region.start);
-    writeNode(writer, child);
+    const column = child.placed ? columnOf(writer, child) : undefined;
+    writeGap(writer, cursor, child.source, region.start, column);
+    writer.shifted(column === undefined ? undefined : { source: child.source, from: ownIndent(child), to: column }, () => writeNode(writer, child));
     cursor = { source: child.source, offset: region.end };
   }
-  writeGap(writer, cursor, node.source, to);
+  // An end tag the node did not have (it was self-closing, or cut off) goes on a line at the node's column.
+  writeGap(writer, cursor, node.source, to, to === undefined && node.kind === 'element' && node.children.length > 0 ? columnOf(writer, node) : undefined);
 }
 
 function writeNode(writer: Writer, node: PatchNode): void {

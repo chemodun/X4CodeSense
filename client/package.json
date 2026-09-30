@@ -45,7 +45,9 @@
   ],
   "activationEvents": [
     "onLanguage:xml",
-    "onLanguage:lua"
+    "onLanguage:lua",
+    "onFileSystem:x4codesense-patch",
+    "onFileSystem:x4codesense-patched"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -83,6 +85,18 @@
         "icon": "$(diff)"
       },
       {
+        "command": "x4CodeSense.editPatchWithResult",
+        "title": "Edit This Patch Above What It Changes",
+        "category": "X4CodeSense",
+        "icon": "$(split-vertical)"
+      },
+      {
+        "command": "x4CodeSense.writeSideIntoPatch",
+        "title": "Write Changes into the Patch",
+        "category": "X4CodeSense",
+        "icon": "$(save)"
+      },
+      {
         "command": "x4CodeSense.showMenu",
         "title": "Show Menu",
         "category": "X4CodeSense"
@@ -99,6 +113,14 @@
           "when": "x4CodeSense.documentKind == patch"
         },
         {
+          "command": "x4CodeSense.editPatchWithResult",
+          "when": "x4CodeSense.documentKind == patch"
+        },
+        {
+          "command": "x4CodeSense.writeSideIntoPatch",
+          "when": "resourceScheme == x4codesense-patched"
+        },
+        {
           "command": "x4CodeSense.showMenu",
           "when": "false"
         }
@@ -107,7 +129,17 @@
         {
           "command": "x4CodeSense.comparePatch",
           "when": "x4CodeSense.documentKind == patch && resourceScheme == file && resourceLangId == xml",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "x4CodeSense.editPatchWithResult",
+          "when": "x4CodeSense.documentKind == patch && resourceScheme == file && resourceLangId == xml",
+          "group": "navigation@2"
+        },
+        {
+          "command": "x4CodeSense.writeSideIntoPatch",
+          "when": "resourceScheme == x4codesense-patched",
+          "group": "navigation@1"
         }
       ]
     },

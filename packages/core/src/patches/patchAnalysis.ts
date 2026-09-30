@@ -71,6 +71,12 @@ function earlierTree(patch: string, target: string, index: ScriptIndex): { docum
   return { document, earlier, uncertain };
 }
 
+/** The target's tree as the patch finds it: the earlier patches applied, none of its own operations. Built anew. */
+export function treeBeforePatch(patch: PatchAnalysis, index: ScriptIndex): PatchNode | undefined {
+  const target = patch.target.file;
+  return target === undefined ? undefined : earlierTree(patch.source.file, target, index)?.document;
+}
+
 /**
  * The target's tree as an operation of the patch finds it: the earlier patches applied, then the
  * patch's operations before this one. Built anew, since the patch's tree holds all its changes.
@@ -85,6 +91,17 @@ export function treeBefore(patch: PatchAnalysis, operation: XmlElement, index: S
   return tree.document;
 }
 
+/** A stretch of the patched text copied from the patch exactly as the patch has it. */
+export interface OwnPiece {
+  /** Offsets in the patched text. */
+  start: number;
+  end: number;
+  /** Where the stretch starts in the patch. */
+  patchStart: number;
+  /** When what the patch brings in is written at another column: the indentation of its lines here, and in the patch. */
+  indent?: { side: string; patch: string };
+}
+
 /** The file a patch changes, written out as the game loads it before the patch and after it. */
 export interface PatchComparison {
   /** How the patch names the file: `md/setup.xml`. */
@@ -94,6 +111,8 @@ export interface PatchComparison {
   before: string;
   /** With this patch applied too. */
   after: string;
+  /** The stretches of `after` that the patch wrote as they are in it, in text order: a caret or an edit there has its place in the patch. */
+  own: OwnPiece[];
 }
 
 /**
@@ -107,5 +126,23 @@ export function comparePatch(patch: PatchAnalysis, index: ScriptIndex): PatchCom
     return undefined;
   }
   const after = patch.patched?.written ?? writePatchedTree(patch.document);
-  return { name: patch.target.name, file, before: writePatchedTree(tree.document).text, after: after.text };
+  const source = patch.source;
+  // A value that had to be escaped is not the patch's text, and the name of an attribute a patch sets is
+  // copied from the operation's `sel` or `type`: an edit there does not change what the side shows.
+  const startTags = patch.operations.map((operation) => operation.element);
+  const own = after.pieces
+    .filter(
+      (piece) =>
+        piece.source === source &&
+        piece.end - piece.start === piece.sourceEnd - piece.sourceStart &&
+        after.text.startsWith(source.text.slice(piece.sourceStart, piece.sourceEnd), piece.start) &&
+        !startTags.some((element) => element.start <= piece.sourceStart && piece.sourceEnd <= element.startTagEnd)
+    )
+    .map((piece) => ({
+      start: piece.start,
+      end: piece.end,
+      patchStart: piece.sourceStart,
+      ...(piece.shift ? { indent: { side: piece.shift.to, patch: piece.shift.from } } : {}),
+    }));
+  return { name: patch.target.name, file, before: writePatchedTree(tree.document).text, after: after.text, own };
 }

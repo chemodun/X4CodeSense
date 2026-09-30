@@ -462,16 +462,17 @@ describe('the target before and after a patch', () => {
 
   it('writes the target as its file has it, then with each change in place', () => {
     const early = comparePatch(analyzeFile(earlyPatch).patch!, index);
-    expect(early).toEqual({ name: 'md/setup.xml', file: setup, before: target, after: withEarly });
+    expect(early).toMatchObject({ name: 'md/setup.xml', file: setup, before: target, after: withEarly });
+    expect(early?.own.map((piece) => withEarly.slice(piece.start, piece.end))).toEqual(['<cue name="Early" />']);
     // Before: early_mod's patch applied. After: only the lines the patch changes differ; what it brings in
-    // keeps its indentation from the patch, a changed self-closing element stays so.
+    // takes the column of what it replaces, a changed self-closing element stays so.
     const late = comparePatch(analyzeFile(latePatch).patch!, index);
     expect(late?.before).toBe(withEarly);
     expect(late?.after).toBe(
       withEarly
         .replace(
           '<set_value name="$count" exact="1" />\n        <!-- patchmarker -->\n',
-          '<set_value name="$count" exact="2"/>\n    <set_value name="$a" exact="1" />\n    <set_value name="$b" exact="2" />\n'
+          '<set_value name="$count" exact="2"/>\n        <set_value name="$a" exact="1" />\n        <set_value name="$b" exact="2" />\n'
         )
         .replace('<cue name="Later" />', '<cue name="Later" instantiate="true"/>')
         .replace('<cue name="Early" />\n', '<cue name="Early" />\n    <cue name="Late" />\n')
@@ -498,6 +499,72 @@ describe('the target before and after a patch', () => {
       expect(compared?.before, JSON.stringify(start)).toBe(start + body);
       expect(compared?.after, JSON.stringify(start)).toBe(start + body.replace('<cue name="Later" />\n', '<cue name="Later" />\n    <cue name="Early" />\n'));
     }
+  });
+
+  it('writes what a patch brings in at the column of what it replaces or goes into, its lines moved with it', () => {
+    const text = [
+      '<diff>',
+      `  <replace sel="//cue[@name='Start']/actions/set_value[@name='$mode']">`,
+      '    <do_any>',
+      `      <set_value name="$mode" exact="'easy'" weight="75" />`,
+      `      <set_value name="$mode" exact="'hard'`,
+      `                  " weight="25" />`,
+      '    </do_any>',
+      '  </replace>',
+      `  <add sel="//cue[@name='Later']">`,
+      '      <actions />',
+      '  </add>',
+      '</diff>',
+      '',
+    ].join('\n');
+    expect(comparePatch(analyzeFile(latePatch, text).patch!, index)?.after).toBe(
+      withEarly
+        .replace(
+          `        <set_value name="$mode" exact="'easy'" />\n`,
+          [
+            '        <do_any>',
+            `          <set_value name="$mode" exact="'easy'" weight="75" />`,
+            `          <set_value name="$mode" exact="'hard'`,
+            // Inside a value: as written.
+            `                  " weight="25" />`,
+            '        </do_any>',
+            '',
+          ].join('\n')
+        )
+        // Into an element with no children: one step deeper than it, its new end tag at its column.
+        .replace('<cue name="Later" />', '<cue name="Later" >\n      <actions />\n    </cue>')
+    );
+  });
+
+  it("tells where the patch's own text is in the text after it, for carets and typing there", () => {
+    const text = readFileSync(latePatch, 'utf8');
+    const late = comparePatch(analyzeFile(latePatch).patch!, index)!;
+    // Not the names of the attributes the patch sets: they are copied from `sel` and `type`. What the side
+    // shows at another column is one piece per line, after the indentation that differs.
+    expect(late.own.map((piece) => late.after.slice(piece.start, piece.end))).toEqual([
+      '2',
+      '<set_value name="$a" exact="1" />',
+      '\n',
+      '<set_value name="$b" exact="2" />',
+      'true',
+      '<cue name="Late" />',
+    ]);
+    expect(late.own.map((piece) => piece.indent)).toEqual([
+      undefined,
+      { side: '        ', patch: '    ' },
+      undefined,
+      { side: '        ', patch: '    ' },
+      undefined,
+      undefined,
+    ]);
+    for (const piece of late.own) {
+      expect(text.slice(piece.patchStart, piece.patchStart + piece.end - piece.start)).toBe(late.after.slice(piece.start, piece.end));
+    }
+    // Typing inside a piece is typing in the patch: the text after it is the text before with the same insert.
+    const piece = late.own[5];
+    const at = '<cue name="'.length;
+    const typed = analyzeFile(latePatch, text.slice(0, piece.patchStart + at) + 'r' + text.slice(piece.patchStart + at));
+    expect(comparePatch(typed.patch!, index)?.after).toBe(late.after.slice(0, piece.start + at) + 'r' + late.after.slice(piece.start + at));
   });
 
   it('has nothing to compare without a target file', () => {

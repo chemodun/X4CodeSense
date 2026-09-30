@@ -59,7 +59,12 @@ The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted val
 - Reported: a `sel` that selects nothing or several nodes, at the step where it stops matching; a patch with nothing to patch; an operation the game refuses; `sel` or `if` that is no valid XPath. The operations and their attributes are checked against the game's `diff.xsd`.
 - What an `add` or `replace` brings in is checked where it lands, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there.
 - In `sel` and `if`, hover tells what each step selects and where it is written, go to definition goes there, and completion offers the element and attribute names and the values, such as cue names, of the file as the operation finds it.
-- **Show What This Patch Changes**, also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. **Open the File This Patch Changes** opens that file.
+- **Show What This Patch Changes**, also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. What an operation brings in is shown at the column of the element it replaces or is added next to, or one step deeper than the element it is added into. **Open the File This Patch Changes** opens that file.
+- **Edit This Patch Above What It Changes**, also a button in the title bar, puts the patch in the upper part of the window and that diff full width below it. While the window stays so, a file opened in the diff's group, from the Explorer for example, moves up to the patch's group, and the diff below follows the patch in front above. The side with the patch can be edited, and the caret follows between the patch and that side:
+  - Typing in what the patch brings in, its elements and the values it sets, goes into the patch as you type, undo included.
+  - Other changes, such as a value of the game's own script, an element added next to the game's or one removed, are written into the patch when you save that side (or press **Write Changes into the Patch** in its title bar). They become new operations with a full path, in the order of the places they change: `replace` of a value, `add` with `type` for a new attribute, `add` next to a neighbour for new elements, `remove`, or `replace` of a whole element whose new value spans lines. Elements next to what the patch brings in join its `add`. The patch shows the changes unsaved, and Undo there takes them back.
+  - A path names each element from the root: cues and libraries by `name`, other elements by `name`, `value`, `ref` or `id` when they have one, more attributes or a position only where siblings would share it.
+  - Nothing is written unless the patch, applied again, gives exactly the side's elements and attributes and each operation selects what it did before. Otherwise the side stays unsaved and the reason is shown, for example a side that is not well-formed, or a change outside the root element.
 
 ### Status bar
 
@@ -78,6 +83,7 @@ npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
 - Without the extracted game files, scripts are only checked for well-formedness: the schemas, the script properties, the texts and the game's scripts all come from them.
 - Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
 - XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
+- In the side with the patch, text inside elements (which scripts do not have) and the order of attributes are not written into the patch. A changed comment of the game's script becomes its removal and a new comment. What a patch brings in and then changes again with another of its operations is changed where that operation does, not from the side.
 - AI scripts, Mission Director scripts and their patches are checked. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game, such as the `libraries`, are not checked.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
 - Semantic highlighting needs the extracted game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
@@ -142,6 +148,8 @@ All of them are also in the menu the status bar item opens.
 
 - **X4CodeSense: Select the Extracted Game Files...** - sets `x4CodeSense.unpackedFileLocation` with a folder picker: in the workspace settings when they set it, else in the user settings.
 - **X4CodeSense: Show What This Patch Changes** - in a patch: a diff of the file it changes, without and with the patch.
+- **X4CodeSense: Edit This Patch Above What It Changes** - in a patch: the patch above that diff, the side with the patch editable.
+- **X4CodeSense: Write Changes into the Patch** - in the side with the patch: saves it, which writes its changes into the patch.
 - **X4CodeSense: Open the File This Patch Changes** - in a patch.
 - **X4CodeSense: Show Output** - the language server's log, with the problems met reading the game files.
 - **X4CodeSense: Open Settings**
@@ -158,6 +166,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [0.3.0] - unreleased
+
+- Added
+  - **Edit This Patch Above What It Changes**: the patch above the diff of the file it changes, and the caret follows between them. The side with the patch can be edited: typing in what the patch brings in goes into the patch at once; saving the side writes its other changes into the patch as new operations, with full paths, in the order of the places they change.
 
 ### [0.2.2] - 2026-09-30
 

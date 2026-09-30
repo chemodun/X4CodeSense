@@ -26,6 +26,7 @@ import {
   type DocumentAnalysis,
   type PatchComparison,
 } from '../src';
+import { writePatch } from '../src/patches/patchWriter';
 import { bestOf, fileCeilingMs, patchCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
@@ -202,6 +203,81 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     expect(addOnly).toBeGreaterThan(70);
     expect(wrong).toEqual([]);
     expect(best).toBeLessThan(fileCeilingMs);
+  });
+
+  it("finds the patch's own text in the target after it, where typing is typing in the patch", () => {
+    const wrong: string[] = [];
+    let pieces = 0;
+    let characters = 0;
+    let typed = 0;
+    for (const { file, analysis } of analyses) {
+      const patch = analysis.patch;
+      const comparison = index && patch?.target.file ? comparePatch(patch, index) : undefined;
+      if (!index || !patch || !comparison) {
+        continue;
+      }
+      const where = `${path.basename(path.dirname(path.dirname(file)))}/${path.basename(file)}`;
+      const text = patch.source.text;
+      for (const piece of comparison.own) {
+        pieces++;
+        characters += piece.end - piece.start;
+        if (comparison.after.slice(piece.start, piece.end) !== text.slice(piece.patchStart, piece.patchStart + piece.end - piece.start)) {
+          wrong.push(`${where}: the piece at ${piece.start} is not the patch's text`);
+        }
+      }
+      // A letter typed at the start of the first attribute value of the patch's own text.
+      const piece = comparison.own.find((candidate) => comparison.after.slice(candidate.start, candidate.end).includes('="'));
+      if (!piece) {
+        continue;
+      }
+      typed++;
+      const at = comparison.after.indexOf('="', piece.start) + 2 - piece.start;
+      const edited = analyzeText(text.slice(0, piece.patchStart + at) + 'Q' + text.slice(piece.patchStart + at), context, pathToFileURL(file).toString());
+      const after = edited.patch && comparePatch(edited.patch, index)?.after;
+      if (after !== comparison.after.slice(0, piece.start + at) + 'Q' + comparison.after.slice(piece.start + at)) {
+        wrong.push(`${where}: a letter typed at ${piece.start + at} is not the one change`);
+      }
+    }
+    console.log(`${pieces} pieces of the patches' own text in their targets, ${characters} characters; a letter typed in ${typed} of them`);
+    expect(pieces).toBeGreaterThan(500);
+    expect(typed).toBeGreaterThan(80);
+    expect(wrong).toEqual([]);
+  });
+
+  it('writes every patch anew from the text it gives, as an edited side is written into a patch', () => {
+    const empty = '<?xml version="1.0" encoding="utf-8"?>\n<diff>\n</diff>\n';
+    const refused: string[] = [];
+    let written = 0;
+    let operations = 0;
+    let largest = { size: 0, file: '', after: '' };
+    for (const { file, analysis } of analyses) {
+      const comparison = index && analysis.patch ? comparePatch(analysis.patch, index) : undefined;
+      if (!index || !comparison) {
+        continue;
+      }
+      if (comparison.after.length > largest.size) {
+        largest = { size: comparison.after.length, file, after: comparison.after };
+      }
+      // From an empty patch in its place, the edited side being what the patch gives.
+      const blank = analyzeText(empty, context, pathToFileURL(file).toString()).patch;
+      const result = blank && writePatch(blank, comparison.after, index);
+      if (!result?.text) {
+        refused.push(`${path.basename(path.dirname(path.dirname(file)))}/${path.basename(file)}: ${result?.refused[0]?.reason ?? 'no patch'}`);
+        continue;
+      }
+      written++;
+      operations += result.changes.length;
+    }
+    // One change of the largest target, as a user saves it: the root's name.
+    const blank = analyzeText(empty, context, pathToFileURL(largest.file).toString()).patch;
+    const edited = largest.after.replace(/(<mdscript[^>]*?name=")/, '$1X');
+    const best = bestOf(5, () => blank && index && writePatch(blank, edited, index));
+    console.log(
+      `${written} patches written anew with ${operations} operations; one change of the largest target (${path.basename(largest.file)}, ${largest.size} characters) best of 5 ${best.toFixed(1)} ms, ceiling ${patchCeilingMs} ms`
+    );
+    expect(written).toBeGreaterThan(100);
+    expect(refused).toEqual([]);
+    expect(best).toBeLessThan(patchCeilingMs);
   });
 
   // A patch document's analysis includes the file it changes: twice the ceiling of a file.

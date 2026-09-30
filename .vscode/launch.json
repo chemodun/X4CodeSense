@@ -8,7 +8,8 @@
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/client", "--profile=X4CodeSense"],
       "outFiles": ["${workspaceFolder}/client/dist/**/*.js"],
       "preLaunchTask": "npm: build",
-      "autoAttachChildProcesses": true
+      "autoAttachChildProcesses": true,
+      "timeout": 30000
     },
     {
       "name": "Attach to Server",
