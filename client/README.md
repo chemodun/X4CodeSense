@@ -2,7 +2,7 @@
 
 Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`), Mission Director scripts (`md/*.xml`) and the patches (`<diff>`) that change them. X4CodeSense reads the game's schemas, script properties and texts, and the scripts of the game, its DLCs and your extensions, and checks your scripts as you type.
 
-X4CodeSense is the successor of X4CodeComplete, written anew around a language server, so the same analysis also runs from the command line and in CI.
+X4CodeSense is the successor of X4CodeComplete, written anew around a language server, so the same analysis also runs from the command line and in CI. It replaces X4CodeComplete and offers to take its settings.
 
 > **Preview:** while the version is 0.x, features and settings may still change from one version to the next.
 
@@ -101,6 +101,12 @@ X4CodeSense reads the game's own files: the schemas `md.xsd`, `aiscripts.xsd`, `
 - the game's catalogs (`01.cat`, `02.cat` and so on) into one folder, which then holds `aiscripts`, `md`, `libraries`, `t` and more;
 - each DLC's catalogs (`ext_01.cat` and so on in `extensions/ego_dlc_*` of the game) into the folder of the same name under `extensions` of that folder, and copy each DLC's `content.xml` there from the game installation. The catalogs do not hold it, and without it the DLCs are read alphabetically instead of in the game's order, so patches of the same file by several DLCs are applied in the wrong order.
 
+### Coming from X4CodeComplete
+
+X4CodeSense replaces X4CodeComplete: uninstall X4CodeComplete, so the two do not check the same scripts. X4CodeComplete-Lua works on Lua files, which X4CodeSense does not read yet. Their settings stay in your settings files after an uninstall. When X4CodeSense starts where it has no settings of its own yet, in the user settings or in the workspace settings, it offers the ones found there: the extracted game files, the extensions folder, the language settings, the structure validation and verbose logging. **Use** copies them, **Show Them** lists them in the X4CodeSense output first, **Not Now** asks again at the next start, and **Never** stops asking.
+
+A folder that no longer exists is not taken, nor a relative extensions folder, which X4CodeSense reads from the workspace folder and X4CodeComplete did not. Where both X4CodeComplete and X4CodeComplete-Lua have a setting, X4CodeComplete's is taken.
+
 ### Set it up
 
 1. Run **X4CodeSense: Select the Extracted Game Files...** from the Command Palette (`Ctrl+Shift+P`), or click the X4CodeSense item in the status bar, and choose the folder you extracted the game to.
@@ -152,6 +158,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 - Added
   - Semantic highlighting of the expressions in AI scripts, Mission Director scripts and what patches bring in: variables, keywords, properties, lookup values, cues, labels, interrupt library items, numbers, strings and operators.
+  - The settings of X4CodeComplete and X4CodeComplete-Lua are offered where X4CodeSense has none of its own yet.
 
 ### [0.1.0] - 2026-09-29
 

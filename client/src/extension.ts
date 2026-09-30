@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
@@ -13,9 +14,21 @@ import {
   type ScriptSchema,
   type ServerStatus,
 } from 'x4-script-core';
+import {
+  offerDetails,
+  offerMessage,
+  oldSettingsOffer,
+  ourSection,
+  type OldSettingsOffer,
+  type ScopedValues,
+  type SettingsScope,
+} from './x4CodeCompleteSettings';
 
 /** The scheme of the two sides of a patch comparison: the patch document's uri and the side are in the query. */
 const comparisonScheme = 'x4codesense-patch';
+
+/** Set when the offer of X4CodeComplete's settings was answered with Never; Settings Sync carries it to other machines. */
+const neverOfferKey = 'x4CodeSense.neverOfferOldSettings';
 
 /** The commands the status bar's tooltip may run. */
 const tooltipCommands = [
@@ -98,6 +111,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('x4CodeSense.showMenu', showMenu)
   );
 
+  context.globalState.setKeysForSync([neverOfferKey]);
+  void offerOldSettings(context, languageClient.outputChannel);
   await languageClient.start();
   await updateStatusBar();
 }
@@ -317,6 +332,71 @@ async function selectGameFolder(): Promise<void> {
   }
   const inWorkspace = configuration.inspect<string>('unpackedFileLocation')?.workspaceValue !== undefined;
   await configuration.update('unpackedFileLocation', folder.fsPath, inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * Offers the settings of X4CodeComplete where X4CodeSense has none of its own yet, see `oldSettingsOffer`.
+ * Use copies them, Show Them lists them in the output with those not taken and asks again, Not Now (or
+ * closing the notice) asks at the next start, Never stops asking. Once copied, our settings are set at
+ * that scope, so nothing is offered there again.
+ */
+async function offerOldSettings(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
+  if (context.globalState.get<boolean>(neverOfferKey)) {
+    return;
+  }
+  const offer = oldSettingsOffer(inspectSetting, (folder) => fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true);
+  if (offer.taken.length === 0) {
+    if (offer.skipped.length > 0) {
+      output.appendLine(['Settings of X4CodeComplete, none of which X4CodeSense can take:', ...offerDetails(offer)].join('\n'));
+    }
+    return;
+  }
+  const use = 'Use';
+  const showThem = 'Show Them';
+  const notNow = 'Not Now';
+  const never = 'Never';
+  let choice = await vscode.window.showInformationMessage(offerMessage(offer), use, showThem, notNow, never);
+  if (choice === showThem) {
+    output.appendLine(['Settings of X4CodeComplete that X4CodeSense would take:', ...offerDetails(offer)].join('\n'));
+    output.show(true);
+    choice = await vscode.window.showInformationMessage(offerMessage(offer), use, notNow, never);
+  }
+  if (choice === use) {
+    await takeOldSettings(offer, output);
+  } else if (choice === never) {
+    await context.globalState.update(neverOfferKey, true);
+  }
+}
+
+function inspectSetting(section: string, key: string): ScopedValues {
+  const values = vscode.workspace.getConfiguration(section).inspect(key);
+  return { user: values?.globalValue, workspace: values?.workspaceValue };
+}
+
+async function takeOldSettings(offer: OldSettingsOffer, output: vscode.OutputChannel): Promise<void> {
+  const targets: Record<SettingsScope, vscode.ConfigurationTarget> = {
+    user: vscode.ConfigurationTarget.Global,
+    workspace: vscode.ConfigurationTarget.Workspace,
+  };
+  const configuration = vscode.workspace.getConfiguration(ourSection);
+  const failed: string[] = [];
+  for (const setting of offer.taken) {
+    try {
+      await configuration.update(setting.key, setting.value, targets[setting.scope]);
+    } catch (error) {
+      failed.push(`  ${ourSection}.${setting.key}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  output.appendLine(`Took ${offer.taken.length - failed.length} of ${offer.taken.length} settings of X4CodeComplete.`);
+  if (failed.length > 0) {
+    output.appendLine(['Not written:', ...failed].join('\n'));
+    const showOutput = 'Show Output';
+    if (
+      (await vscode.window.showWarningMessage(`X4CodeSense could not write ${failed.length} of the settings of X4CodeComplete.`, showOutput)) === showOutput
+    ) {
+      output.show(true);
+    }
+  }
 }
 
 async function exists(uri: vscode.Uri): Promise<boolean> {

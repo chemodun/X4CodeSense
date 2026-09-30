@@ -18,7 +18,7 @@ Requires Node.js 22.
 ```powershell
 npm install
 npm run build        # tsc -b for all packages, then esbuild bundle of the client
-npm test             # vitest across packages
+npm test             # vitest across the packages and the client
 npm run lint
 npm run package -w client   # produces client/x4codesense-<version>.vsix
 ```
