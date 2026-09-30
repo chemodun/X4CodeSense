@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.2.1...x4-script-language-server@v0.3.0) (2026-09-30)
+
+
+### Features
+
+* edit a patch above the file it changes, both ways ([5d5d260](https://github.com/chemodun/X4CodeSense/commit/5d5d260c917c03b3fe771e94890249609e348ba8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.2.1 to 0.3.0
+
 ## [0.2.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.2.0...x4-script-language-server@v0.2.1) (2026-09-30)
 
 
