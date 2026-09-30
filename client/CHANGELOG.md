@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.2.2...x4codesense@v0.3.0) (2026-09-30)
+
+
+### Features
+
+* edit a patch above the file it changes, both ways ([5d5d260](https://github.com/chemodun/X4CodeSense/commit/5d5d260c917c03b3fe771e94890249609e348ba8))
+
+
+### Documentation
+
+* **client:** date and complete the 0.3.0 changelog ([c9369c0](https://github.com/chemodun/X4CodeSense/commit/c9369c073508d4adb97bf6cd1346fd49e151cbf5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.2.1 to 0.3.0
+
 ## [0.2.2](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.2.1...x4codesense@v0.2.2) (2026-09-30)
 
 
