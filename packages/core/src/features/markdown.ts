@@ -121,14 +121,19 @@ export function describeProperty(property: ScriptProperty): string {
   return lines.join('\n');
 }
 
-/** Hover text when several datatypes offer a matching property. */
+/**
+ * Hover text when several properties match: of one name on several datatypes, each datatype listed; of
+ * several names (`mayattack.{$component}`, `mayattack.{$faction}`), each property with its datatype.
+ */
 export function describeCandidates(candidates: readonly ScriptProperty[]): string {
   const shown = candidates.slice(0, 8);
-  const lines = [`**${escapeMarkdown(shown[0].name)}** matches a property of ${candidates.length} datatypes:`, ''];
+  const oneName = candidates.every((candidate) => candidate.name === candidates[0].name);
+  const lines = oneName
+    ? [`**${escapeMarkdown(shown[0].name)}** matches a property of ${candidates.length} datatypes:`, '']
+    : [`${candidates.length} properties match here:`, ''];
   for (const candidate of shown) {
-    lines.push(
-      `- **${escapeMarkdown(candidate.owner.name)}**${candidate.type !== undefined ? ` → \`${candidate.type}\`` : ''}: ${escapeMarkdown(candidate.result)}`
-    );
+    const name = oneName ? escapeMarkdown(candidate.owner.name) : `${escapeMarkdown(candidate.owner.name)}.${escapeMarkdown(candidate.name)}`;
+    lines.push(`- **${name}**${candidate.type !== undefined ? ` → \`${candidate.type}\`` : ''}: ${escapeMarkdown(candidate.result)}`);
   }
   if (candidates.length > shown.length) {
     lines.push(`- and ${candidates.length - shown.length} more`);

@@ -29,6 +29,7 @@
   </datatype>
   <datatype name="entity" type="component">
     <property name="skill.{$skilltype}" result="Skill level" type="integer" />
+    <property name="skill.&lt;skillname&gt;" result="Shortcut for skill.{skilltype.&lt;skillname&gt;}" type="integer" />
     <property name="controlled" result="Object controlled by the entity" type="object" />
   </datatype>
   <datatype name="sector" type="component">

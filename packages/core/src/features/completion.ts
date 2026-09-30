@@ -235,7 +235,8 @@ class Completer {
             item.textEdit = { range, newText: '{}' };
           }
           item.filterText = completion.label;
-          item.sortText = `~${completion.label}`;
+          // First, before the bare values: `{}` is what most patterns take (`mayattack.{$faction}`).
+          item.sortText = ` ${completion.label}`;
         }
         this.add(item);
       }

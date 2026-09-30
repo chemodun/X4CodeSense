@@ -4,8 +4,9 @@
  * `chainAtCaret` and `chainAtToken` cut the chain around a position out of the token stream, and
  * `resolveChain` walks it against the script properties: the head is a keyword, a variable or a literal,
  * every further step matches a segment of a property name pattern of the current datatype. Property names
- * can span several steps (`cargo.{$ware}.count`), and a placeholder segment such as `{$class}` accepts a
- * braced expression or a bare value of the keyword of that type (`isclass.ship`).
+ * can span several steps (`cargo.{$ware}.count`); a placeholder segment such as `{$class}` accepts a
+ * braced expression, and a bare value only where the script properties declare a shortcut for it
+ * (`isclass.<classname>`).
  */
 import { ScriptDatatype, ScriptKeyword, ScriptProperties, ScriptProperty, type PropertySegment } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
@@ -38,6 +39,7 @@ export interface PropertyChain {
 }
 
 const closers: Record<string, string> = { rbrace: 'lbrace', rbracket: 'lbracket', rparen: 'lparen' };
+const openers: Record<string, string> = { lbrace: 'rbrace', lbracket: 'rbracket', lparen: 'rparen' };
 const stepKinds: Partial<Record<string, ChainStepKind>> = {
   identifier: 'identifier',
   variable: 'variable',
@@ -65,6 +67,39 @@ function openerOf(tokens: readonly Token[], index: number): number {
     }
   }
   return -1;
+}
+
+/** Index of the closing token matching the opening token at `index`, or -1. */
+function closerOf(tokens: readonly Token[], index: number): number {
+  const opening = tokens[index].kind;
+  const closing = openers[opening];
+  let depth = 0;
+  for (let position = index; position < tokens.length; position++) {
+    const kind = tokens[position].kind;
+    if (kind === opening) {
+      depth++;
+    } else if (kind === closing) {
+      depth--;
+      if (depth === 0) {
+        return position;
+      }
+    }
+  }
+  return -1;
+}
+
+/** The last token of the chain that the step ending at token `index` belongs to: the steps after it included. */
+function chainEnd(tokens: readonly Token[], index: number): number {
+  let last = index;
+  while (tokens[last + 1]?.kind === 'dot' && tokens[last + 2] && stepKinds[tokens[last + 2].kind]) {
+    const next = last + 2;
+    const close = tokens[next].kind in openers ? closerOf(tokens, next) : next;
+    if (close < 0) {
+      break;
+    }
+    last = close;
+  }
+  return last;
 }
 
 /** Walks back from the token at `index` (the last token of a step) to the head and returns the steps in order. */
@@ -151,7 +186,8 @@ export function chainAtCaret(expression: string, offset: number): PropertyChain 
 
 /**
  * The chain that contains the token at the offset, for hover and definition, and the index of that step.
- * Steps after the one under the offset are left out.
+ * The steps after it are included: a property name may go on after it (`mayattack.{$faction}`), and
+ * without them the step could match another property that ends there.
  */
 export function chainAtToken(expression: string, offset: number): { chain: PropertyChain; stepIndex: number } | undefined {
   const tokens = tokenize(expression);
@@ -163,11 +199,12 @@ export function chainAtToken(expression: string, offset: number): { chain: Prope
   if (token.kind !== 'identifier' && token.kind !== 'variable') {
     return undefined;
   }
-  const steps = withTexts(expression, collectSteps(tokens, index));
-  if (steps.length === 0) {
+  const steps = withTexts(expression, collectSteps(tokens, chainEnd(tokens, index)));
+  const stepIndex = steps.findIndex((step) => step.start <= token.start && token.end <= step.end);
+  if (stepIndex < 0) {
     return undefined;
   }
-  return { chain: { steps }, stepIndex: steps.length - 1 };
+  return { chain: { steps }, stepIndex };
 }
 
 /** What a step of a chain resolved to. */
@@ -177,7 +214,11 @@ export interface ResolvedStep {
   keyword?: ScriptKeyword;
   /** The property whose name pattern covers this step; the same property on every step it spans. */
   property?: ScriptProperty;
-  /** Properties of any datatype that would match here, when the owner type was unknown and several fit. */
+  /**
+   * Properties that would match here: of any datatype, when the owner type was unknown and several fit;
+   * of other names that fit as well as `property`, when the owner is known (`mayattack.{$component}` and
+   * `mayattack.{$faction}` for `mayattack.{$x}`).
+   */
   candidates?: ScriptProperty[];
   /** Datatype of the value after this step, when known. */
   datatype?: ScriptDatatype;
@@ -216,25 +257,22 @@ function literalDatatype(step: ChainStep, properties: ScriptProperties): ScriptD
 }
 
 /**
- * True when a written step fits a segment of a property name pattern. A bare name fits a `{$type}`
- * placeholder when it is a value of the keyword of that type (`isclass.ship`); when `lenient`, any bare
- * name fits a placeholder whose type has no keyword (`project.agr_fields_sunrise`). Strict matches are
- * tried first, so `dock.container` is the `dock` property followed by `container`, not `dock.{$docksize}`.
+ * True when a written step fits a segment of a property name pattern. A `{$type}` placeholder takes a
+ * braced expression; a bare value of the lookup of that type only where the script properties declare a
+ * shortcut for it, `isclass.<classname>` beside `isclass.{$class}`, so `mayattack.{$faction}` takes no
+ * `argon`. When `lenient`, any bare name fits a placeholder whose type has no lookup, as the game's
+ * scripts write it (`project.agr_fields_sunrise`). Strict matches are tried first, so `dock.container`
+ * is the `dock` property followed by `container`, not `dock.{$docksize}`.
  */
 export function segmentMatches(segment: PropertySegment, step: ChainStep, properties: ScriptProperties, schema: ScriptSchema, lenient = false): boolean {
   switch (segment.kind) {
     case 'literal':
       return step.kind === 'identifier' && step.text === segment.text;
-    case 'expression': {
+    case 'expression':
       if (step.kind === 'braces' || step.kind === 'brackets') {
         return true;
       }
-      if (step.kind !== 'identifier') {
-        return false;
-      }
-      const keyword = indexOf(properties).keyword(segment.type, schema);
-      return keyword ? keyword.properties.has(step.text) : lenient;
-    }
+      return step.kind === 'identifier' && lenient && !indexOf(properties).keyword(segment.type, schema);
     case 'variable':
       // `$name`, or a braced expression that yields the name: `this.{'$' + $name}`.
       return step.kind === 'variable' || step.kind === 'braces';
@@ -297,6 +335,15 @@ function matchLength(
 
 function literalCount(property: ScriptProperty): number {
   return property.segments.filter((segment) => segment.kind === 'literal').length;
+}
+
+/**
+ * True when two properties have the same kinds of segments, so that they are variants of one pattern:
+ * `mayattack.{$component}` and `mayattack.{$faction}`, not `isclass.{$class}` and the shortcut
+ * `isclass.<classname>`.
+ */
+function sameShape(a: ScriptProperty, b: ScriptProperty): boolean {
+  return a.segments.length === b.segments.length && a.segments.every((segment, index) => segment.kind === b.segments[index].kind);
 }
 
 /** Matching passes in order: [lenient, prefix]. */
@@ -488,9 +535,12 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
     let best: ScriptProperty | undefined;
     let bestLength = 0;
     let candidates: ScriptProperty[] = [];
+    // Properties of other names that match as well as the best one: `mayattack.{$faction}` beside `mayattack.{$component}`.
+    let ties: ScriptProperty[] = [];
     // Strict matches first, then bare names for free placeholders, then a chain that ends inside a pattern.
     for (const [lenient, prefix] of matchPasses) {
       candidates = [];
+      ties = [];
       for (const property of resolver.candidates(owner, steps[index])) {
         const length = matchLength(property, steps, index, properties, schema, lenient, prefix);
         if (length < 0) {
@@ -502,6 +552,9 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
         if (!best || length > bestLength || (length === bestLength && literalCount(property) > literalCount(best))) {
           best = property;
           bestLength = length;
+          ties = [property];
+        } else if (length === bestLength && sameShape(property, best) && !ties.some((tie) => tie.name === property.name)) {
+          ties.push(property);
         }
       }
       if (best) {
@@ -510,7 +563,8 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
     }
     if (best && owner.kind === 'unknown') {
       // Any datatype may fit: the longest matches count, and only one of them may be adopted.
-      const longest = candidates.filter((candidate) => candidate.segments.length === bestLength);
+      const shape = best;
+      const longest = candidates.filter((candidate) => candidate.segments.length === bestLength && sameShape(candidate, shape));
       if (longest.length > 1) {
         for (let covered = index; covered < index + bestLength; covered++) {
           resolved[covered].candidates = longest;
@@ -525,8 +579,13 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
       best = longest[0];
     }
     if (best) {
+      // The first property decides the type; the others that fit as well are shown beside it.
+      const others = owner.kind !== 'unknown' && ties.length > 1 ? ties : undefined;
       for (let covered = index; covered < index + bestLength; covered++) {
         resolved[covered].property = best;
+        if (others) {
+          resolved[covered].candidates = others;
+        }
         owners[covered] = owner;
       }
       // A chain that stops inside a pattern yields an intermediate value, not the property's type.
@@ -576,8 +635,9 @@ function segmentLabel(segment: PropertySegment): string {
 
 /**
  * Completions for the partial segment of a chain: the next segment of every property whose earlier
- * segments match the written steps, from every position where the owner is known. Bare values of an
- * enumeration keyword are offered for expression placeholders such as `{$class}`.
+ * segments match the written steps, from every position where the owner is known, and from every name
+ * written on an unknown owner that a property starts with. Bare values of a lookup are offered where a
+ * shortcut takes them, `isclass.<classname>`; a placeholder such as `{$faction}` is offered as `{…}`.
  */
 export function completeChain(chain: PropertyChain, properties: ScriptProperties, schema: ScriptSchema): SegmentCompletion[] {
   const partial = chain.partial?.text ?? '';
@@ -595,17 +655,16 @@ export function completeChain(chain: PropertyChain, properties: ScriptProperties
     results.set(label, completion);
   };
   const at = steps.length;
-  const positions = [...Array(at).keys()].map((index) => index + 1).filter((from) => owners[from].kind !== 'unknown');
-  if (positions.length === 0 && owners[at].kind === 'unknown') {
-    // Nothing is known about the chain: offer the first segment of every property of every datatype.
-    positions.push(at);
-  }
-  for (const from of positions) {
+  /** The next segments of the properties looked up at step `from`; with `named`, only those whose name starts with that step. */
+  const offerFrom = (from: number, named?: string): void => {
     const owner = owners[from];
     const matched = at - from;
     for (const property of propertiesOf(owner, properties)) {
       const segments = property.segments;
       if (segments.length <= matched) {
+        continue;
+      }
+      if (named !== undefined && (segments[0].kind !== 'literal' || segments[0].text !== named)) {
         continue;
       }
       let fits = true;
@@ -630,16 +689,23 @@ export function completeChain(chain: PropertyChain, properties: ScriptProperties
       if (next.kind === 'args') {
         continue;
       }
+      // Bare values come from the shortcut the script properties declare beside it, `isclass.<classname>`.
       offer(segmentLabel(next), property, continues);
-      if (next.kind === 'expression') {
-        const keyword = properties.keyword(next.type, schema);
-        for (const value of keyword?.properties.values() ?? []) {
-          if (isConcreteValue(value)) {
-            offer(value.name, property, continues, value);
-          }
-        }
-      }
     }
+  };
+  const froms = [...Array(at).keys()].map((index) => index + 1);
+  const known = froms.filter((from) => owners[from].kind !== 'unknown');
+  for (const from of known) {
+    offerFrom(from);
+  }
+  // On an unknown owner, a property of any datatype that starts with the name written there goes on:
+  // `$x.mayattack.` offers `{$component}` and `{$faction}`.
+  for (const from of froms.filter((from) => from < at && owners[from].kind === 'unknown' && steps[from].kind === 'identifier')) {
+    offerFrom(from, steps[from].text);
+  }
+  if (known.length === 0 && owners[at].kind === 'unknown' && results.size === 0) {
+    // Nothing is known about the chain and no property goes on from a name in it: the first segment of every property of every datatype.
+    offerFrom(at);
   }
   return [...results.values()];
 }

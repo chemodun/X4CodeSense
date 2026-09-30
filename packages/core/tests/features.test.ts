@@ -153,7 +153,12 @@ describe('completion', () => {
       'distanceto',
       'sector',
     ]);
-    expect(labels(actions('<set_value name="$x" exact="player.ship.cargo.|"/>'))).toEqual(['{$ware}', 'energycells', 'ore', 'list']);
+    expect(labels(actions('<set_value name="$x" exact="player.ship.cargo.|"/>'))).toEqual(['{$ware}', 'list']);
+    // As the editor lists them, by sort text: `{…}` first, then the bare values of the shortcut.
+    const { analysis, offset } = at(actions('<set_value name="$x" exact="$ship.isclass.|"/>'));
+    const sorted = completionAt(analysis, offset, game, { snippetSupport: true }).sort((a, b) => (a.sortText ?? a.label).localeCompare(b.sortText ?? b.label));
+    expect(sorted.map((item) => item.label)).toEqual(['{$class}', '{$list}', 'ship', 'station']);
+    expect(sorted[0].textEdit && 'newText' in sorted[0].textEdit ? sorted[0].textEdit.newText : '').toBe('{$1}');
     const keywords = game.properties?.keywordsFor('md').map((keyword) => keyword.name) ?? [];
     expect(keywords.slice(0, 6)).toEqual(['player', 'true', 'this', 'class', 'ware', 'skilltype']);
     // The keywords, then the cues of the script (`A`).
@@ -204,6 +209,14 @@ describe('hover', () => {
     expect(property).toContain('The player ship');
     expect(hoverText(actions('<set_value name="$x" exact="player.ship.cargo.{ware.o|re}.count"/>'))).toContain('**ware.ore**');
     expect(hoverText(actions('<set_value name="$x" exact="$x.na|me"/>'))).toContain('matches a property of 2 datatypes');
+    // The steps after the hovered one count, and every property that fits as well is shown.
+    for (const owner of ['$x', 'player.ship']) {
+      const both = hoverText(actions(`<set_value name="$y" exact="${owner}.iscla|ss.{$z}"/>`));
+      expect(both).toContain('2 properties match here');
+      expect(both).toContain('**component.isclass.\\{$class\\}**');
+      expect(both).toContain('**component.isclass.\\{$list\\}**');
+    }
+    expect(hoverText(actions('<set_value name="$x" exact="player.ship.iscla|ss.ship"/>'))).toContain('**component.isclass.&lt;classname&gt;**');
     expect(hoverText(actions('<set_value name="$x" exact="player.ship.frob|nicate"/>'))).toBeUndefined();
     expect(hoverText(actions('<set_value name="$x" exact="\'pla|yer\'"/>'))).toBeUndefined();
   });

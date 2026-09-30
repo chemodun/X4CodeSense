@@ -84,8 +84,9 @@ describe.skipIf(!extracted)('script properties on the vanilla corpus', () => {
               }
               chains++;
               const chain = resolveChain(found.chain, properties, schema);
-              const last = chain.steps[chain.steps.length - 1];
-              if (chain.steps[0].keyword && (last.property || last.candidates)) {
+              // The second step; the chain goes on after it when the expression does.
+              const second = chain.steps[found.stepIndex];
+              if (chain.steps[0].keyword && (second.property || second.candidates)) {
                 resolved++;
               }
             }

@@ -28,6 +28,10 @@ export function describeStep(step: ResolvedStep): string | undefined {
   if (step.keyword) {
     return describeKeyword(step.keyword);
   }
+  // Several properties that fit: all of them, `mayattack.{$component}` and `mayattack.{$faction}`.
+  if (step.candidates && step.candidates.length > 1) {
+    return describeCandidates(step.candidates);
+  }
   if (step.property) {
     return describeProperty(step.property);
   }

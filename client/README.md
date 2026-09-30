@@ -159,6 +159,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
+### [0.2.2] - 2026-09-30
+
+- Fixed
+  - Hover over a property whose name goes on after it, such as `mayattack` in `$ship.mayattack.{$faction}`, shows that property and every variant that fits as well. When the type of `$ship` was not known, it showed unrelated `{$numeric}` properties.
+  - Completion after such a name offers its `{…}` variants first, also when the type before it is not known: `$ship.mayattack.` offers `{$component}` and `{$faction}`.
+  - A bare value such as `argon` is taken only where `scriptproperties.xml` declares a shortcut for it (`isclass.<classname>`, `skill.<skillname>`), and completion offers bare values only there.
+
 ### [0.2.1] - 2026-09-30
 
 - Changed

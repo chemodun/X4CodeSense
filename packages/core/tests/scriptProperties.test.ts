@@ -161,10 +161,12 @@ describe('property chains', () => {
     expect(texts('(1 + 2).', 8)).toEqual(['(1 + 2)']);
   });
 
-  it('finds the chain around a token for hover', () => {
+  it('finds the chain around a token for hover, the steps after it included', () => {
     const found = chainAtToken('$a + player.ship.pilot.name', 20);
-    expect(found?.chain.steps.map((step) => step.text)).toEqual(['player', 'ship', 'pilot']);
+    expect(found?.chain.steps.map((step) => step.text)).toEqual(['player', 'ship', 'pilot', 'name']);
     expect(found?.stepIndex).toBe(2);
+    expect(chainAtToken('$x.isclass.{$y}', 5)?.chain.steps.map((step) => step.text)).toEqual(['$x', 'isclass', '{$y}']);
+    expect(chainAtToken('$x.isclass.{$y}', 13)?.chain.steps.map((step) => step.text)).toEqual(['$y']);
     expect(chainAtToken('player.ship', 6)).toBeUndefined();
     expect(chainAtToken('$x', 1)?.chain.steps.map((step) => step.text)).toEqual(['$x']);
   });
@@ -205,7 +207,13 @@ describe('property chains', () => {
     expect(cargo.steps[4].datatype?.name).toBe('integer');
     expect(cargo.owners.map((owner) => owner.kind)).toEqual(['unknown', 'keyword', 'datatype', 'datatype', 'datatype', 'datatype']);
 
-    expect(summary(resolve('player.ship.isclass.ship'))).toEqual(['keyword player', 'player.ship', 'component.isclass.{$class}', 'component.isclass.{$class}']);
+    // A bare value goes to the shortcut the script properties declare for it.
+    expect(summary(resolve('player.ship.isclass.ship'))).toEqual([
+      'keyword player',
+      'player.ship',
+      'component.isclass.<classname>',
+      'component.isclass.<classname>',
+    ]);
     expect(summary(resolve('player.ship.isclass.{class.ship}'))).toEqual([
       'keyword player',
       'player.ship',
@@ -241,8 +249,8 @@ describe('property chains', () => {
     expect(summary(resolve('player.entity.skill.piloting'))).toEqual([
       'keyword player',
       'player.entity',
-      'entity.skill.{$skilltype}',
-      'entity.skill.{$skilltype}',
+      'entity.skill.<skillname>',
+      'entity.skill.<skillname>',
     ]);
     expect(summary(resolve('player.ship.frobnicate.name'))).toEqual(['keyword player', 'player.ship', '?', 'candidates 2']);
   });
@@ -280,9 +288,10 @@ describe('property chains', () => {
     expect(complete('tag.')).toEqual(['{$enum}']);
     expect(complete('md.')).toEqual([]);
     expect(complete('player.ship.distanceto.')).toEqual([]);
-    expect(complete('player.ship.cargo.')).toEqual(['{$ware}', 'energycells', 'ore', 'list']);
+    // No bare wares: `cargo.{$ware}.count` has no shortcut that takes them.
+    expect(complete('player.ship.cargo.')).toEqual(['{$ware}', 'list']);
     expect(complete('player.ship.cargo.{$ware}.')).toEqual(['count']);
-    expect(complete('player.ship.isclass.')).toEqual(['{$class}', 'ship', 'station', '{$list}']);
+    expect(complete('player.ship.isclass.')).toEqual(['{$class}', '{$list}', 'ship', 'station']);
     expect(complete('player.ship.ca')).toEqual(['cargo']);
     expect(complete('player.entity.controlled.')).toContain('cargo');
     expect(complete('$x.')).toContain('pilot');
@@ -292,6 +301,27 @@ describe('property chains', () => {
     const cargo = chain && completeChain(chain, properties, 'md').find((completion) => completion.label === 'cargo');
     expect(cargo?.continues).toBe(true);
     expect(cargo?.property.name).toBe('cargo.{$ware}.count');
+  });
+
+  it('names every property that fits as well, and takes bare values only through a declared shortcut', () => {
+    // An unknown owner: the steps after `isclass` decide; without them `isclass` would take a `{$numeric}` of a list.
+    expect(summary(resolve('$x.isclass.{$y}'))).toEqual(['?', 'candidates 2', 'candidates 2']);
+    // A known owner: the first property decides the type, the other one that fits as well is named beside it.
+    const known = resolve('player.ship.isclass.{$y}');
+    expect(known.steps[2].property?.name).toBe('isclass.{$class}');
+    expect(known.steps[2].candidates?.map((candidate) => candidate.name)).toEqual(['isclass.{$class}', 'isclass.{$list}']);
+    expect(known.steps[3].datatype?.name).toBe('boolean');
+    expect(resolve('player.ship.isclass.ship').steps[2].candidates).toBeUndefined();
+    // A bare ware where no shortcut takes one.
+    expect(resolve('player.ship.cargo.energycells.count').steps[2].property).toBeUndefined();
+  });
+
+  it('completes a property that starts with a name written on an unknown owner', () => {
+    expect(complete('$x.isclass.')).toEqual(['{$class}', '{$list}', 'ship', 'station']);
+    // After it the value is a boolean, which has no properties here.
+    expect(complete('$x.isclass.{$c}.')).toEqual([]);
+    expect(complete('$x.frobnicate.')).toContain('pilot');
+    expect(complete('$x.frobnicate.')).not.toContain('{$class}');
   });
 
   it('prefers a literal property over a placeholder taking a bare name, and accepts a prefix of a pattern', () => {
