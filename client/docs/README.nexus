@@ -60,7 +60,7 @@ The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted val
 [*] What an [b]add[/b] or [b]replace[/b] brings in is checked where it lands, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there.
 [*] In [b]sel[/b] and `if`, hover tells what each step selects and where it is written, go to definition goes there, and completion offers the element and attribute names and the values, such as cue names, of the file as the operation finds it.
 [*] [b]Show What This Patch Changes[/b], also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. What an operation brings in is shown at the column of the element it replaces or is added next to, or one step deeper than the element it is added into. [b]Open the File This Patch Changes[/b] opens that file.
-[*] [b]Edit This Patch Above What It Changes[/b], also a button in the title bar, puts the patch in the upper part of the window and that diff full width below it. While the window stays so, a file opened in the diff's group, from the Explorer for example, moves up to the patch's group, and the diff below follows the patch in front above. The side with the patch can be edited, and the caret follows between the patch and that side:
+[*] [b]Edit This Patch Above What It Changes[/b], also a button in the title bar, puts the patch in the upper part of the window and that diff full width below it. While the window stays so, a file opened in the diff's group, from the Explorer for example, moves up to the patch's group, and the diff below follows the patch in front above. A patch's diffs close with it, unless their side has changes not yet written. The side with the patch can be edited, and the caret follows between the patch and that side:
 [list]
 [*] Typing in what the patch brings in, its elements and the values it sets, goes into the patch as you type, undo included.
 [*] Other changes, such as a value of the game's own script, an element added next to the game's or one removed, are written into the patch when you save that side (or press [b]Write Changes into the Patch[/b] in its title bar). They become new operations with a full path, in the order of the places they change: [b]replace[/b] of a value, [b]add[/b] with [b]type[/b] for a new attribute, [b]add[/b] next to a neighbour for new elements, `remove`, or [b]replace[/b] of a whole element whose new value spans lines. Elements next to what the patch brings in join its `add`. The patch shows the changes unsaved, and Undo there takes them back.
@@ -160,7 +160,7 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
 [/list]
 [size=3][u][b]⌨️ Commands[/b][/u][/size]
 
-All of them are also in the menu the status bar item opens.
+All of them but [b]Write Changes into the Patch[/b], which belongs to the side with the patch, are also in the menu the status bar item opens.
 [list]
 [*] [b]X4CodeSense: Select the Extracted Game Files...[/b] - sets [b]x4CodeSense.unpackedFileLocation[/b] with a folder picker: in the workspace settings when they set it, else in the user settings.
 [*] [b]X4CodeSense: Show What This Patch Changes[/b] - in a patch: a diff of the file it changes, without and with the patch.
@@ -183,11 +183,21 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=3][u][b]🛠 Changelog[/b][/u][/size]
 
-[size=3][u][i][0.3.0] - unreleased[/i][/u][/size]
+[size=3][u][i][0.3.0] - 2026-10-01[/i][/u][/size]
 [list]
 [*] Added
 [list]
 [*] [b]Edit This Patch Above What It Changes[/b]: the patch above the diff of the file it changes, and the caret follows between them. The side with the patch can be edited: typing in what the patch brings in goes into the patch at once; saving the side writes its other changes into the patch as new operations, with full paths, in the order of the places they change.
+[*] While the window is arranged so, a file opened in the diff's group moves up to the patch's, and the diff follows the patch in front above.
+[/list]
+[*] Changed
+[list]
+[*] In the diff of a patch, what an operation brings in is shown at the column of the element it replaces or is added next to, or one step deeper than the element it is added into, instead of its column in the patch.
+[*] A patch's diffs close with the patch.
+[/list]
+[*] Fixed
+[list]
+[*] A diff of a patch restored from the last session gets its text once the game files are read.
 [/list]
 [/list]
 [size=3][u][i][0.2.2] - 2026-09-30[/i][/u][/size]
