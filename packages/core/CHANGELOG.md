@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.2.0...x4-script-core@v0.2.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* hover and completion of properties whose name goes on ([3a9c0bd](https://github.com/chemodun/X4CodeSense/commit/3a9c0bddea8771df9112d2f538955161869b5adf))
+
 ## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.1.1...x4-script-core@v0.2.0) (2026-09-30)
 
 
