@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.1.1...x4-script-core@v0.2.0) (2026-09-30)
+
+
+### Features
+
+* semantic highlighting of script expressions ([9869769](https://github.com/chemodun/X4CodeSense/commit/986976988bcbcfaf10298719a0e7674fc217555f))
+* show the text of ReadText calls in Lua files ([8f1baf1](https://github.com/chemodun/X4CodeSense/commit/8f1baf14918ca947bdb3c917f6a02e1bec1693d2))
+
 ## [0.1.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.1.0...x4-script-core@v0.1.1) (2026-09-29)
 
 
