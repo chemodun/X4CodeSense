@@ -5,7 +5,6 @@
   "version": "0.2.0",
   "private": true,
   "publisher": "X4DevTools",
-  "preview": true,
   "pricing": "Free",
   "icon": "icons/X4CodeSense-icon.png",
   "galleryBanner": {
