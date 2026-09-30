@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.1.1...x4codesense@v0.2.0) (2026-09-30)
+
+
+### Features
+
+* **client:** offer the settings of X4CodeComplete ([fe4c223](https://github.com/chemodun/X4CodeSense/commit/fe4c2236630fdf5f076ec67396054d9ca794bd6b))
+* semantic highlighting of script expressions ([9869769](https://github.com/chemodun/X4CodeSense/commit/986976988bcbcfaf10298719a0e7674fc217555f))
+* show the text of ReadText calls in Lua files ([8f1baf1](https://github.com/chemodun/X4CodeSense/commit/8f1baf14918ca947bdb3c917f6a02e1bec1693d2))
+
+
+### Documentation
+
+* **client:** date the 0.2.0 changelog ([83cb848](https://github.com/chemodun/X4CodeSense/commit/83cb8483a041e4c918a831418f5e10cf3635d8b8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.1.1 to 0.2.0
+
 ## [0.1.1](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.1.0...x4codesense@v0.1.1) (2026-09-29)
 
 
