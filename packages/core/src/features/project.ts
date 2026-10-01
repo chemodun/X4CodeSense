@@ -5,6 +5,12 @@ import type { MdReference } from '../project/mdReferences';
 import type { IndexedCue, IndexedLibraryItem, IndexedPosition, IndexedReference, IndexedScript, ScriptIndex } from '../project/scriptIndex';
 import { escapeMarkdown, inlineCode } from './markdown';
 
+/** True when the file lies in the folder, at any depth; names compare without case, as Windows does. */
+export function isInside(file: string, folder: string): boolean {
+  const relative = path.relative(path.resolve(folder).toLowerCase(), path.resolve(file).toLowerCase());
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
 /** An LSP location for a place in an indexed file. */
 export function indexedLocation(position: IndexedPosition): Location {
   return Location.create(pathToFileURL(position.file).toString(), Range.create(position.line, position.character, position.line, position.character));

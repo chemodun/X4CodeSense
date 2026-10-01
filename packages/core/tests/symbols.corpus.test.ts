@@ -3,15 +3,28 @@
  * (X4_EXTRACTED) and of a folder of extensions (X4_MODS), never committed: every cue, library, label,
  * interrupt library item and patch operation is in the outline once, every variable a script sets is
  * listed once unless it is a parameter, every symbol has a name, its name inside its range and its range
- * inside its parent's.
+ * inside its parent's. Go to Symbol in Workspace names every script, cue, library and interrupt library
+ * item of the index at its name.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import type { DocumentSymbol, Range } from 'vscode-languageserver-types';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
+import type { DocumentSymbol, Location, Range } from 'vscode-languageserver-types';
 import { SymbolKind } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
-import { analyzeText, attributeNamed, documentSymbols, loadGameData, scriptSchemaOf, type AnalysisContext, type ScriptSchema, type XmlElement } from '../src';
+import {
+  analyzeText,
+  attributeNamed,
+  documentSymbols,
+  loadGameData,
+  parseXml,
+  scriptSchemaOf,
+  workspaceSymbols,
+  type AnalysisContext,
+  type ScriptSchema,
+  type XmlElement,
+} from '../src';
 import { bestOf, fileCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
@@ -135,6 +148,69 @@ describe.skipIf(!extracted)('the outline on the corpus', { timeout: 300_000 }, (
     );
     expect(counts.files).toBeGreaterThan(600);
     expect(problems).toEqual([]);
+    expect(best).toBeLessThan(fileCeilingMs);
+  });
+
+  it('gives Go to Symbol in Workspace every named script, cue, library and interrupt library item, at its name', () => {
+    const index = game.index;
+    if (!index) {
+      throw new Error('no index');
+    }
+    const all = workspaceSymbols(index, '', { limit: Number.MAX_SAFE_INTEGER });
+    const documents = new Map<string, TextDocument>();
+    const documentOf = (file: string): TextDocument => {
+      let document = documents.get(file);
+      if (!document) {
+        document = TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, readFileSync(file, 'utf8'));
+        documents.set(file, document);
+      }
+      return document;
+    };
+    const problems: string[] = [];
+    const at = new Set<string>();
+    for (const symbol of all) {
+      const { uri, range } = symbol.location as Location;
+      const file = fileURLToPath(uri);
+      if (!index.hasFile(file) || documentOf(file).getText(range) !== symbol.name) {
+        problems.push(`${symbol.name} [${symbol.containerName}] at ${path.basename(file)}:${range.start.line + 1}`);
+      }
+      at.add(`${path.resolve(file).toLowerCase()}:${range.start.line}:${range.start.character}:${symbol.name}`);
+    }
+    // Read from each script's own elements: what the index should have named.
+    let wanted = 0;
+    for (const entry of index.entries()) {
+      if (entry.kind !== 'script') {
+        continue;
+      }
+      const document = documentOf(entry.file);
+      const elements = parseXml(document.getText()).elements;
+      const named = elements.filter((element) =>
+        entry.schema === 'md'
+          ? element.name === 'cue' || element.name === 'library'
+          : ['actions', 'handler', 'conditions'].includes(element.name) && element.parent?.name === 'library' && element.parent.parent?.name === 'interrupts'
+      );
+      for (const element of [elements[0], ...named]) {
+        const attribute = element && attributeNamed(element, 'name');
+        const name = attribute?.value.trim();
+        if (!attribute || !name) {
+          continue;
+        }
+        wanted++;
+        const start = document.positionAt(attribute.valueStart + attribute.rawValue.indexOf(name));
+        if (!at.has(`${path.resolve(entry.file).toLowerCase()}:${start.line}:${start.character}:${name}`)) {
+          problems.push(`missing ${name} at ${path.basename(entry.file)}:${start.line + 1}`);
+        }
+      }
+    }
+    const queries = ['', 'a', 'start', 'md.setup.start', 'xyzq'];
+    const best = Math.max(...queries.map((query) => bestOf(5, () => workspaceSymbols(index, query))));
+    const added = all.filter((symbol) => symbol.containerName?.includes('added by')).length;
+    console.log(
+      `workspace symbols: ${all.length} in ${documents.size} files, ${wanted} named in the scripts' own text, ${added} added by patches; slowest of ${queries.length} queries ${best.toFixed(1)} ms best of 5`
+    );
+    expect(all.length).toBeGreaterThan(20_000);
+    expect(problems.slice(0, 20)).toEqual([]);
+    expect(all.length).toBe(wanted + added);
     expect(best).toBeLessThan(fileCeilingMs);
   });
 });

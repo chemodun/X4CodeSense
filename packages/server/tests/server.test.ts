@@ -42,6 +42,7 @@ import {
   TextDocumentSyncKind,
   WorkDoneProgress,
   WorkDoneProgressCreateRequest,
+  WorkspaceSymbolRequest,
   type CodeAction,
   type DocumentSymbol,
   type Location,
@@ -188,6 +189,7 @@ beforeAll(async () => {
   expect(result.capabilities.referencesProvider).toBe(true);
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
   expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
+  expect(result.capabilities.workspaceSymbolProvider).toBe(true);
   expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix'] });
   expect(result.capabilities.semanticTokensProvider).toEqual({ legend: semanticTokensLegend, full: { delta: true }, range: true });
   await connection.sendNotification(InitializedNotification.type, {});
@@ -880,6 +882,37 @@ describe('script index', () => {
     await closed;
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   });
+
+  it('names the scripts and cues of the index for Go to Symbol in Workspace, and follows an open document', async () => {
+    const mod = path.join(workDir, 'symbolmods', 'hubmod');
+    const file = path.join(mod, 'md', 'hub.xml');
+    const lines = ['<mdscript name="Hub">', '  <cues>', '    <cue name="HubStart"/>', '  </cues>', '</mdscript>'];
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${lines.join('\n')}\n`);
+    const uri = pathToFileURL(file).toString();
+    const workspace = { uri: pathToFileURL(mod).toString(), name: 'hubmod' };
+    const symbols = async (query: string): Promise<string[]> =>
+      ((await connection.sendRequest(WorkspaceSymbolRequest.type, { query })) ?? []).map((symbol) => {
+        const location = symbol.location as Location;
+        return `${symbol.name} [${symbol.containerName}] ${path.basename(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}-${location.range.end.character}`;
+      });
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    await vi.waitFor(async () => expect(await symbols('hub')).toEqual(['Hub [hubmod] hub.xml:0:16-19', 'HubStart [md.Hub (hubmod)] hub.xml:2:15-23']), {
+      timeout: 10_000,
+    });
+    expect(await symbols('md.hub.hubst')).toEqual(['HubStart [md.Hub (hubmod)] hub.xml:2:15-23']);
+
+    // While typing: the cue being written counts from the editor, before the file is saved.
+    const typed = [...lines.slice(0, 3), '    <cue name="HubTyp', ...lines.slice(3)].join('\n');
+    expect(summarize(await open(uri, typed))).toEqual(['4:15 unclosed-attribute', '4:5 unclosed-start-tag']);
+    expect(await symbols('hubtyp')).toEqual(['HubTyp [md.Hub (hubmod)] hub.xml:3:15-21']);
+
+    const closed = diagnosticsCount(uri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    await closed;
+    expect(await symbols('hubtyp')).toEqual([]);
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  }, 30_000);
 });
 
 describe('patches', () => {

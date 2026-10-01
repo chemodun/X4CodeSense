@@ -23,6 +23,7 @@ import {
   type SemanticTokensDelta,
   type WorkDoneProgressServerReporter,
   type WorkspaceEdit,
+  type WorkspaceSymbol,
 } from 'vscode-languageserver/node';
 import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -59,6 +60,7 @@ import {
   semanticTokensLegend,
   sourcesOf,
   StatusNotificationMethod,
+  workspaceSymbols,
   writePatch,
   type AnalysisContext,
   type DocumentAnalysis,
@@ -220,6 +222,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
       documentSymbolProvider: { label: 'X4CodeSense' },
+      workspaceSymbolProvider: true,
       codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
       semanticTokensProvider: { legend: semanticTokensLegend, full: { delta: true }, range: true },
     },
@@ -800,6 +803,18 @@ connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
 connection.onDocumentSymbol((params): DocumentSymbol[] | null => {
   const analysis = currentAnalysis(params.textDocument.uri);
   return analysis?.structure ? documentSymbols(analysis) : null;
+});
+
+// The scripts, cues and interrupt library items of the index; the workspace's own first among equal matches.
+connection.onWorkspaceSymbol((params): WorkspaceSymbol[] => {
+  const index = game?.index;
+  if (!index) {
+    return [];
+  }
+  const started = performance.now();
+  const symbols = workspaceSymbols(index, params.query, { preferredFolders: workspaceFolders });
+  debug(`workspace symbols for '${params.query}': ${symbols.length} in ${(performance.now() - started).toFixed(1)} ms`);
+  return symbols;
 });
 
 // Quick fixes for the diagnostics the editor sends along, as far as the current analysis still has them.

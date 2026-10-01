@@ -28,6 +28,7 @@ import { relatedOccurrences, type NamedOccurrence } from '../names/namedItems';
 import { mdReferenceAt, mdReferencesOf } from '../project/mdReferences';
 import type { IndexedFileModel, IndexedLibraryKind, IndexedPosition, ScriptIndex } from '../project/scriptIndex';
 import type { ScriptVariable, VariableTable } from '../variables/variables';
+import { isInside } from './project';
 import { attributeNamed, attributeWithValueAt, elementWithStartTagAt, type XmlElement } from '../xml/xmlStructure';
 import { isExpressionAttribute } from '../xsd/schema';
 import { scriptSchemaOf } from '../analysis/positionContext';
@@ -83,11 +84,6 @@ function fileOf(uri: string): string | undefined {
 
 function sameFile(a: string, b: string): boolean {
   return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
-}
-
-function isInside(file: string, folder: string): boolean {
-  const relative = path.relative(path.resolve(folder).toLowerCase(), path.resolve(file).toLowerCase());
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 function rangeOf(analysis: DocumentAnalysis, occurrence: { start: number; end: number }): Range {
