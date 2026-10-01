@@ -2,7 +2,8 @@ import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserve
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { scriptSchemaOf } from '../analysis/positionContext';
 import { attributeNamed, type XmlElement } from '../xml/xmlStructure';
-import { callTarget, callTargetLabel, isCall, valueRange, type CallTarget } from './callTargets';
+import { isCall, valueRange } from './calls';
+import { callTarget, callTargetLabel, type CallTarget } from './callTargets';
 import type { ScriptIndex } from './scriptIndex';
 
 export type CallParameterDiagnosticCode = 'param-unknown';

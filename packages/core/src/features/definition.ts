@@ -16,6 +16,7 @@ import { mdReferenceDefinitions } from './project';
 import { textDefinitions, type TextDisplayOptions } from './texts';
 import { variableAt, variableDefinitions } from './variables';
 import { callParameterDefinitions } from './callParameters';
+import { scriptNameDefinitionLocations } from './scriptNames';
 
 function locations(game: GameData, sources: (SourceLocation | undefined)[]): Location[] {
   const result: Location[] = [];
@@ -89,6 +90,10 @@ export function definitionAt(analysis: DocumentAnalysis, offset: number, game: G
   const parameter = callParameterDefinitions(analysis, offset, game);
   if (parameter) {
     return parameter;
+  }
+  const scriptName = scriptNameDefinitionLocations(analysis, offset, game);
+  if (scriptName) {
+    return scriptName;
   }
   if (!game) {
     return [];

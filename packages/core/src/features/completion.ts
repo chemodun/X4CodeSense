@@ -16,6 +16,7 @@ import { namedItemCompletionItems } from './namedItems';
 import { completionsInPatch, insertionPointAt, patchedViewAt } from './patchContent';
 import { pathCompletionsAt } from './patchPaths';
 import { mdCueCompletionItems, mdScriptCompletionItems } from './project';
+import { scriptNameCompletions } from './scriptNames';
 import { textIdCompletionItems, textPageCompletionItems, type TextDisplayOptions } from './texts';
 import { variableCompletionItems } from './variables';
 
@@ -158,6 +159,16 @@ class Completer {
         for (const item of parameters) {
           this.add(item);
         }
+        return;
+      }
+    }
+    const scriptNames = scriptNameCompletions(this.analysis, element, attribute, offsetInValue(attribute, index), this.game, this.options.language);
+    if (scriptNames) {
+      for (const item of scriptNames) {
+        this.add(item);
+      }
+      // A string being typed is a name; an empty value may start an expression as well.
+      if (expression.trim() !== '') {
         return;
       }
     }

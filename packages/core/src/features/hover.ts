@@ -16,6 +16,7 @@ import { pathHoverAt } from './patchPaths';
 import { describeText, type TextDisplayOptions } from './texts';
 import { describeVariable, variableAt } from './variables';
 import { callParameterHover } from './callParameters';
+import { scriptNameHover } from './scriptNames';
 
 function hover(analysis: DocumentAnalysis, value: string, start: number, end: number): Hover {
   return {
@@ -122,6 +123,11 @@ export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameDa
   const parameter = callParameterHover(analysis, offset, game, options.language);
   if (parameter) {
     return parameter;
+  }
+  // An AI script name or order id, where a call names it or where it is defined.
+  const scriptName = scriptNameHover(analysis, offset, game, options.language);
+  if (scriptName) {
+    return scriptName;
   }
   const context = positionContext(analysis, offset, schemaOf(game, analysis));
   switch (context.kind) {

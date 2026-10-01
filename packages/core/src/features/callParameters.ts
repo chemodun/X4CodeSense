@@ -17,7 +17,8 @@ import {
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { scriptSchemaOf } from '../analysis/positionContext';
 import type { GameData } from '../gameData';
-import { callOf, callTarget, callTargetLabel, isCall, valueRange, type CallTarget, type ParameterDeclaration } from '../project/callTargets';
+import { callOf, isCall, valueRange } from '../project/calls';
+import { callTarget, callTargetLabel, type CallTarget, type ParameterDeclaration } from '../project/callTargets';
 import { attributeNamed, elementAt, elementWithStartTagAt, type XmlElement } from '../xml/xmlStructure';
 import { escapeMarkdown, inlineCode } from './markdown';
 import { patchedViewAt } from './patchContent';

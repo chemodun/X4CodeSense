@@ -33,7 +33,7 @@ export function describeReferencesElsewhere(references: readonly IndexedReferenc
 }
 
 /** Where an indexed definition is, for a hover: the file, its source, the line, and the patch that adds it. */
-function where(position: IndexedPosition, source: string, patch?: string): string {
+export function describePlace(position: IndexedPosition, source: string, patch?: string): string {
   const file = escapeMarkdown(path.basename(position.file));
   return patch
     ? `Added by the patch ${file} of ${inlineCode(source)}, line ${position.line + 1}`
@@ -74,7 +74,7 @@ export function describeMdReference(index: ScriptIndex, reference: MdReference, 
     }
     const lines = [`**${scriptName}** *(Mission Director script)*`, ''];
     for (const script of scripts) {
-      lines.push(`${where(script.position, script.source)} · ${index.cuesOf(script).length} cues and libraries  `);
+      lines.push(`${describePlace(script.position, script.source)} · ${index.cuesOf(script).length} cues and libraries  `);
     }
     if (scripts.length > 1) {
       lines.push('', `Defined ${scripts.length} times`);
@@ -96,7 +96,7 @@ export function describeMdReference(index: ScriptIndex, reference: MdReference, 
   if (facts.length > 0) {
     lines.push('', facts.join(' · '));
   }
-  lines.push('', ...cues.map((cue) => `${where(cue.position, sourceOf(index, cue.position), cue.patch)}  `));
+  lines.push('', ...cues.map((cue) => `${describePlace(cue.position, sourceOf(index, cue.position), cue.patch)}  `));
   const elsewhere = describeReferencesElsewhere(index.cueReferences(reference.script, reference.cue), uri);
   if (elsewhere) {
     lines.push('', `Referenced ${elsewhere}`);
@@ -114,7 +114,7 @@ export function mdReferenceDefinitions(index: ScriptIndex, reference: MdReferenc
 
 /** Hover lines for interrupt library items that other scripts define. */
 export function describeLibraryDefinitions(index: ScriptIndex, items: readonly IndexedLibraryItem[]): string {
-  return items.map((item) => `${where(item.position, sourceOf(index, item.position), item.patch)} (script ${inlineCode(item.script)})  `).join('\n');
+  return items.map((item) => `${describePlace(item.position, sourceOf(index, item.position), item.patch)} (script ${inlineCode(item.script)})  `).join('\n');
 }
 
 /** Completion items for the script names after `md.`. */

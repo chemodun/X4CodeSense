@@ -28,6 +28,7 @@ All of it keeps working while a tag, an attribute or a quote is still being type
 - Labels, cues, libraries and interrupt library items; script names after `md.` and cue names after `md.Script.`, cues that an extension's patch adds included.
 - Texts: pages after `{` and text ids after `{page,`. Hover over `{page, id}` or `page="…" line="…"`, in any XML file, shows the text as the game shows it.
 - The parameters of calls: in `run_script`, `run_interrupt_script`, `start_script`, `create_order`, `run_actions` and a `cue` with `ref`, signature help lists what the script, order or library declares, the parameter at the caret highlighted. `<param name="…">` completes the parameters not passed yet, those without a default first. Hover shows a parameter's description, default and type; go to definition leads to its declaration. The target must be written as is: `'order.trade.routine'`, `'Attack'`, `Lib` or `md.Script.Lib`.
+- AI script names and order ids: in `run_script name`, `run_interrupt_script name`, `start_script name` and `create_order id`, completion offers the AI scripts and orders of the game, its DLCs, the extensions and your workspace, inserted with their quotes. Hover over one, or over `<aiscript name>` and `<order id>`, shows what it is: an order's name and description as the game shows them, the parameters, where it is defined, and how often other scripts name it.
 - Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, its type when it can be told, and how often it is read.
 
 ### Texts in Lua files
@@ -36,8 +37,9 @@ In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the
 
 ### Navigation and rename
 
-- Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, interrupt library item or text where it is defined.
+- Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, order, interrupt library item or text where it is defined.
 - Find all references and rename, across scripts: variables, labels, cues and libraries (also as `md.Script.Cue` in other scripts and in the paths of patches), Mission Director script names, and interrupt library items. A rename edits the files of your workspace only; when the game or an extension outside the workspace uses the same name, it is refused, with the reason.
+- Find all references for AI script names and order ids: where they are defined and every call that names them as is (`'move.generic'`, `'Attack'`). They are not renamed: the game and any extension may name them.
 - The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path.
 - Go to Symbol in Workspace (`Ctrl+T`): the scripts, cues, libraries and interrupt library items of the game, its DLCs, the extensions and your workspace, with the script they are in and where it comes from. With a dot, the query matches the name as other scripts write it: `md.Setup.Start`. Among equally good matches your workspace's come first. Labels are left to the outline of their script.
 
@@ -171,12 +173,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [0.5.0] - unreleased
+### [0.5.0] - 2026-10-01
 
 - Added
   - Go to Symbol in Workspace: the scripts, cues, libraries and interrupt library items of the game, its DLCs, the extensions and the workspace, also as `md.Script.Cue`.
   - The parameters of calls (`run_script`, `create_order`, `run_actions`, `<cue ref>`, …): signature help, completion of the parameter names, hover with their description and default, and go to their declaration.
   - A warning for a parameter a call passes that its target does not declare, with a quick fix to the declared name it is close to. The game's own scripts have four, left behind when a library changed.
+  - AI script names and order ids in calls (`run_script name="'move.generic'"`, `create_order id="'Attack'"`): completion, hover with an order's name and description, go to definition, and find all references, also from `<aiscript name>` and `<order id>`.
 
 ### [0.4.1] - 2026-10-01
 

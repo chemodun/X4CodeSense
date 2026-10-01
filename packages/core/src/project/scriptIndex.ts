@@ -20,8 +20,9 @@
  * variables it writes into cues it gets as values (`$Cue.$x`, `event.param.$x`).
  *
  * References: with the schemas, each file records the names it uses that other files define, with the
- * position of each: the parts of `md.<Script>.<Cue>.$x`, and interrupt library references; a patch also
- * the names its paths select cues and library items by (`cue[@name='X']`). With where each script, cue
+ * position of each: the parts of `md.<Script>.<Cue>.$x`, interrupt library references, and the AI script
+ * names and order ids it names literally (`run_script name="'move.generic'"`); a patch also the names its
+ * paths select cues and library items by (`cue[@name='X']`). With where each script, cue
  * and library item has its name, that is what find references and rename need across files. What a script refers to without naming the script (a cue's bare name, a variable in its cue) is
  * worked out for a file when first asked for, like the variables of a cue.
  */
@@ -36,6 +37,7 @@ import { attributeNamed, offsetInValue, parseXml, type XmlElement, type XmlStruc
 import type { SchemaSet } from '../xsd/loadSchemas';
 import { isExpressionAttribute, type XsdElement, type XsdSchema } from '../xsd/schema';
 import { pathNamesOf, type PathNameKind } from '../patches/pathNames';
+import { scriptNameOf } from './calls';
 import { mdReferencesInAttribute } from './mdReferences';
 
 /** Where something is defined: a file and a zero-based position. */
@@ -86,8 +88,11 @@ export interface IndexedLibraryItem {
   variables: IndexedVariable[];
 }
 
-/** What a reference names: a Mission Director script, a cue of one, a variable of that cue, or an interrupt library item. */
-export type IndexedReferenceKind = 'script' | 'cue' | 'variable' | IndexedLibraryKind;
+/**
+ * What a reference names: a Mission Director script, a cue of one, a variable of that cue, an interrupt
+ * library item, an AI script or an order.
+ */
+export type IndexedReferenceKind = 'script' | 'cue' | 'variable' | IndexedLibraryKind | 'aiscript' | 'order';
 
 /** A name a file uses that may be defined in another file. */
 export interface IndexedReference {
@@ -96,10 +101,21 @@ export interface IndexedReference {
   script?: string;
   /** The cue of `md.<Script>.<Cue>` and `md.<Script>.<Cue>.$x`. */
   cue?: string;
-  /** The name itself: of the script, the cue, the variable (without `$`) or the library item. */
+  /** The name itself: of the script, the cue, the variable (without `$`), the library item, the AI script or the order. */
   name: string;
   /** Where the name starts; for a variable, where its `$` is. */
   position: IndexedPosition;
+}
+
+/** An order an AI script defines. */
+export interface IndexedOrder {
+  id: string;
+  /** Where the id is written. */
+  position: IndexedPosition;
+  /** `name` and `description` as written, text references mostly (`{1041, 361}`); `category`. */
+  name?: string;
+  description?: string;
+  category?: string;
 }
 
 export interface IndexedScript {
@@ -117,7 +133,7 @@ export interface IndexedScript {
   /** `<param name>` of an AI script or order. */
   params: string[];
   /** The orders an AI script defines, `<order id>`, with where each id is written. */
-  orders: { id: string; position: IndexedPosition }[];
+  orders: IndexedOrder[];
   /** Variables a Mission Director script writes into cues it gets as values; empty when indexed without the schemas. */
   writesThroughValues: string[];
   /** Libraries of other scripts a Mission Director script splices in: `<include_actions ref="md.Script.Library">`. */
@@ -334,6 +350,10 @@ function addReferences(
   at: (offset: number) => IndexedPosition,
   into: IndexedReference[]
 ): void {
+  const named = scriptNameOf(element, schema);
+  if (named && !named.defines) {
+    into.push({ kind: named.kind === 'script' ? 'aiscript' : 'order', name: named.name, position: at(named.start) });
+  }
   for (const attribute of element.attributes) {
     if (attribute.quote === '') {
       continue;
@@ -494,7 +514,14 @@ export function indexStructure(
     } else if (schema === 'aiscripts' && !patch && element.name === 'order' && element.parent === root) {
       const id = attributeNamed(element, 'id')?.value.trim();
       if (id) {
-        orders.push({ id, position: atOffset(nameOffset(element, 'id')) });
+        const order: IndexedOrder = { id, position: atOffset(nameOffset(element, 'id')) };
+        for (const key of ['name', 'description', 'category'] as const) {
+          const value = attributeNamed(element, key)?.value.trim();
+          if (value) {
+            order[key] = value;
+          }
+        }
+        orders.push(order);
       }
     }
   }
@@ -949,6 +976,11 @@ export class ScriptIndex {
     return this.lookup().orders.get(id) ?? [];
   }
 
+  /** The ids of the orders of every AI script, sorted. */
+  orderIds(): string[] {
+    return [...this.lookup().orders.keys()].sort((a, b) => a.localeCompare(b));
+  }
+
   /** Names of the scripts of a kind, sorted. */
   scriptNames(schema: ScriptSchema): string[] {
     const prefix = `${schema}:`;
@@ -1032,6 +1064,11 @@ export class ScriptIndex {
 
   /** Every reference to an interrupt library item of a kind with a name, in any file. */
   libraryReferences(kind: IndexedLibraryKind, name: string): IndexedReference[] {
+    return this.references(referenceKey(kind, name));
+  }
+
+  /** Every AI script name or order id written literally where something names one (`run_script name="'move.generic'"`), in any file. */
+  scriptNameReferences(kind: 'aiscript' | 'order', name: string): IndexedReference[] {
     return this.references(referenceKey(kind, name));
   }
 }

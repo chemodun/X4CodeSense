@@ -445,6 +445,37 @@ describe('editor features in patches', () => {
     ]);
   });
 
+  it('finds an order that what a patch brings in names, where it lands', () => {
+    const scripts = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const target = path.join(gameFolder, 'aiscripts', 'order.go.xml');
+    const targetText = [
+      '<aiscript name="order.go">',
+      '  <order id="Go"/>',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <create_order object="this.ship" id="\'Go\'"/>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+    ].join('\n');
+    const patch = path.join(modsFolder, 'late_mod', 'aiscripts', 'order.go.xml');
+    const patchText = `<diff>\n  <add sel="//attention/actions">\n    <create_order object="this.ship" id="'Go'"/>\n  </add>\n</diff>\n`;
+    scripts.setStructure(target, targetText, parseXml(targetText), 'game', true);
+    scripts.setStructure(patch, patchText, parseXml(patchText), 'late_mod', true);
+    const withScripts = { ...data, index: scripts };
+    const analysis = analyzeFile(patch, patchText, { ...context, index: scripts });
+    expect(analysis.patch?.operations.map((operation) => operation.status)).toEqual(['applied']);
+    const offset = at(patchText, "'Go'", 2);
+    expect(referencesAt(analysis, offset, withScripts).map(place)).toEqual([
+      'mods/late_mod/aiscripts/order.go.xml:2:42',
+      'game/aiscripts/order.go.xml:1:13',
+      'game/aiscripts/order.go.xml:4:44',
+    ]);
+    expect(definitionAt(analysis, offset, withScripts).map(place)).toEqual(['game/aiscripts/order.go.xml:1:13']);
+    const hover = hoverAt(analysis, offset, withScripts)?.contents;
+    expect(hover && typeof hover === 'object' && 'value' in hover ? hover.value : '').toMatch(/^\*\*Go\*\* \*\(order of `order\.go`\)\*/);
+  });
+
   it('renames what the content names where it lands, in the files it is written in', () => {
     expect(edits(renameAt(late, at(full, 'name="$b"', 8), 'bb', data, editable))).toEqual(['mods/late_mod/md/setup.xml:9:21 $bb']);
     expect(prepareRenameAt(late, at(full, 'name="Late"', 7), data, editable)).toMatchObject({ placeholder: 'Late' });

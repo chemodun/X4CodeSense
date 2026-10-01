@@ -916,7 +916,7 @@ describe('script index', () => {
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   }, 30_000);
 
-  it('helps with the parameters of a call: signature help, completion, hover and definition', async () => {
+  it('helps with the parameters of a call: signature help, completion, hover and definition; and with the order it names', async () => {
     const mod = path.join(workDir, 'callmods', 'callmod');
     const orderFile = path.join(mod, 'aiscripts', 'order.patrol.xml');
     const orderLines = [
@@ -967,10 +967,20 @@ describe('script index', () => {
     expect((Array.isArray(completion) ? completion : (completion?.items ?? [])).map((item) => item.label)).toEqual(['area']);
     const hover = await connection.sendRequest(HoverRequest.type, at(4, 'duration'));
     expect((hover?.contents as { value: string }).value).toMatch(/^\*\*duration\*\* \*\(parameter of order `Patrol` of `order\.patrol`\)\*/);
+    const places = (locations: Location[]): string[] =>
+      locations.map((location) => `${path.basename(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}`);
     const definition = (await connection.sendRequest(DefinitionRequest.type, at(4, 'duration'))) as Location[];
-    expect(
-      definition.map((location) => `${path.basename(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}`)
-    ).toEqual(['order.patrol.xml:4:19']);
+    expect(places(definition)).toEqual(['order.patrol.xml:4:19']);
+
+    // The order the call names, by its id.
+    const id = at(3, "'Patrol'", 2);
+    const order = await connection.sendRequest(HoverRequest.type, id);
+    expect((order?.contents as { value: string }).value).toMatch(/^\*\*Patrol\*\* \*\(order of `order\.patrol`\)\*/);
+    expect(places((await connection.sendRequest(DefinitionRequest.type, id)) as Location[])).toEqual(['order.patrol.xml:1:13']);
+    const references = await connection.sendRequest(ReferencesRequest.type, { ...id, context: { includeDeclaration: true } });
+    expect(places(references ?? [])).toEqual(['patrol.caller.xml:3:44', 'order.patrol.xml:1:13']);
+    const ids = await connection.sendRequest(CompletionRequest.type, id);
+    expect((Array.isArray(ids) ? ids : (ids?.items ?? [])).map((item) => item.label)).toContain('Patrol');
 
     const closed = diagnosticsCount(callerUri, 0);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: callerUri } });

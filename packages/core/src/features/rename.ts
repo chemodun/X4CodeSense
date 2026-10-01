@@ -4,8 +4,9 @@
  * In one document: variables, labels, cues and interrupt library items, as the document's models relate
  * them. Across files, what a name in the text ties to another file: a Mission Director script
  * (`<mdscript name>`, `md.Script`), a cue or library (its name, its bare references in its own script,
- * `md.Script.Cue` anywhere), a variable of a cue written `md.Script.Cue.$x`, and an interrupt library
- * item (its definition and every reference in any AI script). The current document's occurrences come
+ * `md.Script.Cue` anywhere), a variable of a cue written `md.Script.Cue.$x`, an interrupt library
+ * item (its definition and every reference in any AI script), and an AI script name or order id (its
+ * definitions and where calls name it; found, never renamed). The current document's occurrences come
  * from its analysis, those of other files from the index.
  *
  * A patch document is seen where it lands: a name in what it brings in is looked up in the patched
@@ -25,6 +26,7 @@ import { Location, Range, type TextEdit, type WorkspaceEdit } from 'vscode-langu
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { GameData } from '../gameData';
 import { relatedOccurrences, type NamedOccurrence } from '../names/namedItems';
+import { scriptNamesIn } from '../project/calls';
 import { mdReferenceAt, mdReferencesOf } from '../project/mdReferences';
 import type { IndexedFileModel, IndexedLibraryKind, IndexedPosition, ScriptIndex } from '../project/scriptIndex';
 import type { ScriptVariable, VariableTable } from '../variables/variables';
@@ -36,6 +38,7 @@ import { pathNamesOf } from '../patches/pathNames';
 import { namedItemAt } from './namedItems';
 import { locationsInFiles, patchedViewAt, patchedViewOf, placeOf, rangeInPatch } from './patchContent';
 import { pathNameAt } from './patchPaths';
+import { scriptNameAt, scriptNameDefinitions } from './scriptNames';
 import { remoteCueOf, renameVariable, variableAt, variableOccurrences, variableReferences } from './variables';
 
 export interface RenameOptions {
@@ -53,7 +56,8 @@ type Target =
   | { kind: 'script'; script: string }
   | { kind: 'cue'; script: string; cue: string }
   | { kind: 'variable'; script: string; cue: string; variable: ScriptVariable }
-  | { kind: IndexedLibraryKind; name: string };
+  | { kind: IndexedLibraryKind; name: string }
+  | { kind: 'aiscript' | 'order'; name: string };
 
 /** A name written in another file: where it starts and what is written there. */
 interface Elsewhere {
@@ -133,6 +137,10 @@ function targetAt(analysis: DocumentAnalysis, offset: number, game: GameData | u
       return defined && script.name !== '' ? { kind: 'cue', script: script.name, cue: named.name } : undefined;
     }
     return { kind: named.kind, name: named.name };
+  }
+  const scriptName = scriptNameAt(analysis, offset);
+  if (scriptName) {
+    return { kind: scriptName.kind === 'script' ? 'aiscript' : 'order', name: scriptName.name };
   }
   const element = analysis.structure && elementWithStartTagAt(analysis.structure, offset);
   const attribute = element && attributeWithValueAt(element, offset);
@@ -266,6 +274,22 @@ function occurrencesOf(target: Target, analysis: DocumentAnalysis, game: GameDat
       }
       break;
     }
+    case 'aiscript':
+    case 'order': {
+      const kind = target.kind === 'aiscript' ? 'script' : 'order';
+      for (const place of analysis.structure ? scriptNamesIn(analysis.structure, scriptSchemaOf(analysis)) : []) {
+        if (place.kind === kind && place.name === target.name) {
+          here.push(place);
+        }
+      }
+      for (const definition of scriptNameDefinitions(index, kind, target.name)) {
+        indexed(definition.position, target.name);
+      }
+      for (const reference of index.scriptNameReferences(target.kind, target.name)) {
+        indexed(reference.position, target.name);
+      }
+      break;
+    }
     default: {
       const item = analysis.names?.items.find((candidate) => candidate.kind === target.kind && candidate.name === target.name && candidate.scope === 'script');
       const first = item?.definitions[0] ?? item?.references[0];
@@ -305,6 +329,10 @@ function describeTarget(target: Target): string {
       return `cue ${target.cue} of ${target.script}`;
     case 'variable':
       return `$${target.variable.name}`;
+    case 'aiscript':
+      return `AI script ${target.name}`;
+    case 'order':
+      return `order ${target.name}`;
     default:
       return `interrupt ${target.kind} ${target.name}`;
   }
@@ -312,6 +340,9 @@ function describeTarget(target: Target): string {
 
 /** Why the occurrences in other files cannot all be edited, or undefined when they can. */
 function editRefusal(target: Target, occurrences: Occurrences, game: GameData, index: ScriptIndex, options: RenameOptions): string | undefined {
+  if (target.kind === 'aiscript' || target.kind === 'order') {
+    return `${describeTarget(target)} is not renamed: the game and any extension may name it`;
+  }
   const script = target.kind === 'script' || target.kind === 'cue' || target.kind === 'variable' ? target.script : undefined;
   const scripts = script === undefined ? [] : index.scripts('md', script);
   if (scripts.length > 1) {

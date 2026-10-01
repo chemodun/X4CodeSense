@@ -1,14 +1,8 @@
 /**
- * What calls call. `<run_script name="'order.x'">`, `<run_interrupt_script>`, `<start_script>`,
- * `<create_order id="'Attack'">`, `<run_actions ref="Lib">` and `<cue ref="md.Script.Lib">` pass
- * `<param name value>` children to the script, order or library they name, which declares them in its
- * `<params>`.
- *
- * Which elements call is the schemas' (their `param` takes a `value`); which attribute names the target
- * is said by the schemas' documentation only, so it is listed here. A target is resolved when it is
- * written literally: a script name or order id as a string (`'order.x'`), a library by its name or as
- * `md.Script.Library`. The declarations are read from the target's file as the index has it, the open
- * documents as the editor has them.
+ * What calls call: the script, order or library a call names (`calls`), which declares the `<param>`s it
+ * takes in its `<params>`. A target is resolved when it is written literally: a script name or order id
+ * as a string (`'order.x'`), a library by its name or as `md.Script.Library`. The declarations are read
+ * from the target's file as the index has it, the open documents as the editor has them.
  */
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,49 +10,9 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Location, Range } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { scriptSchemaOf } from '../analysis/positionContext';
-import type { ScriptSchema } from '../types';
 import { attributeNamed, type XmlAttribute, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
+import { callSpecOf, valueRange, type CallTargetKind, type ScriptNameKind } from './calls';
 import type { ScriptIndex } from './scriptIndex';
-
-export type CallTargetKind = 'script' | 'order' | 'library';
-
-interface CallSpec {
-  attribute: string;
-  kind: CallTargetKind;
-}
-
-/** The elements that call with `<param>`s, by script kind, and the attribute that names what they call. */
-const calls: Record<ScriptSchema, ReadonlyMap<string, CallSpec>> = {
-  aiscripts: new Map([
-    ['run_script', { attribute: 'name', kind: 'script' }],
-    ['run_interrupt_script', { attribute: 'name', kind: 'script' }],
-    ['start_script', { attribute: 'name', kind: 'script' }],
-    ['create_order', { attribute: 'id', kind: 'order' }],
-  ]),
-  md: new Map([
-    ['run_actions', { attribute: 'ref', kind: 'library' }],
-    ['cue', { attribute: 'ref', kind: 'library' }],
-    ['start_script', { attribute: 'name', kind: 'script' }],
-    ['create_order', { attribute: 'id', kind: 'order' }],
-  ]),
-};
-
-/**
- * Elements whose `<param>`s pass values to what is not a script, order or library: the diplomacy action
- * `create_diplomacy_action_operation` names is one of the game's libraries.
- */
-export const callsNotToScripts: readonly string[] = ['create_diplomacy_action_operation'];
-
-/** The elements of a script kind that call a script, order or library with `<param>`s. */
-export function callElements(schema: ScriptSchema): string[] {
-  return [...calls[schema].keys()];
-}
-
-/** True when the element calls a script, order or library in a script of the kind. */
-export function isCall(element: XmlElement, schema: ScriptSchema | undefined): boolean {
-  const spec = schema && calls[schema].get(element.name);
-  return spec !== undefined && attributeNamed(element, spec.attribute) !== undefined;
-}
 
 /** A parameter as its target declares it. */
 export interface ParameterDeclaration {
@@ -136,7 +90,6 @@ function librariesOf(structure: XmlStructure): Map<string, XmlElement> {
   return found;
 }
 
-/** A file's text and structure: the analysed document's own when it is that file, else the index's. */
 /** The file of the analysed document, worked out once per document. */
 function ownFileOf(analysis: DocumentAnalysis): string | undefined {
   if (!ownFiles.has(analysis.document)) {
@@ -145,6 +98,7 @@ function ownFileOf(analysis: DocumentAnalysis): string | undefined {
   return ownFiles.get(analysis.document);
 }
 
+/** A file's text and structure: the analysed document's own when it is that file, else the index's. */
 function parsedFile(analysis: DocumentAnalysis, file: string, index: ScriptIndex | undefined): Parsed | undefined {
   if (analysis.structure && sameFile(ownFileOf(analysis), file)) {
     return { document: analysis.document, structure: analysis.structure };
@@ -169,14 +123,6 @@ function locationOf(parsed: Parsed, start: number, end: number): Location {
 function withLocation(target: Omit<CallTarget, 'location'>, parsed: Parsed, start: number, end: number): CallTarget {
   let location: Location | undefined;
   return Object.defineProperty(target, 'location', { enumerable: true, get: () => (location ??= locationOf(parsed, start, end)) }) as CallTarget;
-}
-
-/** The trimmed value of an attribute as text offsets. */
-export function valueRange(attribute: XmlAttribute): { start: number; end: number } {
-  const raw = attribute.rawValue;
-  const trimmed = raw.trim();
-  const start = attribute.valueStart + Math.max(0, raw.indexOf(trimmed));
-  return { start, end: start + trimmed.length };
 }
 
 /** The parameters an element declares, the `<param>`s `params` gives: worked out once per element. */
@@ -216,12 +162,6 @@ function declarations(parsed: Parsed, owner: XmlElement, params: () => readonly 
 const paramsOf = (element: XmlElement | undefined): XmlElement[] =>
   element?.children.filter((child) => child.name === 'params').flatMap((params) => params.children) ?? [];
 
-/** The element that a `<param>` passes to, when it is a call. */
-export function callOf(param: XmlElement, schema: ScriptSchema | undefined): XmlElement | undefined {
-  const call = param.parent;
-  return param.name === 'param' && call && isCall(call, schema) ? call : undefined;
-}
-
 /**
  * What a call calls, when it is written literally and found; undefined for other elements. A check of a
  * whole document passes `memo`: a target written the same way is found once.
@@ -232,8 +172,7 @@ export function callTarget(
   index: ScriptIndex | undefined,
   memo?: Map<string, CallTarget | undefined>
 ): CallTarget | undefined {
-  const schema = scriptSchemaOf(analysis);
-  const spec = schema ? calls[schema].get(call.name) : undefined;
+  const spec = callSpecOf(call, scriptSchemaOf(analysis));
   const written = spec && nameOf(call, spec.attribute);
   if (!spec || !written) {
     return undefined;
@@ -245,6 +184,11 @@ export function callTarget(
   const target = resolve(analysis, spec.kind, written, index);
   memo?.set(key, target);
   return target;
+}
+
+/** The AI script or order of a name as a call would find it: the last in load order. */
+export function scriptNameTarget(analysis: DocumentAnalysis, kind: ScriptNameKind, name: string, index: ScriptIndex | undefined): CallTarget | undefined {
+  return resolve(analysis, kind, `'${name}'`, index);
 }
 
 function resolve(analysis: DocumentAnalysis, kind: CallTargetKind, written: string, index: ScriptIndex | undefined): CallTarget | undefined {
