@@ -85,10 +85,11 @@ The status bar shows the type and name of the script, or the file a patch change
 
 [size=125][u]Command line and CI[/u][/size]
 
-The same checks run outside VS Code with [url=https://www.npmjs.com/package/x4-script-check]x4-script-check[/url], which prints each finding with its severity and quick fixes: as text, as JSON for tools, or as annotations of the files in GitHub Actions.
+The same checks run outside VS Code with [url=https://www.npmjs.com/package/x4-script-check]x4-script-check[/url], which prints each finding with its severity and quick fixes: as text, as JSON for tools, as annotations of the files in GitHub Actions, or as SARIF for GitHub code scanning. With [b]--fix[/b] it first applies the preferred fixes, as [b]Apply all preferred fixes in this file[/b] does in the editor.
 
 [code=powershell]
 npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
+npx x4-script-check --fix --unpacked C:\X4\extracted path\to\your\extension
 [/code]
 
 [size=130][u]⚠️ Known limitations[/u][/size]
@@ -199,6 +200,13 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=130][u]🛠 Changelog[/u][/size]
 
+[size=125][u][0.7.0] - unreleased[/u][/size]
+[list]
+[*] Added
+[list]
+[*] The command-line checker applies the preferred fixes with `--fix`, and writes SARIF for GitHub code scanning with `--format sarif`.
+[/list]
+[/list]
 [size=125][u][0.6.0] - 2026-10-01[/u][/size]
 [list]
 [*] Added
