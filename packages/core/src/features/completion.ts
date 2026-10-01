@@ -10,6 +10,7 @@ import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStr
 import { enumerationsOf, isExpressionAttribute, typeNamesOf, type XsdAttribute, type XsdElement } from '../xsd/schema';
 import type { VariableTable } from '../variables/variables';
 import { referenceKindOf } from '../names/namedItems';
+import { callParameterCompletions } from './callParameters';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
 import { namedItemCompletionItems } from './namedItems';
 import { completionsInPatch, insertionPointAt, patchedViewAt } from './patchContent';
@@ -144,6 +145,22 @@ class Completer {
   }
 
   private attributeValue(element: XmlElement, attribute: XmlAttribute, declared: XsdAttribute | undefined, expression: string, index: number): void {
+    if (element.name === 'param' && attribute.name === 'name') {
+      // A parameter of a call: those its target declares, also where the schema cannot place the element yet.
+      const parameters = callParameterCompletions(
+        this.analysis,
+        element,
+        this.game,
+        this.range(attribute.valueStart, attribute.valueEnd),
+        this.options.language
+      );
+      if (parameters) {
+        for (const item of parameters) {
+          this.add(item);
+        }
+        return;
+      }
+    }
     if (!declared) {
       return;
     }

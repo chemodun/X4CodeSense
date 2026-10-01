@@ -37,6 +37,7 @@ import {
   SemanticTokensRefreshRequest,
   SemanticTokensRequest,
   ShutdownRequest,
+  SignatureHelpRequest,
   StreamMessageReader,
   StreamMessageWriter,
   TextDocumentSyncKind,
@@ -185,6 +186,7 @@ beforeAll(async () => {
   expect(result.capabilities.textDocumentSync).toBe(TextDocumentSyncKind.Incremental);
   expect(result.capabilities.completionProvider?.triggerCharacters).toEqual(expect.arrayContaining(['<', '/', '@', "'"]));
   expect(result.capabilities.hoverProvider).toBe(true);
+  expect(result.capabilities.signatureHelpProvider).toEqual({ triggerCharacters: ['<', '"', ' '] });
   expect(result.capabilities.definitionProvider).toBe(true);
   expect(result.capabilities.referencesProvider).toBe(true);
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
@@ -911,6 +913,68 @@ describe('script index', () => {
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
     await closed;
     expect(await symbols('hubtyp')).toEqual([]);
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  }, 30_000);
+
+  it('helps with the parameters of a call: signature help, completion, hover and definition', async () => {
+    const mod = path.join(workDir, 'callmods', 'callmod');
+    const orderFile = path.join(mod, 'aiscripts', 'order.patrol.xml');
+    const orderLines = [
+      '<aiscript name="order.patrol">',
+      '  <order id="Patrol">',
+      '    <params>',
+      '      <param name="area" type="object" text="Where to patrol"/>',
+      '      <param name="duration" type="time" default="1h"/>',
+      '    </params>',
+      '  </order>',
+      '</aiscript>',
+    ];
+    mkdirSync(path.dirname(orderFile), { recursive: true });
+    writeFileSync(orderFile, `${orderLines.join('\n')}\n`);
+    const callerLines = [
+      '<aiscript name="patrol.caller">',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <create_order object="this.ship" id="\'Patrol\'">',
+      '        <param name="duration" value="2h"/>',
+      '        <param name="" value="null"/>',
+      '      </create_order>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+    ];
+    const callerUri = pathToFileURL(path.join(mod, 'aiscripts', 'patrol.caller.xml')).toString();
+    const workspace = { uri: pathToFileURL(mod).toString(), name: 'callmod' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    await vi.waitFor(
+      async () =>
+        expect((await connection.sendRequest(WorkspaceSymbolRequest.type, { query: 'order.patrol' }))?.map((symbol) => symbol.name)).toEqual(['order.patrol']),
+      { timeout: 10_000 }
+    );
+    await open(callerUri, `${callerLines.join('\n')}\n`);
+
+    const at = (line: number, part: string, into = 1): { textDocument: { uri: string }; position: { line: number; character: number } } => ({
+      textDocument: { uri: callerUri },
+      position: { line, character: callerLines[line].indexOf(part) + into },
+    });
+    const help = await connection.sendRequest(SignatureHelpRequest.type, at(4, 'value'));
+    const signature = help?.signatures[0];
+    const active = signature?.parameters?.[help?.activeParameter ?? 0]?.label as [number, number];
+    expect(`${signature?.label} [${signature?.label.slice(active[0], active[1])}]`).toBe('Patrol(area, duration = 1h) [duration]');
+    expect(signature?.parameters?.[1].documentation).toEqual({ kind: 'markdown', value: 'Default: `1h`\n\nType: `time`' });
+
+    const completion = await connection.sendRequest(CompletionRequest.type, at(5, 'name=""', 6));
+    expect((Array.isArray(completion) ? completion : (completion?.items ?? [])).map((item) => item.label)).toEqual(['area']);
+    const hover = await connection.sendRequest(HoverRequest.type, at(4, 'duration'));
+    expect((hover?.contents as { value: string }).value).toMatch(/^\*\*duration\*\* \*\(parameter of order `Patrol` of `order\.patrol`\)\*/);
+    const definition = (await connection.sendRequest(DefinitionRequest.type, at(4, 'duration'))) as Location[];
+    expect(
+      definition.map((location) => `${path.basename(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}`)
+    ).toEqual(['order.patrol.xml:4:19']);
+
+    const closed = diagnosticsCount(callerUri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: callerUri } });
+    await closed;
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   }, 30_000);
 });

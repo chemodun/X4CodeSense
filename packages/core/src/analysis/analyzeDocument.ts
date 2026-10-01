@@ -15,6 +15,7 @@ import { validateVariables } from '../variables/validateVariables';
 import { collectNames, type DocumentNames } from '../names/namedItems';
 import { validateNames } from '../names/validateNames';
 import type { ScriptIndex } from '../project/scriptIndex';
+import { validateCallParameters } from '../project/validateCallParameters';
 import { validateMdReferences } from '../project/validateMdReferences';
 import type { TextDatabase } from '../texts/textDatabase';
 import { validateTexts } from '../texts/validateTexts';
@@ -66,6 +67,12 @@ export interface AnalysisContext {
    * needs `index`, and is only as complete as the configured extension folders.
    */
   validateRemoteCues?: boolean;
+  /**
+   * Report parameters a call (`run_script`, `create_order`, `run_actions`, `<cue ref>`, …) passes that
+   * the script, order or library it names does not declare. Defaults to true; a target in another file
+   * needs `index`.
+   */
+  validateCallParameters?: boolean;
   /**
    * Check only the elements for which this holds: their attributes, expressions, text and `md.`
    * references, and their children. The declarations, variables and names of the whole document are
@@ -200,6 +207,9 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     }
     if (context.texts && (context.validateTexts ?? true)) {
       analysis.diagnostics.push(...validateTexts(structure, validation.declarations, schema, context.texts, document, diagnosticSource, checkElement));
+    }
+    if (context.validateCallParameters ?? true) {
+      analysis.diagnostics.push(...validateCallParameters(analysis, context.index, diagnosticSource, checkElement));
     }
   }
   return analysis;

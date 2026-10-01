@@ -15,6 +15,7 @@ import { pathDefinitionsAt } from './patchPaths';
 import { mdReferenceDefinitions } from './project';
 import { textDefinitions, type TextDisplayOptions } from './texts';
 import { variableAt, variableDefinitions } from './variables';
+import { callParameterDefinitions } from './callParameters';
 
 function locations(game: GameData, sources: (SourceLocation | undefined)[]): Location[] {
   const result: Location[] = [];
@@ -84,6 +85,10 @@ export function definitionAt(analysis: DocumentAnalysis, offset: number, game: G
   const named = namedItemAt(analysis, offset);
   if (named) {
     return namedItemDefinitions(named, analysis.document, game?.index);
+  }
+  const parameter = callParameterDefinitions(analysis, offset, game);
+  if (parameter) {
+    return parameter;
   }
   if (!game) {
     return [];

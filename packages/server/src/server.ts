@@ -21,6 +21,7 @@ import {
   type Range,
   type SemanticTokens,
   type SemanticTokensDelta,
+  type SignatureHelp,
   type WorkDoneProgressServerReporter,
   type WorkspaceEdit,
   type WorkspaceSymbol,
@@ -32,6 +33,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   analyzeComparisonSide,
   analyzeDocument,
+  callSignatureHelp,
   comparePatch,
   comparisonSideOf,
   completionAt,
@@ -218,6 +220,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       completionProvider: { triggerCharacters: completionTriggerCharacters },
       hoverProvider: true,
+      signatureHelpProvider: { triggerCharacters: ['<', '"', ' '] },
       definitionProvider: true,
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
@@ -760,6 +763,12 @@ connection.onHover((params): Hover | null => {
   }
   const located = locate(params.textDocument.uri, params.position);
   return located ? (hoverAt(located.analysis, located.offset, game, textDisplay()) ?? null) : null;
+});
+
+// In a call (`run_script`, `create_order`, `run_actions`, `<cue ref>`, …): its target's parameters.
+connection.onSignatureHelp((params): SignatureHelp | null => {
+  const located = locate(params.textDocument.uri, params.position);
+  return located ? (callSignatureHelp(located.analysis, located.offset, game, textDisplay().language) ?? null) : null;
 });
 
 connection.onDefinition((params): Location[] => {

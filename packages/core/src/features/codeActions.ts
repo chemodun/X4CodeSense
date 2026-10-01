@@ -4,7 +4,7 @@
  * Well-formedness: an unquoted value is put in quotes, an attribute without a value gets an empty one, a
  * repeated attribute is removed. Schema: the required attributes an element lacks are added, empty. A
  * name nothing knows (an element, an attribute, a value of an enumeration, a keyword, a property, a cue
- * or script, a label, an interrupt library item, a variable) is changed to the known names closest in
+ * or script, a label, an interrupt library item, a variable, a parameter of a call) is changed to the known names closest in
  * spelling. The known names are those completion offers at the start of the name, so a fix offers what
  * completion would, in a patch document as where the content lands; a variable is offered only when
  * something sets it.
@@ -37,6 +37,8 @@ const misspellable: ReadonlyMap<string, readonly CompletionItemKind[]> = new Map
   ['cue-undefined', [CompletionItemKind.Keyword, CompletionItemKind.Event, CompletionItemKind.Module]],
   ['library-undefined', [CompletionItemKind.Function]],
   ['variable-undefined', [CompletionItemKind.Variable]],
+  // The parameters the call's target declares and the call does not pass yet.
+  ['param-unknown', [CompletionItemKind.Variable]],
 ]);
 
 const maximumSuggestions = 3;

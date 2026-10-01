@@ -116,6 +116,8 @@ export interface IndexedScript {
   libraryItems: IndexedLibraryItem[];
   /** `<param name>` of an AI script or order. */
   params: string[];
+  /** The orders an AI script defines, `<order id>`, with where each id is written. */
+  orders: { id: string; position: IndexedPosition }[];
   /** Variables a Mission Director script writes into cues it gets as values; empty when indexed without the schemas. */
   writesThroughValues: string[];
   /** Libraries of other scripts a Mission Director script splices in: `<include_actions ref="md.Script.Library">`. */
@@ -215,9 +217,9 @@ function nameOf(element: XmlElement): string | undefined {
   return name ? name : undefined;
 }
 
-/** Text offset where the trimmed value of the element's `name` attribute starts. */
-function nameOffset(element: XmlElement): number {
-  const attribute = attributeNamed(element, 'name');
+/** Text offset where the trimmed value of the element's `name` attribute, or of another, starts. */
+function nameOffset(element: XmlElement, attributeName = 'name'): number {
+  const attribute = attributeNamed(element, attributeName);
   if (!attribute) {
     return element.start;
   }
@@ -391,6 +393,7 @@ export function indexStructure(
   const cues: IndexedCue[] = [];
   const libraryItems: IndexedLibraryItem[] = [];
   const params: string[] = [];
+  const orders: IndexedScript['orders'] = [];
   let itemVariables: Map<XmlElement, IndexedVariable[]> | undefined;
   const itemsWithElements: [IndexedLibraryItem, XmlElement][] = [];
   const variablesOfItem = (element: XmlElement): IndexedVariable[] => {
@@ -488,6 +491,11 @@ export function indexStructure(
       }
     } else if (schema === 'aiscripts' && !patch && element.name === 'params') {
       params.push(...paramNames(element.children));
+    } else if (schema === 'aiscripts' && !patch && element.name === 'order' && element.parent === root) {
+      const id = attributeNamed(element, 'id')?.value.trim();
+      if (id) {
+        orders.push({ id, position: atOffset(nameOffset(element, 'id')) });
+      }
     }
   }
   // After the scan: the positions of variables are counted in a pass of their own.
@@ -500,7 +508,7 @@ export function indexStructure(
     const pathNames = pathNamesOf(structure, schema).map((name) => ({ kind: name.kind, name: name.name, position: atOffset(name.start) }));
     return { kind: 'patch', file, source, schema, cues, libraryItems, ...uses, pathNames };
   }
-  const script: IndexedScript = { kind: 'script', file, source, schema, name: scriptName, position: at(root), cues, libraryItems, params, ...uses };
+  const script: IndexedScript = { kind: 'script', file, source, schema, name: scriptName, position: at(root), cues, libraryItems, params, orders, ...uses };
   if (scriptName !== '') {
     script.namePosition = atOffset(nameOffset(root));
   }
@@ -516,7 +524,7 @@ function signatureOf(entry: IndexedFile | undefined): string {
   const items = entry.libraryItems.map((item) => `${item.kind}:${item.name}:${item.variables.map((variable) => variable.name).join(',')}`).join(';');
   const uses = `${entry.writesThroughValues.join(',')}|${entry.includes.join(',')}|${entry.instantiates.join(',')}`;
   return entry.kind === 'script'
-    ? `${entry.schema}|${entry.name}|${cues}|${items}|${entry.params.join(',')}|${uses}`
+    ? `${entry.schema}|${entry.name}|${cues}|${items}|${entry.params.join(',')}|${entry.orders.map((order) => order.id).join(',')}|${uses}`
     : `${entry.schema}|patch|${cues}|${items}|${uses}`;
 }
 
@@ -557,6 +565,8 @@ interface Lookups {
   instantiators: Map<string, Set<string>>;
   /** The patches of each script file, by its key, in load order. */
   patches: Map<string, IndexedPatch[]>;
+  /** The AI scripts that define an order, by its id, in load order. */
+  orders: Map<string, IndexedScript[]>;
 }
 
 export class ScriptIndex {
@@ -848,6 +858,7 @@ export class ScriptIndex {
       const cues = new Map<IndexedScript, IndexedCue[]>();
       const libraryItems = new Map<string, IndexedLibraryItem[]>();
       const patches = new Map<string, IndexedPatch[]>();
+      const orders = new Map<string, IndexedScript[]>();
       const writesThroughValues = new Set<string>();
       const includers = new Map<string, Set<string>>();
       const instantiators = new Map<string, Set<string>>();
@@ -884,6 +895,9 @@ export class ScriptIndex {
         for (const item of entry.libraryItems) {
           push(libraryItems, `${item.kind}:${item.name}`, item);
         }
+        for (const order of entry.orders) {
+          push(orders, order.id, entry);
+        }
       }
       const inLoadOrder = [...this.files.values()]
         .filter((entry): entry is IndexedPatch => entry.kind === 'patch')
@@ -900,7 +914,7 @@ export class ScriptIndex {
           push(libraryItems, `${item.kind}:${item.name}`, { ...item, script: target.name });
         }
       }
-      this.lookups = { scripts, cues, libraryItems, writesThroughValues, includers, instantiators, patches };
+      this.lookups = { scripts, cues, libraryItems, writesThroughValues, includers, instantiators, patches, orders };
     }
     return this.lookups;
   }
@@ -928,6 +942,11 @@ export class ScriptIndex {
   /** Scripts of a kind with a name, in load order. */
   scripts(schema: ScriptSchema, name: string): IndexedScript[] {
     return this.lookup().scripts.get(`${schema}:${name}`) ?? [];
+  }
+
+  /** The AI scripts that define an order with the id, `<order id>`, in load order. */
+  orderScripts(id: string): IndexedScript[] {
+    return this.lookup().orders.get(id) ?? [];
   }
 
   /** Names of the scripts of a kind, sorted. */

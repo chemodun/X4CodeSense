@@ -16,6 +16,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 - Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword.
 - Names, checked across the game, its DLCs and your extensions: labels, cues and libraries, interrupt library items, `md.Script.Cue`, and text references that no file defines; names defined twice.
 - Variables that are read but never set, following the cue namespace rules of the Mission Director.
+- Parameters a call passes that the script, order or library it names does not declare: a `<param name="…">` of `run_script`, `create_order`, `run_actions`, a `cue` with `ref` and the like. Parameters a call leaves out are not reported; the game takes them as null.
 
 All of it keeps working while a tag, an attribute or a quote is still being typed. Open files count with their unsaved changes, and files changed on disk in the workspace are read again.
 
@@ -26,6 +27,7 @@ All of it keeps working while a tag, an attribute or a quote is still being type
 - Variables visible at the caret, also after `this.`, `parent.` or a cue name, and the variables other scripts set for this one: interrupt library items, libraries spliced in with `include_actions`, `md.Script.Cue.$x`.
 - Labels, cues, libraries and interrupt library items; script names after `md.` and cue names after `md.Script.`, cues that an extension's patch adds included.
 - Texts: pages after `{` and text ids after `{page,`. Hover over `{page, id}` or `page="…" line="…"`, in any XML file, shows the text as the game shows it.
+- The parameters of calls: in `run_script`, `run_interrupt_script`, `start_script`, `create_order`, `run_actions` and a `cue` with `ref`, signature help lists what the script, order or library declares, the parameter at the caret highlighted. `<param name="…">` completes the parameters not passed yet, those without a default first. Hover shows a parameter's description, default and type; go to definition leads to its declaration. The target must be written as is: `'order.trade.routine'`, `'Attack'`, `Lib` or `md.Script.Lib`.
 - Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, its type when it can be told, and how often it is read.
 
 ### Texts in Lua files
@@ -52,7 +54,7 @@ In a patch, what an `add` or `replace` brings in is coloured as where it lands. 
 
 ### Quick fixes
 
-The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item or variable is changed to the known names closest in spelling.
+The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable or parameter of a call is changed to the known names closest in spelling.
 
 ### Patches
 
@@ -173,6 +175,8 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 - Added
   - Go to Symbol in Workspace: the scripts, cues, libraries and interrupt library items of the game, its DLCs, the extensions and the workspace, also as `md.Script.Cue`.
+  - The parameters of calls (`run_script`, `create_order`, `run_actions`, `<cue ref>`, …): signature help, completion of the parameter names, hover with their description and default, and go to their declaration.
+  - A warning for a parameter a call passes that its target does not declare, with a quick fix to the declared name it is close to. The game's own scripts have four, left behind when a library changed.
 
 ### [0.4.1] - 2026-10-01
 

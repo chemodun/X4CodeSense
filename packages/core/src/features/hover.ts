@@ -15,6 +15,7 @@ import { hoverInPatch, patchedViewAt } from './patchContent';
 import { pathHoverAt } from './patchPaths';
 import { describeText, type TextDisplayOptions } from './texts';
 import { describeVariable, variableAt } from './variables';
+import { callParameterHover } from './callParameters';
 
 function hover(analysis: DocumentAnalysis, value: string, start: number, end: number): Hover {
   return {
@@ -116,6 +117,11 @@ export function hoverAt(analysis: DocumentAnalysis, offset: number, game: GameDa
   const named = namedItemAt(analysis, offset);
   if (named) {
     return hover(analysis, describeNamedItem(named, analysis.document, game?.index, analysis.detection.script?.name, analysis.origin), named.start, named.end);
+  }
+  // A parameter a call passes to a script, order or library of another file (those of the same file are variables).
+  const parameter = callParameterHover(analysis, offset, game, options.language);
+  if (parameter) {
+    return parameter;
   }
   const context = positionContext(analysis, offset, schemaOf(game, analysis));
   switch (context.kind) {
