@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.7.0...x4codesense@v0.8.0) (2026-10-01)
+
+
+### Features
+
+* an installed game read in place, and the checker's --game ([cdb2868](https://github.com/chemodun/X4CodeSense/commit/cdb286845bcbb176007444708106e3ca58437c69))
+* the installed game in the extension, its files as read-only documents ([a02bc0b](https://github.com/chemodun/X4CodeSense/commit/a02bc0b99ccb8edae7e7b4b91d002e847b0329cd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.7.0 to 0.8.0
+
 ## [0.7.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.6.0...x4codesense@v0.7.0) (2026-10-01)
 
 

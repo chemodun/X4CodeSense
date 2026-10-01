@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.2.0...x4-script-check@v0.3.0) (2026-10-01)
+
+
+### Features
+
+* an installed game read in place, and the checker's --game ([cdb2868](https://github.com/chemodun/X4CodeSense/commit/cdb286845bcbb176007444708106e3ca58437c69))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.7.0 to 0.8.0
+
 ## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.1.8...x4-script-check@v0.2.0) (2026-10-01)
 
 
