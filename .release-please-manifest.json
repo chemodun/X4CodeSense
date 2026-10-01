@@ -1,7 +1,7 @@
 {
   "packages/catalog": "0.1.0",
-  "packages/core": "0.7.0",
-  "packages/server": "0.7.0",
-  "packages/cli": "0.2.0",
-  "client": "0.7.0"
+  "packages/core": "0.8.0",
+  "packages/server": "0.8.0",
+  "packages/cli": "0.3.0",
+  "client": "0.8.0"
 }
