@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.3.0...x4codesense@v0.4.0) (2026-10-01)
+
+
+### Features
+
+* the script's features in both sides of a patch's diff ([cf89d4b](https://github.com/chemodun/X4CodeSense/commit/cf89d4bd8a16afdc63291ef348db369887970361))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.3.0 to 0.4.0
+
 ## [0.3.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.2.2...x4codesense@v0.3.0) (2026-09-30)
 
 
