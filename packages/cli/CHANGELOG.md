@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.1.8...x4-script-check@v0.2.0) (2026-10-01)
+
+
+### Features
+
+* --fix and SARIF output in the checker ([3e84bc2](https://github.com/chemodun/X4CodeSense/commit/3e84bc247f65aa36f111a8b564bc708817b14c7e))
+* quick fixes for tags and children ([89eeeda](https://github.com/chemodun/X4CodeSense/commit/89eeedab41e917f7538d5e6b1e6be72229a9c6b9))
+* quick fixes that create what nothing defines ([ae8a7d1](https://github.com/chemodun/X4CodeSense/commit/ae8a7d1c7647764cc88687cbff360b29cb0b8387))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.6.0 to 0.7.0
+
 ## [0.1.8](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.1.7...x4-script-check@v0.1.8) (2026-10-01)
 
 

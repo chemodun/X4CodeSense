@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.6.0...x4codesense@v0.7.0) (2026-10-01)
+
+
+### Features
+
+* --fix and SARIF output in the checker ([3e84bc2](https://github.com/chemodun/X4CodeSense/commit/3e84bc247f65aa36f111a8b564bc708817b14c7e))
+* check the arguments of formats ([da8e8b1](https://github.com/chemodun/X4CodeSense/commit/da8e8b1ba50b902142ca205908bc87cf44eaa99e))
+* quick fixes for tags and children ([89eeeda](https://github.com/chemodun/X4CodeSense/commit/89eeedab41e917f7538d5e6b1e6be72229a9c6b9))
+* quick fixes that create what nothing defines ([ae8a7d1](https://github.com/chemodun/X4CodeSense/commit/ae8a7d1c7647764cc88687cbff360b29cb0b8387))
+* signature help for the arguments of a format ([f2bb4fb](https://github.com/chemodun/X4CodeSense/commit/f2bb4fb8ca76a08a1683682e23ab16919f7688ac))
+* text references completed in any XML file ([81cd880](https://github.com/chemodun/X4CodeSense/commit/81cd880760b8b65d6f03c2f4a92aac2686651e7a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.6.0 to 0.7.0
+
 ## [0.6.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.5.0...x4codesense@v0.6.0) (2026-10-01)
 
 
