@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.5.0...x4-script-core@v0.6.0) (2026-10-01)
+
+
+### Features
+
+* the workspace's problems, fix all, and unknown script names ([d61d1f4](https://github.com/chemodun/X4CodeSense/commit/d61d1f494e7f5ca6626991d35d6bdc91bb74148a))
+
 ## [0.5.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.4.1...x4-script-core@v0.5.0) (2026-10-01)
 
 

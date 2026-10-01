@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.8](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.1.7...x4-script-check@v0.1.8) (2026-10-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.5.0 to 0.6.0
+
 ## [0.1.7](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.1.6...x4-script-check@v0.1.7) (2026-10-01)
 
 
