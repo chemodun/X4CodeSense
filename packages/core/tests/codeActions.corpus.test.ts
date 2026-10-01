@@ -2,7 +2,9 @@
  * Corpus gate for the quick fixes, over every script and patch of the extracted game with its DLCs
  * (X4_EXTRACTED) and of a folder of extensions (X4_MODS), never committed: every fix offered for a
  * finding, applied, removes that finding and brings no new one to its line. A required attribute is
- * added empty, to be filled in, so its empty value may be reported.
+ * added empty, to be filled in, so its empty value may be reported; a cue is created empty, so the
+ * variables read on it may be reported as never set there. A fix that changes another file only (a cue
+ * created in another script, a parameter declared where the call's target is) is left to the unit tests.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -50,14 +52,19 @@ describe.skipIf(!extracted)('quick fixes on the corpus', { timeout: 300_000 }, (
         const finding = `${String(diagnostic.code)}|${diagnostic.message}`;
         const before = lineOf(analysis, line);
         for (const action of actions) {
+          const edits = action.edit?.changes?.[uri];
+          if (!edits) {
+            continue;
+          }
           counts.fixes++;
-          const after = analyzeText(TextDocument.applyEdits(analysis.document, action.edit?.changes?.[uri] ?? []), context, uri);
+          const after = analyzeText(TextDocument.applyEdits(analysis.document, edits), context, uri);
           const now = lineOf(after, line);
           const still = now.filter((item) => item === finding).length >= before.filter((item) => item === finding).length;
-          const added = now.filter(
-            (item) =>
-              !before.includes(item) && !(diagnostic.code === 'missing-required-attribute' && item.startsWith("invalid-attribute-value|Invalid value ''"))
-          );
+          const created = /^Create (?:cue|library) '([^']+)'$/.exec(action.title)?.[1];
+          const expected = (item: string): boolean =>
+            (diagnostic.code === 'missing-required-attribute' && item.startsWith("invalid-attribute-value|Invalid value ''")) ||
+            (created !== undefined && item.startsWith('variable-undefined|') && item.endsWith(` in cue '${created}'`));
+          const added = now.filter((item) => !before.includes(item) && !expected(item));
           if (still || added.length > 0) {
             problems.push(
               `${path.basename(entry.file)}:${line + 1} ${diagnostic.message} -> ${action.title}: ${still ? 'still there' : ''} ${added.join('; ')}`

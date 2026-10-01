@@ -247,7 +247,10 @@ async function checkFile(file: string, schema: ScriptSchema, context: AnalysisCo
     const root = detection.rootElement ? `root element <${detection.rootElement}>` : 'no root element';
     aboutFile('not-a-script', `not recognised as a script or a patch (${root})`);
   }
-  const actions = analysis.diagnostics.length === 0 ? [] : quickFixes(analysis, analysis.diagnostics, game);
+  // A fix that creates what is missing in another file is the editor's: a finding lists the edits of its own file.
+  const actions = (analysis.diagnostics.length === 0 ? [] : quickFixes(analysis, analysis.diagnostics, game)).filter((action) =>
+    Object.keys(action.edit?.changes ?? {}).every((uri) => uri === document.uri)
+  );
   for (const diagnostic of analysis.diagnostics) {
     const fixes = actions
       .filter((action) => action.diagnostics?.includes(diagnostic))

@@ -263,6 +263,11 @@
           <xs:attribute name="object" type="expression" use="required" />
         </xs:complexType>
       </xs:element>
+      <xs:element name="event_cue_signalled">
+        <xs:complexType>
+          <xs:attribute name="cue" type="expression" />
+        </xs:complexType>
+      </xs:element>
     </xs:choice>
   </xs:complexType>
   <xs:complexType name="conditions_withref">

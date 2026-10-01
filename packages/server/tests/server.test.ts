@@ -1075,6 +1075,51 @@ describe('script index', () => {
     }
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   }, 30_000);
+
+  it('creates a cue in the script that md.Script.Cue names, in that file as the editor named it', async () => {
+    const mod = path.join(workDir, 'createmods', 'createmod');
+    const calleeFile = path.join(mod, 'md', 'callee.xml');
+    const calleeText = '<mdscript name="Callee">\n  <cues>\n    <cue name="Start"/>\n  </cues>\n</mdscript>\n';
+    mkdirSync(path.dirname(calleeFile), { recursive: true });
+    writeFileSync(calleeFile, calleeText);
+    const callerUri = pathToFileURL(path.join(mod, 'md', 'caller.xml')).toString();
+    const callerText =
+      '<mdscript name="Caller">\n  <cues>\n    <cue name="A">\n      <actions>\n        <signal_cue_instantly cue="md.Callee.Later"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    const workspace = { uri: pathToFileURL(mod).toString(), name: 'createmod' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    const reported = nextDiagnostics(callerUri, (params) => params.diagnostics.some((diagnostic) => diagnostic.code === 'cue-undefined'));
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: callerUri, languageId: 'xml', version: 1, text: callerText },
+    });
+    const diagnostic = (await reported).diagnostics.find((candidate) => candidate.code === 'cue-undefined')!;
+    expect(diagnostic.message).toBe("Script 'Callee' has no cue 'Later'");
+    const request = { textDocument: { uri: callerUri }, range: diagnostic.range, context: { diagnostics: [diagnostic] } };
+    const created = async (): Promise<Record<string, string[]>> => {
+      const actions = (await connection.sendRequest(CodeActionRequest.type, request)) as CodeAction[];
+      const action = actions.find((candidate) => candidate.title === "Create cue 'Later' in script 'Callee'");
+      return Object.fromEntries(
+        Object.entries(action?.edit?.changes ?? {}).map(([uri, edits]) => [uri, edits.map((edit) => `${edit.range.start.line}: ${edit.newText}`)])
+      );
+    };
+    const edit = [
+      '2: \n    <cue name="Later">\n      <conditions>\n        <event_cue_signalled/>\n      </conditions>\n      <actions>\n      </actions>\n    </cue>',
+    ];
+    // A closed file: its file uri.
+    expect(await created()).toEqual({ [pathToFileURL(calleeFile).toString()]: edit });
+    // Open in the editor under the uri VS Code writes (`c%3A`): that uri.
+    const editorUri = pathToFileURL(calleeFile)
+      .toString()
+      .replace(/^file:\/\/\/([A-Za-z]):/, (_, drive: string) => `file:///${drive.toLowerCase()}%3A`);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: editorUri, languageId: 'xml', version: 1, text: calleeText },
+    });
+    expect(await created()).toEqual({ [editorUri]: edit });
+
+    for (const uri of [editorUri, callerUri]) {
+      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    }
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  }, 30_000);
 });
 
 describe('problems of the workspace', () => {

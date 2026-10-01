@@ -1132,17 +1132,20 @@ connection.onCodeAction((params): CodeAction[] => {
   }
   debug(`${uri}: ${actions.length} code action(s) in ${(performance.now() - started).toFixed(1)} ms`);
   const analysed = analysis.document.uri;
-  if (analysed === uri) {
-    return actions;
-  }
-  // The edits of a side's analysis are the side's.
+  // The edits of a side's analysis are the side's; those of another file go to it as the client named it.
+  const target = (changed: string): string => {
+    if (changed === analysed) {
+      return uri;
+    }
+    const file = filePathOf(changed);
+    return (file !== undefined && clientUris.get(fileKey(file))) || changed;
+  };
   return actions.map((action) => {
     const changes = action.edit?.changes;
-    if (!changes || !(analysed in changes)) {
+    if (!changes || Object.keys(changes).every((changed) => target(changed) === changed)) {
       return action;
     }
-    const { [analysed]: own, ...others } = changes;
-    return { ...action, edit: { ...action.edit, changes: { ...others, [uri]: own } } };
+    return { ...action, edit: { ...action.edit, changes: Object.fromEntries(Object.entries(changes).map(([changed, edits]) => [target(changed), edits])) } };
   });
 });
 

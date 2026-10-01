@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { CompletionItem, Location, MarkupContent } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
 import {
@@ -41,6 +42,8 @@ const targets: Record<string, string[]> = {
     '  </order>',
     '</aiscript>',
   ],
+  'aiscripts/move.bare.xml': ['<aiscript name="move.bare">', '  <attention min="unknown">', '    <actions/>', '  </attention>', '</aiscript>'],
+  'aiscripts/move.empty.xml': ['<aiscript name="move.empty">', '  <params/>', '  <attention min="unknown">', '    <actions/>', '  </attention>', '</aiscript>'],
   'md/lib.xml': [
     '<mdscript name="Lib">',
     '  <cues>',
@@ -241,6 +244,76 @@ describe('call parameters', () => {
     // Without the index only a library of the same script is found: nothing to report here.
     expect(unknown(analyzeText(aiCaller, { schemas: game.schemas }, pathToFileURL(file('aiscripts/caller.xml')).toString()))).toEqual([]);
     expect(unknown(analyzeText(aiCaller, { ...context, validateCallParameters: false }, pathToFileURL(file('aiscripts/caller.xml')).toString()))).toEqual([]);
+  });
+
+  it('adds a parameter the call passes to what it calls, with its other parameters or in a new <params>', () => {
+    const context = { schemas: game.schemas, index: game.index };
+    const caller = (text: string, relative: string): DocumentAnalysis => analyzeText(text, context, pathToFileURL(file(relative)).toString());
+    const fixesOf = (analysis: DocumentAnalysis, data: GameData = game): string[] =>
+      quickFixes(
+        analysis,
+        analysis.diagnostics.filter((diagnostic) => diagnostic.code === 'param-unknown'),
+        data
+      ).map((fix) => fix.title);
+    /** The target's text after the fix with the title, which changes only that file. */
+    const targetAfter = (analysis: DocumentAnalysis, title: string, relative: string): string => {
+      const action = quickFixes(analysis, analysis.diagnostics, game).find((candidate) => candidate.title === title);
+      const uri = pathToFileURL(file(relative)).toString();
+      expect(Object.keys(action?.edit?.changes ?? {})).toEqual([uri]);
+      return TextDocument.applyEdits(TextDocument.create(uri, 'xml', 0, `${targets[relative].join('\n')}\n`), action?.edit?.changes?.[uri] ?? []);
+    };
+
+    const ai = caller(
+      aiCaller
+        .replace('<param name="target" value="null"/>', '<param name="target" value="null"/>\n        <param name="extra" value="1"/>')
+        .replace(
+          '<run_script name="$script">',
+          '<run_script name="\'move.bare\'"><param name="first" value="1"/></run_script>\n      <run_script name="$script">'
+        )
+        .replace(
+          '<run_script name="$script">',
+          '<run_script name="\'move.empty\'"><param name="only" value="1"/></run_script>\n      <run_script name="$script">'
+        ),
+      'aiscripts/caller.xml'
+    );
+    expect(fixesOf(ai)).toEqual([
+      "Add the parameter 'nope' to script 'move.go'",
+      "Add the parameter 'extra' to order 'Attack' of 'order.attack'",
+      "Add the parameter 'first' to script 'move.bare'",
+      "Add the parameter 'only' to script 'move.empty'",
+    ]);
+    expect(targetAfter(ai, "Add the parameter 'nope' to script 'move.go'", 'aiscripts/move.go.xml')).toContain(
+      '    <param name="speed" default="1"/>\n    <param name="nope"/>\n  </params>'
+    );
+    expect(targetAfter(ai, "Add the parameter 'extra' to order 'Attack' of 'order.attack'", 'aiscripts/order.attack.xml')).toContain(
+      '      <param name="pursue" default="if this.ship.isplayerowned then true else false"/>\n      <param name="extra"/>\n    </params>\n  </order>'
+    );
+    // Where the schema allows a <params>: before the attention blocks.
+    expect(targetAfter(ai, "Add the parameter 'first' to script 'move.bare'", 'aiscripts/move.bare.xml')).toBe(
+      '<aiscript name="move.bare">\n  <params>\n    <param name="first"/>\n  </params>\n  <attention min="unknown">\n    <actions/>\n  </attention>\n</aiscript>\n'
+    );
+    expect(targetAfter(ai, "Add the parameter 'only' to script 'move.empty'", 'aiscripts/move.empty.xml')).toContain(
+      '<aiscript name="move.empty">\n  <params>\n    <param name="only"/>\n  </params>\n  <attention'
+    );
+
+    const md = caller(
+      mdCaller
+        .replace('<param name="Own" value="1"/>', '<param name="Own" value="1"/>\n          <param name="Mine" value="2"/>')
+        .replace('<param name="Faction" value="faction.argon"/>', '<param name="Faction" value="faction.argon"/>\n      <param name="Bonus" value="3"/>'),
+      'md/caller.xml'
+    );
+    expect(fixesOf(md)).toEqual(["Add the parameter 'Mine' to library 'md.Caller.Local'", "Add the parameter 'Bonus' to library 'md.Lib.Reward'"]);
+    expect(targetAfter(md, "Add the parameter 'Bonus' to library 'md.Lib.Reward'", 'md/lib.xml')).toContain(
+      '        <param name="Faction"/>\n        <param name="Bonus"/>\n      </params>'
+    );
+    // A library of this script: the edit is this document's.
+    const own = quickFixes(md, md.diagnostics, game).find((fix) => fix.title === "Add the parameter 'Mine' to library 'md.Caller.Local'");
+    const ownText = TextDocument.applyEdits(md.document, own?.edit?.changes?.[md.document.uri] ?? []);
+    expect(ownText).toContain('        <param name="Own"/>\n        <param name="Mine"/>\n      </params>');
+    expect(caller(ownText, 'md/caller.xml').diagnostics.filter((diagnostic) => diagnostic.message.startsWith("'Mine'"))).toEqual([]);
+
+    // Scripts of the game are not changed.
+    expect(fixesOf(ai, { ...game, folder })).toEqual([]);
   });
 
   describe('while typing', () => {

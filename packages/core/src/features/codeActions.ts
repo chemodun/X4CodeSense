@@ -9,15 +9,20 @@
  * offers at the start of the name, so a fix offers what completion would, in a patch document as where
  * the content lands; a variable is offered only when something sets it.
  *
+ * What nothing defines can also be created: a cue or library, a label, a parameter where the call's
+ * target declares its parameters, in another file when it is defined there (see `createFixes.ts`).
+ *
  * Fixes are worked out when the editor asks, for the diagnostics of the current analysis: a diagnostic
  * the analysis no longer has gets none. Fix all applies the preferred fixes of a whole document at once.
  */
+import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { CodeActionKind, CompletionItemKind, InsertTextFormat, Range, type CodeAction, type Diagnostic, type TextEdit } from 'vscode-languageserver-types';
 import { diagnosticSource, type DocumentAnalysis } from '../analysis/analyzeDocument';
 import { positionContext, schemaOf } from '../analysis/positionContext';
 import type { GameData } from '../gameData';
 import { elementWithStartTagAt, type XmlAttribute, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { completionAt } from './completion';
+import { creationFixes } from './createFixes';
 import { patchedViewAt } from './patchContent';
 import { variableAt } from './variables';
 
@@ -124,7 +129,10 @@ function keyOf(diagnostic: Diagnostic): string {
 
 interface Fix {
   title: string;
+  /** Edits of the analysed document. */
   edits: { start: number; end: number; text: string }[];
+  /** Edits of another file, where what is missing is created. */
+  elsewhere?: { document: TextDocument; edits: { start: number; end: number; text: string }[] };
   preferred?: boolean;
   /** It inserts an empty value that is still to be written: the problem moves, it is not fixed. */
   placeholder?: boolean;
@@ -283,7 +291,9 @@ function fixesFor(analysis: DocumentAnalysis, structure: XmlStructure, diagnosti
   }
   const kinds = misspellable.get(code);
   if (kinds) {
-    return spellingFixes(analysis, code, kinds, structure, start, end, game);
+    // The names it may be misspelt from first; what creates it unless one of them is clearly meant.
+    const spelling = spellingFixes(analysis, code, kinds, structure, start, end, game);
+    return spelling.some((fix) => fix.preferred) ? spelling : [...spelling, ...creationFixes(analysis, code, start, game)];
   }
   return wellFormednessFixes(code, structure, analysis.document.getText(), start);
 }
@@ -298,14 +308,20 @@ export function quickFixes(analysis: DocumentAnalysis, diagnostics: readonly Dia
   const actions: CodeAction[] = [];
   const byEdit = new Map<string, CodeAction>();
   for (const { diagnostic, fix } of fixesOf(analysis, diagnostics, game)) {
-    const edits = textEdits(analysis, fix);
-    const key = `${fix.title}|${JSON.stringify(edits)}`;
+    const changes: Record<string, TextEdit[]> = {};
+    if (fix.edits.length > 0) {
+      changes[document.uri] = textEdits(analysis.document, fix.edits);
+    }
+    if (fix.elsewhere) {
+      changes[fix.elsewhere.document.uri] = textEdits(fix.elsewhere.document, fix.elsewhere.edits);
+    }
+    const key = `${fix.title}|${JSON.stringify(changes)}`;
     const shared = byEdit.get(key);
     if (shared) {
       shared.diagnostics?.push(diagnostic);
       continue;
     }
-    const action: CodeAction = { title: fix.title, kind: CodeActionKind.QuickFix, diagnostics: [diagnostic], edit: { changes: { [document.uri]: edits } } };
+    const action: CodeAction = { title: fix.title, kind: CodeActionKind.QuickFix, diagnostics: [diagnostic], edit: { changes } };
     if (fix.preferred) {
       action.isPreferred = true;
     }
@@ -322,7 +338,7 @@ export function quickFixes(analysis: DocumentAnalysis, diagnostics: readonly Dia
  * Undefined when there is nothing to fix.
  */
 export function fixAll(analysis: DocumentAnalysis, game: GameData | undefined): CodeAction | undefined {
-  const fixes = fixesOf(analysis, analysis.diagnostics, game).filter(({ fix }) => fix.preferred && !fix.placeholder && fix.edits.length > 0);
+  const fixes = fixesOf(analysis, analysis.diagnostics, game).filter(({ fix }) => fix.preferred && !fix.placeholder && !fix.elsewhere && fix.edits.length > 0);
   fixes.sort((a, b) => Math.min(...a.fix.edits.map((edit) => edit.start)) - Math.min(...b.fix.edits.map((edit) => edit.start)));
   const taken: Edit[] = [];
   const diagnostics: Diagnostic[] = [];
@@ -341,7 +357,7 @@ export function fixAll(analysis: DocumentAnalysis, game: GameData | undefined): 
     seen.add(key);
     taken.push(...fix.edits);
     diagnostics.push(diagnostic);
-    edits.push(...textEdits(analysis, fix));
+    edits.push(...textEdits(analysis.document, fix.edits));
   }
   if (edits.length === 0) {
     return undefined;
@@ -362,9 +378,8 @@ function touch(a: Edit, b: Edit): boolean {
   return a.start === a.end || b.start === b.end ? a.start <= b.end && b.start <= a.end : a.start < b.end && b.start < a.end;
 }
 
-function textEdits(analysis: DocumentAnalysis, fix: Fix): TextEdit[] {
-  const document = analysis.document;
-  return fix.edits.map((edit) => ({ range: Range.create(document.positionAt(edit.start), document.positionAt(edit.end)), newText: edit.text }));
+function textEdits(document: TextDocument, edits: readonly Edit[]): TextEdit[] {
+  return edits.map((edit) => ({ range: Range.create(document.positionAt(edit.start), document.positionAt(edit.end)), newText: edit.text }));
 }
 
 /** The fixes of the diagnostics the analysis still has, with the diagnostic each is for. */

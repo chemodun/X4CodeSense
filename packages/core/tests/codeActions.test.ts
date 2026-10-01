@@ -185,9 +185,101 @@ describe('quick fixes for names', () => {
     expect(fixes(analysis, 'library-undefined')).toEqual(["Change to 'TargetInvalidHandler' *", "Change to 'CheckTarget' *"]);
   });
 
-  it('offers equally close names without preferring one', () => {
+  it('offers equally close names without preferring one, and to create the name since none is clearly meant', () => {
     const analysis = analyze(md('<signal_cue_instantly cue="Ch_Force" />', '\n    <cue name="Ch1_Force" />\n    <cue name="Ch2_Force" />'));
-    expect(fixes(analysis, 'cue-undefined')).toEqual(["Change to 'Ch1_Force'", "Change to 'Ch2_Force'"]);
+    expect(fixes(analysis, 'cue-undefined')).toEqual(["Change to 'Ch1_Force'", "Change to 'Ch2_Force'", "Create cue 'Ch_Force'"]);
+  });
+});
+
+describe('quick fixes that create what is missing', () => {
+  const setupFile = path.join(project, 'game', 'md', 'setup.xml');
+  const setupUri = pathToFileURL(setupFile).toString();
+  const setupText = readFileSync(setupFile, 'utf8');
+
+  /** The text of Setup after the fix with the title, which changes only that file. */
+  function setupAfter(analysis: DocumentAnalysis, title: string, data: GameData = game): string {
+    const action = quickFixes(analysis, analysis.diagnostics, data).find((candidate) => candidate.title === title);
+    expect(Object.keys(action?.edit?.changes ?? {})).toEqual([setupUri]);
+    return TextDocument.applyEdits(TextDocument.create(setupUri, 'xml', 0, setupText), action?.edit?.changes?.[setupUri] ?? []);
+  }
+
+  it('creates a cue after the cue that names it, waiting for the signal where it is signalled', () => {
+    const text = md('<signal_cue_instantly cue="Later" />\n        <cancel_cue cue="Other" />');
+    const analysis = analyze(text);
+    expect(fixes(analysis, 'cue-undefined')).toEqual(["Create cue 'Later'", "Create cue 'Other'"]);
+    const later = fixed(analysis, 'cue-undefined', "Create cue 'Later'");
+    expect(later).toBe(
+      text.replace(
+        '    </cue>\n',
+        '    </cue>\n    <cue name="Later">\n      <conditions>\n        <event_cue_signalled/>\n      </conditions>\n      <actions>\n      </actions>\n    </cue>\n'
+      )
+    );
+    expect(analyze(later).diagnostics.map((diagnostic) => diagnostic.message)).toEqual(["'Other' is no keyword and no cue of this script"]);
+    const other = fixed(analysis, 'cue-undefined', "Create cue 'Other'");
+    expect(other).toContain('    </cue>\n    <cue name="Other">\n      <actions>\n      </actions>\n    </cue>\n');
+  });
+
+  it('creates a library where actions are included from it or run, with the parameters the call passes', () => {
+    const analysis = analyze(
+      md('<include_actions ref="Shared" />\n        <run_actions ref="Payout">\n          <param name="Amount" value="1" />\n        </run_actions>')
+    );
+    expect(fixes(analysis, 'cue-undefined')).toEqual(["Create library 'Shared'", "Create library 'Payout'"]);
+    expect(fixed(analysis, 'cue-undefined', "Create library 'Shared'")).toContain(
+      '    </cue>\n    <library name="Shared">\n      <actions>\n      </actions>\n    </library>\n'
+    );
+    const payout = fixed(analysis, 'cue-undefined', "Create library 'Payout'");
+    expect(payout).toContain(
+      '    </cue>\n    <library name="Payout">\n      <params>\n        <param name="Amount"/>\n      </params>\n      <actions>\n      </actions>\n    </library>\n'
+    );
+    expect(analyze(payout).diagnostics.filter((diagnostic) => diagnostic.message.includes('Payout'))).toEqual([]);
+  });
+
+  it('creates a cue of another script last in its cues, and never in a file of the game', () => {
+    const analysis = analyze(md('<signal_cue_instantly cue="md.Setup.Later" />\n        <cancel_cue cue="md.Setup.Gone" />'));
+    expect(fixes(analysis, 'cue-undefined')).toEqual(["Create cue 'Later' in script 'Setup'", "Create cue 'Gone' in script 'Setup'"]);
+    expect(setupAfter(analysis, "Create cue 'Later' in script 'Setup'")).toBe(
+      setupText.replace(
+        '    </library>\n',
+        '    </library>\n    <cue name="Later">\n      <conditions>\n        <event_cue_signalled/>\n      </conditions>\n      <actions>\n      </actions>\n    </cue>\n'
+      )
+    );
+    // The edit does not change this document, so the checker leaves it out.
+    expect(fixed(analysis, 'cue-undefined', "Create cue 'Gone' in script 'Setup'")).toBe(analysis.document.getText());
+    expect(fixes(analysis, 'cue-undefined', { ...game, folder: path.join(project, 'game') })).toEqual([]);
+  });
+
+  it('creates a label first in the actions of the attention block that resumes at it', () => {
+    const analysis = analyze(ai('', '<resume label="later" />'));
+    expect(fixes(analysis, 'label-undefined')).toEqual(["Create label 'later' at the start of the actions"]);
+    const created = fixed(analysis, 'label-undefined', "Create label 'later' at the start of the actions");
+    expect(created).toContain('    <actions>\n      <label name="later"/>\n      <label name="start" />\n');
+    expect(analyze(created).diagnostics).toEqual([]);
+  });
+
+  it('writes with the line breaks and indentation of the file', () => {
+    const text = md('<signal_cue_instantly cue="Later" />').replace(/\n/g, '\r\n').replace(/ {2}/g, '\t');
+    const created = fixed(analyze(text), 'cue-undefined', "Create cue 'Later'");
+    expect(created).toContain('\t\t</cue>\r\n\t\t<cue name="Later">\r\n\t\t\t<conditions>\r\n\t\t\t\t<event_cue_signalled/>\r\n');
+    expect(created.replace(/\r\n/g, '')).not.toContain('\n');
+  });
+
+  it('creates nothing in a patch, and nothing next to an element that is not whole yet', () => {
+    const patch = analyze(
+      '<diff>\n  <add sel="/mdscript/cues">\n    <cue name="X">\n      <actions>\n        <signal_cue_instantly cue="Later" />\n      </actions>\n    </cue>\n  </add>\n</diff>\n'
+    );
+    expect(quickFixes(patch, patch.diagnostics, game).filter((action) => action.title.startsWith('Create'))).toEqual([]);
+    // While typing: whatever is created is whole, so the text has no new problem, and the cue being typed gets nothing.
+    const text = md('<signal_cue_instantly cue="Later" />\n        <include_actions ref="Shared" />', '\n    <cue name="Third">\n      <actions/>\n    </cue>');
+    let created = 0;
+    for (let cut = 0; cut <= text.length; cut += 5) {
+      const analysis = analyze(text.slice(0, cut));
+      for (const action of quickFixes(analysis, analysis.diagnostics, game).filter((candidate) => candidate.title.startsWith('Create'))) {
+        created++;
+        const after = apply(analysis, action);
+        expect(analyze(after).structure?.problems.length).toBeLessThanOrEqual(analysis.structure?.problems.length ?? 0);
+      }
+    }
+    expect(created).toBeGreaterThan(0);
   });
 });
 
@@ -277,7 +369,8 @@ describe('which diagnostics get fixes', () => {
   it('offers none for a diagnostic without an obvious fix', () => {
     const analysis = analyze(md('<set_value name="$x" exact="1 +" />\n        <include_actions ref="md.Setup.Nothing_Close_To_It" />'));
     expect(analysis.diagnostics.length).toBeGreaterThan(1);
-    expect(quickFixes(analysis, analysis.diagnostics, game)).toEqual([]);
+    // Setup is a script of the game here: nothing is created in it.
+    expect(quickFixes(analysis, analysis.diagnostics, { ...game, folder: path.join(project, 'game') })).toEqual([]);
   });
 
   it('works without game data', () => {

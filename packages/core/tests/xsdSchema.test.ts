@@ -74,7 +74,7 @@ describe('element declarations', () => {
 
     const conditions = cue.child('conditions') as XsdElement;
     expect([...conditions.attributes.keys()]).toEqual(['ref']);
-    expect([...conditions.contentModel.declarations.keys()]).toEqual(['check_value', 'event_object_destroyed']);
+    expect([...conditions.contentModel.declarations.keys()]).toEqual(['check_value', 'event_object_destroyed', 'event_cue_signalled']);
 
     const setValue = actions.child('set_value') as XsdElement;
     expect([...setValue.attributes.keys()]).toEqual(['name', 'exact', 'operation', 'comment']);

@@ -40,6 +40,18 @@ export interface CallTarget {
   /** The file, and the source it belongs to. */
   file: string;
   source?: string;
+  /**
+   * Where a parameter it should take is declared: the `<params>` its parameters come from, else the
+   * element a `<params>` would go into (the library, the order, the script's root), in the file's text.
+   */
+  declaredIn: ParameterHome;
+}
+
+/** The `<params>` a call target takes its parameters from, or the element that would hold them. */
+export interface ParameterHome {
+  document: TextDocument;
+  owner: XmlElement;
+  params?: XmlElement;
 }
 
 interface Parsed {
@@ -162,6 +174,19 @@ function declarations(parsed: Parsed, owner: XmlElement, params: () => readonly 
 const paramsOf = (element: XmlElement | undefined): XmlElement[] =>
   element?.children.filter((child) => child.name === 'params').flatMap((params) => params.children) ?? [];
 
+const paramsElementOf = (element: XmlElement): XmlElement | undefined => element.children.find((child) => child.name === 'params');
+
+/** The `<params>` of the first element that has one, as a home; else the owner given last. */
+function homeOf(parsed: Parsed, candidates: readonly XmlElement[], owner: XmlElement): ParameterHome {
+  for (const candidate of candidates) {
+    const params = paramsElementOf(candidate);
+    if (params) {
+      return { document: parsed.document, owner: candidate, params };
+    }
+  }
+  return { document: parsed.document, owner };
+}
+
 /**
  * What a call calls, when it is written literally and found; undefined for other elements. A check of a
  * whole document passes `memo`: a target written the same way is found once.
@@ -225,6 +250,7 @@ function resolve(analysis: DocumentAnalysis, kind: CallTargetKind, written: stri
         kind: 'library',
         name: `md.${scriptName ?? own ?? '?'}.${libraryName}`,
         parameters: declarations(parsed, library, () => paramsOf(library)),
+        declaredIn: homeOf(parsed, [library], library),
         file,
         ...(source ? { source } : {}),
       },
@@ -255,19 +281,36 @@ function resolve(analysis: DocumentAnalysis, kind: CallTargetKind, written: stri
     const { start, end } = valueRange(attributeNamed(order, 'id') as XmlAttribute);
     // An order's own parameters, else the script's.
     const params = (): XmlElement[] => (paramsOf(order).length > 0 ? paramsOf(order) : paramsOf(root));
+    const declaredIn = homeOf(parsed, paramsOf(order).length === 0 && paramsOf(root).length > 0 ? [root] : [order], order);
     return withLocation(
-      { kind: 'order', name, script: script.name, parameters: declarations(parsed, order, params), file: script.file, ...(source ? { source } : {}) },
+      {
+        kind: 'order',
+        name,
+        script: script.name,
+        parameters: declarations(parsed, order, params),
+        declaredIn,
+        file: script.file,
+        ...(source ? { source } : {}),
+      },
       parsed,
       start,
       end
     );
   }
   // A script's parameters: its own, and those of the order it defines.
-  const params = (): XmlElement[] => [...paramsOf(root), ...root.children.filter((child) => child.name === 'order').flatMap((order) => paramsOf(order))];
+  const orders = root.children.filter((child) => child.name === 'order');
+  const params = (): XmlElement[] => [...paramsOf(root), ...orders.flatMap((order) => paramsOf(order))];
   const nameAttribute = attributeNamed(root, 'name');
   const at = nameAttribute ? valueRange(nameAttribute) : { start: root.start, end: root.start };
   return withLocation(
-    { kind: 'script', name, parameters: declarations(parsed, root, params), file: script.file, ...(source ? { source } : {}) },
+    {
+      kind: 'script',
+      name,
+      parameters: declarations(parsed, root, params),
+      declaredIn: homeOf(parsed, [root, ...orders], root),
+      file: script.file,
+      ...(source ? { source } : {}),
+    },
     parsed,
     at.start,
     at.end
