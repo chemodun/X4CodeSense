@@ -4,10 +4,10 @@
  */
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -59,8 +59,42 @@ interface JsonReport {
     message: string;
     fixes: { title: string; preferred: boolean; edits: { range: JsonRange; newText: string }[] }[];
   }[];
+  fixed?: { file: string; line?: number; column?: number; range?: JsonRange; code: string; message: string; fix: string }[];
   summary: Record<string, number | boolean>;
   problems: string[];
+}
+
+interface SarifRegion {
+  startLine: number;
+  startColumn?: number;
+  endLine?: number;
+  endColumn?: number;
+}
+
+interface SarifArtifact {
+  uri: string;
+  uriBaseId?: string;
+}
+
+interface SarifLog {
+  version: string;
+  runs: {
+    tool: { driver: { name: string; rules: { id: string; shortDescription: { text: string }; fullDescription: { text: string }; help: { text: string } }[] } };
+    originalUriBaseIds: Record<string, { uri: string }>;
+    columnKind: string;
+    invocations: { executionSuccessful: boolean; toolExecutionNotifications: { level: string; message: { text: string } }[] }[];
+    results: {
+      ruleId?: string;
+      ruleIndex?: number;
+      level: string;
+      message: { text: string };
+      locations: { physicalLocation: { artifactLocation: SarifArtifact; region: SarifRegion } }[];
+      fixes?: {
+        description: { text: string };
+        artifactChanges: { artifactLocation: SarifArtifact; replacements: { deletedRegion: SarifRegion; insertedContent?: { text: string } }[] }[];
+      }[];
+    }[];
+  }[];
 }
 
 /** The offset of an LSP position in a text. */
@@ -278,6 +312,153 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     );
   });
 
+  it('writes SARIF for code scanning: a rule per code, regions, fixes, files named from the current folder', async () => {
+    const typing = path.join(extension, 'md', 'Typing, 100%.xml');
+    const misplaced = path.join(extension, 'aiscripts', 'Misplaced.xml');
+    const text =
+      '<mdscript name="Typing">\n  <cues>\n    <cue name="A" checkinterval>\n      <actions><set_value name=$x exact="1"/></actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    await withFile(misplaced, '<mdscript name="Misplaced"/>\n', () =>
+      withFile(typing, text, async () => {
+        const result = await runIn(workDir, '--format', 'sarif', extension);
+        expect(result.code).toBe(1);
+        const log = JSON.parse(result.stdout) as SarifLog;
+        expect(log.version).toBe('2.1.0');
+        expect(log.runs.length).toBe(1);
+        const [sarifRun] = log.runs;
+        expect(sarifRun.tool.driver.name).toBe('x4-script-check');
+        expect(sarifRun.columnKind).toBe('utf16CodeUnits');
+        expect(sarifRun.originalUriBaseIds['%SRCROOT%'].uri).toBe(`${pathToFileURL(workDir).toString()}/`);
+        expect(sarifRun.invocations).toEqual([{ executionSuccessful: true, toolExecutionNotifications: [] }]);
+
+        // A rule per code found, in the order of the codes, each with what it reports.
+        const rules = sarifRun.tool.driver.rules;
+        expect(rules.map((rule) => rule.id)).toEqual(['missing-attribute-value', 'script-in-wrong-folder', 'unquoted-attribute-value']);
+        for (const rule of rules) {
+          expect(rule.shortDescription.text).not.toBe(rule.id);
+          expect(rule.fullDescription.text).toBe(rule.shortDescription.text);
+          expect(rule.help.text).toBe(rule.shortDescription.text);
+        }
+
+        const typingFile = { uri: 'my_extension/md/Typing%2C%20100%25.xml', uriBaseId: '%SRCROOT%' };
+        expect(sarifRun.results).toEqual([
+          {
+            ruleId: 'script-in-wrong-folder',
+            ruleIndex: 1,
+            level: 'error',
+            message: { text: 'is a md script but lies in the aiscripts folder' },
+            // About the whole file: code scanning shows a result only at a line.
+            locations: [
+              { physicalLocation: { artifactLocation: { uri: 'my_extension/aiscripts/Misplaced.xml', uriBaseId: '%SRCROOT%' }, region: { startLine: 1 } } },
+            ],
+          },
+          {
+            ruleId: 'missing-attribute-value',
+            ruleIndex: 0,
+            level: 'error',
+            message: { text: "Attribute 'checkinterval' has no value" },
+            locations: [{ physicalLocation: { artifactLocation: typingFile, region: { startLine: 3, startColumn: 19, endLine: 3, endColumn: 32 } } }],
+            fixes: [
+              {
+                description: { text: "Give 'checkinterval' an empty value" },
+                artifactChanges: [
+                  {
+                    artifactLocation: typingFile,
+                    replacements: [{ deletedRegion: { startLine: 3, startColumn: 32, endLine: 3, endColumn: 32 }, insertedContent: { text: '=""' } }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            ruleId: 'unquoted-attribute-value',
+            ruleIndex: 2,
+            level: 'error',
+            message: { text: "Value of attribute 'name' is not quoted" },
+            locations: [{ physicalLocation: { artifactLocation: typingFile, region: { startLine: 4, startColumn: 32, endLine: 4, endColumn: 34 } } }],
+            fixes: [
+              {
+                description: { text: 'Put the value in quotes' },
+                artifactChanges: [
+                  {
+                    artifactLocation: typingFile,
+                    replacements: [{ deletedRegion: { startLine: 4, startColumn: 32, endLine: 4, endColumn: 34 }, insertedContent: { text: '"$x"' } }],
+                  },
+                ],
+              },
+            ],
+          },
+        ]);
+
+        // Outside the current folder, a file is named by its absolute URI.
+        const elsewhere = JSON.parse((await runIn(path.dirname(unpacked), '--format=sarif', extension)).stdout) as SarifLog;
+        expect(elsewhere.runs[0].results[0].locations[0].physicalLocation.artifactLocation).toEqual({ uri: pathToFileURL(misplaced).toString() });
+      })
+    );
+  });
+
+  it('applies the preferred fixes with --fix and reports what is left', async () => {
+    const typing = path.join(extension, 'md', 'Typing.xml');
+    const good = path.join(extension, 'md', 'Good.xml');
+    const goodText = readFileSync(good, 'utf8');
+    const text =
+      '<mdscript name="Typing">\n  <cues>\n    <cue name="A" checkinterval>\n      <actions><set_value name=$x exact="1"/></actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    await withFile(typing, text, async () => {
+      const result = await run('--fix', extension);
+      expect(result.code).toBe(1);
+      // The quotes are put in; an empty value would only move the problem, so it is left to the author.
+      expect(lines(result)).toEqual([
+        `${typing}:4:32: fixed: Put the value in quotes [unquoted-attribute-value]`,
+        `${typing}:3:19: error: Attribute 'checkinterval' has no value [missing-attribute-value]`,
+        "  fix: Give 'checkinterval' an empty value",
+        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 1 finding(s) (1 error(s); no schema validation: pass --unpacked); 1 fix(es) applied to 1 file(s)',
+      ]);
+      expect(readFileSync(typing, 'utf8')).toBe(text.replace('name=$x', 'name="$x"'));
+      expect(readFileSync(good, 'utf8')).toBe(goodText);
+
+      // Nothing is left to fix.
+      const again = await run('--fix', '--format', 'json', extension);
+      expect(again.code).toBe(1);
+      const report = JSON.parse(again.stdout) as JsonReport;
+      expect(report.fixed).toEqual([]);
+      expect(report.summary).toMatchObject({ findings: 1, errors: 1, fixes: 0, fixedFiles: 0 });
+      expect(readFileSync(typing, 'utf8')).toBe(text.replace('name=$x', 'name="$x"'));
+
+      // Without --fix, the report has no such entries.
+      const plain = JSON.parse((await run('--format', 'json', extension)).stdout) as JsonReport;
+      expect(plain.fixed).toBeUndefined();
+      expect(plain.summary.fixes).toBeUndefined();
+    });
+  });
+
+  it('fixes every file before checking any, so a fixed definition counts in the files before it', async () => {
+    const caller = path.join(extension, 'md', 'A_Caller.xml');
+    const callee = path.join(extension, 'md', 'B_Callee.xml');
+    const callerText =
+      '<mdscript name="Caller">\n  <cues>\n    <cue name="A">\n      <actions>\n        <signal_cue_instantly cue="md.Callee.Start"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    const calleeText = '<mdscript name="Callee">\n  <cues>\n    <cuee name="Start">\n      <actions/>\n    </cuee>\n  </cues>\n</mdscript>\n';
+    await withFile(caller, callerText, () =>
+      withFile(callee, calleeText, async () => {
+        const before = await run('--unpacked', unpacked, extension);
+        expect(lines(before)).toEqual([
+          `${caller}:5:46: warning: Script 'Callee' has no cue 'Start' [cue-undefined]`,
+          `${callee}:3:6: error: Unknown element 'cuee' in 'cues' [unknown-element]`,
+          "  fix: Change to 'cue'",
+          '5 file(s) in 2 folder(s): 4 script(s), 1 patch(es), 2 finding(s) (1 error(s), 1 warning(s))',
+        ]);
+
+        const fixed = await run('--unpacked', unpacked, '--fix', '--format', 'github', extension);
+        expect(fixed.code).toBe(0);
+        expect(lines(fixed)).toEqual([
+          `::notice file=${escapedPath(callee)},line=3,endLine=3,col=6,endColumn=10,title=unknown-element::Fixed: Change to 'cue'`,
+          '5 file(s) in 2 folder(s): 4 script(s), 1 patch(es), 0 finding(s); 1 fix(es) applied to 1 file(s)',
+        ]);
+        // The end tag changes with the name.
+        expect(readFileSync(callee, 'utf8')).toBe(calleeText.replace(/cuee/g, 'cue'));
+        expect(readFileSync(caller, 'utf8')).toBe(callerText);
+      })
+    );
+  });
+
   it('validates against the schemas of an unpacked folder', async () => {
     const clean = await run('--unpacked', unpacked, extension);
     expect(clean.code).toBe(0);
@@ -406,9 +587,9 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     expect(unknown.code).toBe(2);
     expect(unknown.stderr).toContain('unknown option --bogus');
 
-    const format = await run('--format', 'sarif', extension);
+    const format = await run('--format', 'xml', extension);
     expect(format.code).toBe(2);
-    expect(format.stderr).toContain("--format needs one of text, json, github, not 'sarif'");
+    expect(format.stderr).toContain("--format needs one of text, json, github, sarif, not 'xml'");
     const failOn = await run(extension, '--fail-on');
     expect(failOn.code).toBe(2);
     expect(failOn.stderr).toContain('--fail-on needs one of error, warning, info, hint');
@@ -435,8 +616,13 @@ describe('x4-script-check while typing', { timeout: 30_000 }, () => {
       writeFileSync(file, text.slice(0, cut));
     }
     try {
-      const [textRun, jsonRun, githubRun] = await Promise.all([run(folder), run('--format', 'json', folder), runIn(folder, '--format', 'github', folder)]);
-      expect([textRun.code, jsonRun.code, githubRun.code]).toEqual([1, 1, 1]);
+      const [textRun, jsonRun, githubRun, sarifRun] = await Promise.all([
+        run(folder),
+        run('--format', 'json', folder),
+        runIn(folder, '--format', 'github', folder),
+        runIn(folder, '--format', 'sarif', folder),
+      ]);
+      expect([textRun.code, jsonRun.code, githubRun.code, sarifRun.code]).toEqual([1, 1, 1, 1]);
       const report = JSON.parse(jsonRun.stdout) as JsonReport;
       expect(report.summary.files).toBe(cuts.size);
       expect(new Set(report.findings.map((finding) => finding.file))).toEqual(new Set(cuts.keys()));
@@ -453,6 +639,20 @@ describe('x4-script-check while typing', { timeout: 30_000 }, () => {
         expect(findingLines[index]).toContain(`${finding.file}${location}: ${finding.severity}: ${finding.message}`);
         expect(annotations[index]).toMatch(/^::(error|warning|notice) file=typing_mod\/md\/Cut\d{3}\.xml[,:]/);
       });
+      // SARIF: a result per finding, at its line, with a described rule.
+      const sarif = (JSON.parse(sarifRun.stdout) as SarifLog).runs[0];
+      expect(sarif.results.length).toBe(report.findings.length);
+      sarif.results.forEach((result, index) => {
+        const finding = report.findings[index];
+        expect(result.message.text).toBe(finding.message);
+        expect(result.locations[0].physicalLocation.region.startLine).toBe(finding.line ?? 1);
+        expect(result.locations[0].physicalLocation.artifactLocation.uri).toMatch(/^typing_mod\/md\/Cut\d{3}\.xml$/);
+        expect(sarif.tool.driver.rules[result.ruleIndex ?? -1]?.id).toBe(finding.code);
+        expect(result.fixes?.length ?? 0).toBe(finding.fixes.length);
+      });
+      for (const rule of sarif.tool.driver.rules) {
+        expect(rule.shortDescription.text).not.toBe(rule.id);
+      }
 
       for (const finding of report.findings) {
         const content = cuts.get(finding.file) ?? '';
@@ -466,6 +666,17 @@ describe('x4-script-check while typing', { timeout: 30_000 }, () => {
           expect(applied(content, fix.edits)).not.toBe(content);
         }
       }
+
+      // --fix on every cut: what it writes has nothing left to fix.
+      const fixRun = await run('--fix', '--format', 'json', folder);
+      expect([0, 1]).toContain(fixRun.code);
+      const fixReport = JSON.parse(fixRun.stdout) as JsonReport;
+      expect(fixReport.summary.fixes).toBe(fixReport.fixed?.length);
+      for (const fixed of fixReport.fixed ?? []) {
+        expect(cuts.has(fixed.file)).toBe(true);
+      }
+      const again = JSON.parse((await run('--fix', '--format', 'json', folder)).stdout) as JsonReport;
+      expect(again.fixed).toEqual([]);
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }

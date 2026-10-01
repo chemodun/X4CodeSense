@@ -7,7 +7,6 @@
 
 * choose which scripts show problems from the status bar ([2df0a7a](https://github.com/chemodun/X4CodeSense/commit/2df0a7a1fef946361af122ce83fb3581e9dc27c0))
 * the workspace's problems, fix all, and unknown script names ([dd6266a](https://github.com/chemodun/X4CodeSense/commit/dd6266ad2be35915e8a60ba8588028a50fd7e816))
-* the workspace's problems, fix all, and unknown script names ([d61d1f4](https://github.com/chemodun/X4CodeSense/commit/d61d1f494e7f5ca6626991d35d6bdc91bb74148a))
 
 
 ### Dependencies

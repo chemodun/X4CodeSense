@@ -41,6 +41,7 @@ export * from './patches/pathNames';
 export * from './patches/validatePatch';
 export * from './gameData';
 export * from './analysis/analyzeDocument';
+export * from './analysis/diagnosticCodes';
 export * from './analysis/positionContext';
 export * from './features/markdown';
 export * from './features/completion';

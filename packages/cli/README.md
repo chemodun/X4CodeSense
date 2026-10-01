@@ -7,6 +7,7 @@ npx x4-script-check --unpacked C:\X4\extracted path\to\extension
 npx x4-script-check --unpacked C:\X4\extracted path\to\folder\with\many\extensions
 npx x4-script-check path\to\extension        # well-formedness only, no schemas
 npx x4-script-check --format json --unpacked C:\X4\extracted path\to\extension
+npx x4-script-check --fix --unpacked C:\X4\extracted path\to\extension
 ```
 
 It looks for `md` and `aiscripts` folders directly under each given path and one level deeper, and for the patches of other extensions in `extensions/<folder>/md` and `.../aiscripts`. It checks every `*.xml` file in them, in the order of their names, and exits with 1 when there are findings (2 on a usage error).
@@ -16,7 +17,8 @@ Options:
 - `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd` and `common.xsd`, and scripts are validated against them. Also read from the `X4_UNPACKED` environment variable.
 - `--extensions <folder>` - other extensions the checked ones refer to: their texts and scripts are read, they are not checked. May be given several times.
 - `--no-structure` - report unknown elements, attributes and values only, not the order and completeness of child elements.
-- `--format <format>` - `text` (default), `json` or `github`, see below.
+- `--fix` - apply the preferred quick fixes to the files first, then report what is left, see below.
+- `--format <format>` - `text` (default), `json`, `github` or `sarif`, see below.
 - `--fail-on <severity>` - the least severe finding that fails the check: `error`, `warning`, `info` or `hint`. The default, `hint`, fails on any finding; with `--fail-on error`, warnings are reported and the exit code is 0.
 - `-h`, `--help` - usage.
 
@@ -93,5 +95,36 @@ C:\mods\my_extension\md\Texts.xml:5:50: warning: Text 2 does not exist on page 9
 ```
 
 Without the game files on the runner, only well-formedness is checked.
+
+## SARIF
+
+`--format sarif` prints a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) log, which GitHub code scanning and other tools read. Each code found is a rule with a description of what it reports; files are named relative to the current folder, as for `github`; the quick fixes are SARIF fixes. A finding about a whole file is placed on its first line, since code scanning shows results at lines. Code scanning has to be available for the repository (it is for public ones).
+
+```yaml
+permissions:
+  security-events: write
+steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-node@v4
+    with:
+      node-version: 22
+  - run: npx x4-script-check --format sarif . > x4-script-check.sarif
+  - uses: github/codeql-action/upload-sarif@v4
+    if: always()
+    with:
+      sarif_file: x4-script-check.sarif
+```
+
+## Fixing
+
+`--fix` applies the preferred quick fixes to the files before checking them, as **Fix All** in the editor does: a name misspelt is changed to the known name closest to it (an element's end tag with it), a value without quotes is put in quotes. Fixes that would only insert an empty value, such as a missing required attribute, are left out: the problem would move, not go away. Every file is fixed before any is checked, so a definition fixed in one file counts in the others. The report shows what is left, after a line per fix applied:
+
+```text
+C:\mods\my_extension\aiscripts\order.mine.xml:5:45: fixed: Change to 'Attack' [order-undefined]
+C:\mods\my_extension\aiscripts\order.mine.xml:7:8: fixed: Change to 'set_value' [unknown-element]
+3 file(s) in 1 folder(s): 3 script(s), 0 patch(es), 0 finding(s); 2 fix(es) applied to 1 file(s)
+```
+
+With `--format json` the fixes are listed under `fixed` (file, place, code, message and the fix's title) and counted as `fixes` and `fixedFiles` in the summary; with `--format github` each is a notice. Most fixes need the game files: without `--unpacked`, only quotes are put in.
 
 Part of [X4CodeSense](https://github.com/chemodun/X4CodeSense). Apache License 2.0.
