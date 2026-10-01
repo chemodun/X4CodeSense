@@ -17,8 +17,11 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 - Names, checked across the game, its DLCs and your extensions: labels, cues and libraries, interrupt library items, `md.Script.Cue`, and text references that no file defines; names defined twice.
 - Variables that are read but never set, following the cue namespace rules of the Mission Director.
 - Parameters a call passes that the script, order or library it names does not declare: a `<param name="…">` of `run_script`, `create_order`, `run_actions`, a `cue` with `ref` and the like. Parameters a call leaves out are not reported; the game takes them as null.
+- AI script names and order ids a call writes as is (`run_script name="'move.generic'"`, `create_order id="'Attack'"`) that no script of the game, its DLCs, the extensions or your workspace defines.
 
 All of it keeps working while a tag, an attribute or a quote is still being typed. Open files count with their unsaved changes, and files changed on disk in the workspace are read again.
+
+The Problems panel lists the problems of the open scripts, also of those in tabs that VS Code restored at start but has not shown yet, as they are on disk. With `x4CodeSense.diagnosticMode` set to `workspace`, it also lists those of every other script and patch in the workspace folders, as they are on disk. They are checked once the scripts are indexed, and again when something they refer to changes, for example when a cue or an order is renamed in the editor; an open script's problems follow the editor as before.
 
 ### Completion and hover
 
@@ -40,7 +43,7 @@ In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the
 - Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, order, interrupt library item or text where it is defined.
 - Find all references and rename, across scripts: variables, labels, cues and libraries (also as `md.Script.Cue` in other scripts and in the paths of patches), Mission Director script names, and interrupt library items. A rename edits the files of your workspace only; when the game or an extension outside the workspace uses the same name, it is refused, with the reason.
 - Find all references for AI script names and order ids: where they are defined and every call that names them as is (`'move.generic'`, `'Attack'`). They are not renamed: the game and any extension may name them.
-- The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path.
+- The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order with its name as the game shows it, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path.
 - Go to Symbol in Workspace (`Ctrl+T`): the scripts, cues, libraries and interrupt library items of the game, its DLCs, the extensions and your workspace, with the script they are in and where it comes from. With a dot, the query matches the name as other scripts write it: `md.Setup.Start`. Among equally good matches your workspace's come first. Labels are left to the outline of their script.
 
 ### Semantic highlighting
@@ -56,7 +59,9 @@ In a patch, what an `add` or `replace` brings in is coloured as where it lands. 
 
 ### Quick fixes
 
-The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable or parameter of a call is changed to the known names closest in spelling.
+The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable, parameter of a call, AI script name or order id is changed to the known names closest in spelling.
+
+**Apply all preferred fixes in this file** applies at once the fix that is clearly the best for each problem of the file: in the light bulb when there are two or more, and as the source action `source.fixAll`, for example on save with `"[xml]": { "editor.codeActionsOnSave": { "source.fixAll": "explicit" } }`. Fixes that only add an empty value, a required attribute or the value of an attribute, are left out: the value is still to be written.
 
 ### Patches
 
@@ -143,6 +148,8 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
   - _default_: `false`
 - `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes and invalid values are always reported.
   - _default_: `true`
+- `x4CodeSense.diagnosticMode` - which scripts the Problems panel lists problems of: `openFilesOnly`, the scripts open in the editor, or `workspace`, also every other script and patch in the workspace folders, as they are on disk. Checking them all takes a few seconds for a hundred scripts, once after the scripts are indexed and again in the background when something they refer to changes.
+  - _default_: `openFilesOnly`
 - `x4CodeSense.debug` - verbose logging in the X4CodeSense output channel.
   - _default_: `false`
 - `x4CodeSense.trace.server` - trace the communication between VS Code and the language server: `off`, `messages` or `verbose`.
@@ -172,6 +179,17 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [0.6.0] - unreleased
+
+- Added
+  - The problems of every script and patch in the workspace, not only of the open ones, when `x4CodeSense.diagnosticMode` is `workspace`.
+  - Apply all preferred fixes in this file: in the light bulb, and as `source.fixAll` for `editor.codeActionsOnSave`.
+  - A warning for an AI script name or order id that a call writes as is and no script defines, with a quick fix to the known name it is close to.
+  - The outline shows an order's name as the game shows it.
+- Fixed
+  - After a start of VS Code, the scripts in the restored tabs show their problems, not only the one in front.
+  - X4CodeSense starts with a workspace that holds scripts, before a script is opened.
 
 ### [0.5.0] - 2026-10-01
 

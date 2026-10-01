@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { SymbolKind, type DocumentSymbol, type Range } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
-import { analyzeText, documentSymbols, loadGameData, type AnalysisContext } from '../src';
+import { analyzeText, documentSymbols, loadGameData, type AnalysisContext, type OutlineTexts } from '../src';
 
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
 const game = loadGameData(unpacked);
@@ -10,7 +10,7 @@ const withSchemas: AnalysisContext = { schemas: game.schemas, properties: game.p
 const kindNames = new Map<number, string>(Object.entries(SymbolKind).map(([name, kind]) => [kind, name]));
 
 /** The outline as lines: indented name, kind and detail. */
-function outline(text: string, context: AnalysisContext = withSchemas, uri?: string): string[] {
+function outline(text: string, context: AnalysisContext = withSchemas, uri?: string, texts?: OutlineTexts): string[] {
   const lines: string[] = [];
   const add = (symbols: DocumentSymbol[], depth: number): void => {
     for (const symbol of symbols) {
@@ -18,7 +18,7 @@ function outline(text: string, context: AnalysisContext = withSchemas, uri?: str
       add(symbol.children ?? [], depth + 1);
     }
   };
-  add(documentSymbols(analyzeText(text, context, uri)), 0);
+  add(documentSymbols(analyzeText(text, context, uri), texts), 0);
   return lines;
 }
 
@@ -169,6 +169,13 @@ describe('document symbols', () => {
       '    $count (Variable): integer',
       '  on_abort (Event)',
     ]);
+  });
+
+  it('names an order as the game shows it, with the texts', () => {
+    const named = aiScript.replace('<order id="Outline" name="Outline">', '<order id="Outline" name="{1001, 1}">');
+    expect(outline(named, withSchemas, undefined, { database: game.texts })[1]).toBe('  Outline (Interface): order, Hull');
+    expect(outline(aiScript, withSchemas, undefined, { database: game.texts })[1]).toBe('  Outline (Interface): order, Outline');
+    expect(outline(named)[1]).toBe('  Outline (Interface): order');
   });
 
   it('outlines a patch: each operation by its path, with what it brings in', () => {

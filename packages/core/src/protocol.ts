@@ -61,6 +61,18 @@ export interface ServerStatus {
   problems: number;
 }
 
+/**
+ * The client tells the server the files of its editor tabs, whenever they change. The editor loads a
+ * restored tab only when it is shown, so until then the server has not been sent it as an open document;
+ * it checks such files as they are on disk, as the user sees them open.
+ */
+export const EditorTabsNotificationMethod = 'x4codesense/editorTabs';
+
+export interface EditorTabsParams {
+  /** The `file:` uris of the XML files in the tabs of every editor group. */
+  uris: string[];
+}
+
 /** Ask for the file a patch document changes, as the game loads it before the patch and after it; null for other documents. */
 export const PatchComparisonRequestMethod = 'x4codesense/patchComparison';
 

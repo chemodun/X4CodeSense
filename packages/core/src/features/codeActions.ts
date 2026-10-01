@@ -4,13 +4,13 @@
  * Well-formedness: an unquoted value is put in quotes, an attribute without a value gets an empty one, a
  * repeated attribute is removed. Schema: the required attributes an element lacks are added, empty. A
  * name nothing knows (an element, an attribute, a value of an enumeration, a keyword, a property, a cue
- * or script, a label, an interrupt library item, a variable, a parameter of a call) is changed to the known names closest in
- * spelling. The known names are those completion offers at the start of the name, so a fix offers what
- * completion would, in a patch document as where the content lands; a variable is offered only when
- * something sets it.
+ * or script, a label, an interrupt library item, a variable, a parameter of a call, an AI script or order a
+ * call names) is changed to the known names closest in spelling. The known names are those completion
+ * offers at the start of the name, so a fix offers what completion would, in a patch document as where
+ * the content lands; a variable is offered only when something sets it.
  *
  * Fixes are worked out when the editor asks, for the diagnostics of the current analysis: a diagnostic
- * the analysis no longer has gets none.
+ * the analysis no longer has gets none. Fix all applies the preferred fixes of a whole document at once.
  */
 import { CodeActionKind, CompletionItemKind, InsertTextFormat, Range, type CodeAction, type Diagnostic, type TextEdit } from 'vscode-languageserver-types';
 import { diagnosticSource, type DocumentAnalysis } from '../analysis/analyzeDocument';
@@ -39,7 +39,12 @@ const misspellable: ReadonlyMap<string, readonly CompletionItemKind[]> = new Map
   ['variable-undefined', [CompletionItemKind.Variable]],
   // The parameters the call's target declares and the call does not pass yet.
   ['param-unknown', [CompletionItemKind.Variable]],
+  ['aiscript-undefined', [CompletionItemKind.Module]],
+  ['order-undefined', [CompletionItemKind.Function]],
 ]);
+
+/** Diagnostics on a name inside quotes, whose completion inserts it with the quotes. */
+const quotedNames = new Set(['aiscript-undefined', 'order-undefined']);
 
 const maximumSuggestions = 3;
 
@@ -121,6 +126,8 @@ interface Fix {
   title: string;
   edits: { start: number; end: number; text: string }[];
   preferred?: boolean;
+  /** It inserts an empty value that is still to be written: the problem moves, it is not fixed. */
+  placeholder?: boolean;
 }
 
 function isSpace(character: string | undefined): boolean {
@@ -163,7 +170,7 @@ function wellFormednessFixes(code: string, structure: XmlStructure, text: string
       const equals = text.slice(attribute.nameEnd, attribute.valueStart).indexOf('=');
       const at = equals >= 0 ? attribute.nameEnd + equals + 1 : attribute.nameEnd;
       const edit = { start: at, end: at, text: equals >= 0 ? '""' : '=""' };
-      return [{ title: `Give '${attribute.name}' an empty value`, edits: [edit], preferred: true }];
+      return [{ title: `Give '${attribute.name}' an empty value`, edits: [edit], preferred: true, placeholder: true }];
     }
     case 'duplicate-attribute': {
       const attribute = attributeAt(structure, start, (candidate) => candidate.nameStart === start);
@@ -205,7 +212,7 @@ function requiredAttributeFixes(analysis: DocumentAnalysis, structure: XmlStruct
     missing.length === 1
       ? `Add the required attribute ${names[0]}`
       : `Add the required attributes ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-  return [{ title, edits: [{ start: at, end: at, text: missing.map((name) => ` ${name}=""`).join('') }], preferred: true }];
+  return [{ title, edits: [{ start: at, end: at, text: missing.map((name) => ` ${name}=""`).join('') }], preferred: true, placeholder: true }];
 }
 
 /** The names that are set in the table of the variable at the offset and the tables linked to it, written with `$`. */
@@ -244,7 +251,8 @@ function spellingFixes(
   }
   let known = completionAt(analysis, start, game).flatMap((item) => {
     const edit = item.textEdit;
-    const name = edit && 'range' in edit ? edit.newText : undefined;
+    const inserted = edit && 'range' in edit ? edit.newText : undefined;
+    const name = inserted && quotedNames.has(code) && /^'[^']*'$/.test(inserted) ? inserted.slice(1, -1) : inserted;
     // Snippets and placeholders such as `{$faction}` are no names to write instead.
     const isName = name && item.insertTextFormat !== InsertTextFormat.Snippet && !/[\s{}()<>"']/.test(name);
     return isName && item.kind !== undefined && kinds.includes(item.kind) ? [name] : [];
@@ -286,36 +294,89 @@ function fixesFor(analysis: DocumentAnalysis, structure: XmlStructure, diagnosti
  * with the same fix (two required attributes of one element) share one action.
  */
 export function quickFixes(analysis: DocumentAnalysis, diagnostics: readonly Diagnostic[], game: GameData | undefined): CodeAction[] {
+  const document = analysis.document;
+  const actions: CodeAction[] = [];
+  const byEdit = new Map<string, CodeAction>();
+  for (const { diagnostic, fix } of fixesOf(analysis, diagnostics, game)) {
+    const edits = textEdits(analysis, fix);
+    const key = `${fix.title}|${JSON.stringify(edits)}`;
+    const shared = byEdit.get(key);
+    if (shared) {
+      shared.diagnostics?.push(diagnostic);
+      continue;
+    }
+    const action: CodeAction = { title: fix.title, kind: CodeActionKind.QuickFix, diagnostics: [diagnostic], edit: { changes: { [document.uri]: edits } } };
+    if (fix.preferred) {
+      action.isPreferred = true;
+    }
+    byEdit.set(key, action);
+    actions.push(action);
+  }
+  return actions;
+}
+
+/**
+ * Every preferred fix of the analysis's diagnostics in one action of the kind `source.fixAll`, for the
+ * Source Action menu and `editor.codeActionsOnSave`. Fixes that only insert an empty value are left out,
+ * and so is a fix whose edits touch those of a fix before it in the text: the next fix all takes it.
+ * Undefined when there is nothing to fix.
+ */
+export function fixAll(analysis: DocumentAnalysis, game: GameData | undefined): CodeAction | undefined {
+  const fixes = fixesOf(analysis, analysis.diagnostics, game).filter(({ fix }) => fix.preferred && !fix.placeholder && fix.edits.length > 0);
+  fixes.sort((a, b) => Math.min(...a.fix.edits.map((edit) => edit.start)) - Math.min(...b.fix.edits.map((edit) => edit.start)));
+  const taken: Edit[] = [];
+  const diagnostics: Diagnostic[] = [];
+  const edits: TextEdit[] = [];
+  const seen = new Set<string>();
+  for (const { diagnostic, fix } of fixes) {
+    const key = JSON.stringify(fix.edits);
+    if (seen.has(key)) {
+      // The same fix for another diagnostic.
+      diagnostics.push(diagnostic);
+      continue;
+    }
+    if (fix.edits.some((edit) => taken.some((other) => touch(edit, other)))) {
+      continue;
+    }
+    seen.add(key);
+    taken.push(...fix.edits);
+    diagnostics.push(diagnostic);
+    edits.push(...textEdits(analysis, fix));
+  }
+  if (edits.length === 0) {
+    return undefined;
+  }
+  const count = seen.size;
+  return {
+    title: `Apply all preferred fixes in this file (${count})`,
+    kind: CodeActionKind.SourceFixAll,
+    diagnostics,
+    edit: { changes: { [analysis.document.uri]: edits } },
+  };
+}
+
+type Edit = Fix['edits'][number];
+
+/** True when two edits overlap, or one inserts where the other starts or ends: the order would decide the result. */
+function touch(a: Edit, b: Edit): boolean {
+  return a.start === a.end || b.start === b.end ? a.start <= b.end && b.start <= a.end : a.start < b.end && b.start < a.end;
+}
+
+function textEdits(analysis: DocumentAnalysis, fix: Fix): TextEdit[] {
+  const document = analysis.document;
+  return fix.edits.map((edit) => ({ range: Range.create(document.positionAt(edit.start), document.positionAt(edit.end)), newText: edit.text }));
+}
+
+/** The fixes of the diagnostics the analysis still has, with the diagnostic each is for. */
+function fixesOf(analysis: DocumentAnalysis, diagnostics: readonly Diagnostic[], game: GameData | undefined): { diagnostic: Diagnostic; fix: Fix }[] {
   const structure = analysis.structure;
   if (!structure) {
     return [];
   }
   const current = new Set(analysis.diagnostics.map(keyOf));
-  const document = analysis.document;
-  const actions: CodeAction[] = [];
-  const byEdit = new Map<string, CodeAction>();
-  for (const diagnostic of diagnostics) {
-    if (diagnostic.source !== diagnosticSource || !current.has(keyOf(diagnostic))) {
-      continue;
-    }
-    for (const fix of fixesFor(analysis, structure, diagnostic, game)) {
-      const edits: TextEdit[] = fix.edits.map((edit) => ({
-        range: Range.create(document.positionAt(edit.start), document.positionAt(edit.end)),
-        newText: edit.text,
-      }));
-      const key = `${fix.title}|${JSON.stringify(edits)}`;
-      const shared = byEdit.get(key);
-      if (shared) {
-        shared.diagnostics?.push(diagnostic);
-        continue;
-      }
-      const action: CodeAction = { title: fix.title, kind: CodeActionKind.QuickFix, diagnostics: [diagnostic], edit: { changes: { [document.uri]: edits } } };
-      if (fix.preferred) {
-        action.isPreferred = true;
-      }
-      byEdit.set(key, action);
-      actions.push(action);
-    }
-  }
-  return actions;
+  return diagnostics.flatMap((diagnostic) =>
+    diagnostic.source === diagnosticSource && current.has(keyOf(diagnostic))
+      ? fixesFor(analysis, structure, diagnostic, game).map((fix) => ({ diagnostic, fix }))
+      : []
+  );
 }

@@ -6,6 +6,7 @@ import type { CodeAction } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeText,
+  fixAll,
   loadGameData,
   loadScriptIndex,
   quickFixes,
@@ -211,6 +212,55 @@ describe('quick fixes in patch documents', () => {
     expect(lineWith(after, '$b')).toBe('<set_value name="$b" exact="2" />');
     const again = analyze(after, uri, patchContext);
     expect(again.diagnostics.filter((diagnostic) => diagnostic.code === 'unknown-element')).toEqual([]);
+  });
+});
+
+describe('fix all', () => {
+  it('applies every preferred fix of the document at once, without those that only insert an empty value', () => {
+    const analysis = analyze(
+      md(
+        '<set_valeu name="$x" exact="1"></set_valeu>\n        <debug_text text="plyer.ship.name" filter=general chance />',
+        '\n    <cue name="Other" namespace="statc" />'
+      )
+    );
+    const all = fixAll(analysis, game);
+    expect(all?.title).toBe('Apply all preferred fixes in this file (4)');
+    expect(all?.kind).toBe('source.fixAll');
+    expect(all?.diagnostics?.map((diagnostic) => diagnostic.code).sort()).toEqual([
+      'cue-undefined',
+      'invalid-attribute-value',
+      'unknown-element',
+      'unquoted-attribute-value',
+    ]);
+    const text = apply(analysis, all as CodeAction);
+    expect(lineWith(text, '$x')).toBe('<set_value name="$x" exact="1"></set_value>');
+    // `chance` keeps no value: an empty one is still to be written.
+    expect(lineWith(text, 'debug_text')).toBe('<debug_text text="player.ship.name" filter="general" chance />');
+    expect(lineWith(text, 'Other')).toBe('<cue name="Other" namespace="static" />');
+  });
+
+  it('leaves out fixes that are not preferred, and has nothing to do without preferred fixes', () => {
+    const analysis = analyze(md('<debug_text text="1" filter="error" filter="general" chance />'));
+    expect(fixes(analysis, 'duplicate-attribute')).toEqual(["Remove the repeated attribute 'filter'"]);
+    expect(fixes(analysis, 'missing-attribute-value')).toEqual(["Give 'chance' an empty value *"]);
+    expect(fixAll(analysis, game)).toBeUndefined();
+  });
+
+  it('gives edits that apply together on every cut of a document', () => {
+    const text = md(
+      '<set_value name="$count" exact="1" />\n        <set_valeu nmae="$x" exact="plyer.shp + $cuont" filter=general></set_valeu>\n        <debug_text text="1" filter=error filter="error" chance />',
+      '\n    <cue name="Other" namespace="statc" />'
+    );
+    let fixesApplied = 0;
+    for (let cut = 0; cut <= text.length; cut += 7) {
+      const analysis = analyze(text.slice(0, cut));
+      const all = fixAll(analysis, game);
+      if (all) {
+        fixesApplied++;
+        expect(() => apply(analysis, all)).not.toThrow();
+      }
+    }
+    expect(fixesApplied).toBeGreaterThan(20);
   });
 });
 

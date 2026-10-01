@@ -2,7 +2,7 @@
  * The outline of a script or patch document.
  *
  * Mission Director scripts: the script, its cues and libraries as they nest, and the parameters of
- * libraries and cue instances. AI scripts: the script, the order with its parameters, the interrupts
+ * libraries and cue instances. AI scripts: the script, the order with its name and parameters, the interrupts
  * with their handlers and library items, `init`, `patch` blocks, the attention blocks with their labels,
  * and `on_abort`. In both, each variable the script sets is listed where it is first set, with the cue
  * whose table holds it when that is another one (the namespace cue, as the hover says). Patch
@@ -14,6 +14,7 @@
 import { Range, SymbolKind, type DocumentSymbol } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { scriptSchemaOf } from '../analysis/positionContext';
+import type { TextDatabase } from '../texts/textDatabase';
 import type { ScriptSchema } from '../types';
 import type { VariableOccurrence } from '../variables/variables';
 import { attributeNamed, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
@@ -76,8 +77,21 @@ function isParameter(element: XmlElement): boolean {
   return element.name === 'param' && (element.parent?.name === 'params' || element.parent?.name === 'cue');
 }
 
+/** An order's name as the game shows it, on one line; undefined without texts. */
+function orderName(element: XmlElement, texts: OutlineTexts | undefined): string | undefined {
+  const name = attributeValue(element, 'name');
+  const shown =
+    name && texts && texts.database.fileCount > 0
+      ? texts.database
+          .display(name, texts.language ?? '44')
+          .replace(/\s+/g, ' ')
+          .trim()
+      : undefined;
+  return shown ? shown : undefined;
+}
+
 /** What the element is in the outline, or undefined when only its descendants may be. */
-function outlined(element: XmlElement, schema: ScriptSchema | undefined): Outlined | undefined {
+function outlined(element: XmlElement, schema: ScriptSchema | undefined, texts: OutlineTexts | undefined): Outlined | undefined {
   switch (element.name) {
     case 'mdscript':
     case 'aiscript':
@@ -114,8 +128,10 @@ function outlined(element: XmlElement, schema: ScriptSchema | undefined): Outlin
       const type = attributeValue(element, 'type');
       return { ...parameter, name: parameter.selection ? `$${parameter.name.replace(/^\$/, '')}` : parameter.name, detail: type ? `param, ${type}` : 'param' };
     }
-    case 'order':
-      return named(element, 'id', SymbolKind.Interface, 'order', 'order');
+    case 'order': {
+      const name = orderName(element, texts);
+      return named(element, 'id', SymbolKind.Interface, 'order', name ? `order, ${name}` : 'order');
+    }
     case 'interrupts':
       return { kind: SymbolKind.Namespace, name: 'interrupts' };
     case 'attention': {
@@ -155,11 +171,18 @@ function outlined(element: XmlElement, schema: ScriptSchema | undefined): Outlin
   return undefined;
 }
 
+/** The game's texts, for the names of orders. */
+export interface OutlineTexts {
+  database: TextDatabase;
+  /** Preferred language id; `44` (English) when absent. */
+  language?: string;
+}
+
 /**
  * The outline of a script or patch document; empty for other documents. Symbols nest as their elements
- * do, in document order.
+ * do, in document order. With the texts, an order's detail has its name as the game shows it.
  */
-export function documentSymbols(analysis: DocumentAnalysis): DocumentSymbol[] {
+export function documentSymbols(analysis: DocumentAnalysis, texts?: OutlineTexts): DocumentSymbol[] {
   const structure = analysis.structure;
   if (!structure || (!analysis.detection.script && !analysis.detection.isDiff)) {
     return [];
@@ -171,7 +194,7 @@ export function documentSymbols(analysis: DocumentAnalysis): DocumentSymbol[] {
   const walk = (elements: readonly XmlElement[]): DocumentSymbol[] => {
     const symbols: DocumentSymbol[] = [];
     for (const element of elements) {
-      const item = outlined(element, schema);
+      const item = outlined(element, schema, texts);
       if (!item) {
         symbols.push(...walk(element.children));
         continue;

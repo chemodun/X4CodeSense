@@ -1,18 +1,22 @@
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { CompletionItem, Location, MarkupContent, TextEdit } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeText,
   completionAt,
   definitionAt,
+  fixAll,
   hoverAt,
   loadGameData,
   parseXml,
   prepareRenameAt,
+  quickFixes,
   referencesAt,
   renameAt,
   ScriptIndex,
+  type AnalysisContext,
   type DocumentAnalysis,
   type GameData,
 } from '../src';
@@ -268,7 +272,58 @@ describe('AI script names and order ids', () => {
     });
   });
 
+  it('warns of a name no script defines, with the closest known one as the fix', () => {
+    const uri = pathToFileURL(file('game/aiscripts/caller.xml')).toString();
+    const problems = (text: string, context: AnalysisContext = { schemas: game.schemas, index }): string[] =>
+      analyzeText(text, context, uri)
+        .diagnostics.filter((diagnostic) => diagnostic.code === 'aiscript-undefined' || diagnostic.code === 'order-undefined')
+        .map(
+          (diagnostic) =>
+            `${diagnostic.range.start.line}:${diagnostic.range.start.character}-${diagnostic.range.end.character} ${diagnostic.severity} ${diagnostic.message}`
+        );
+    // On the name inside the quotes; not on a variable or an expression.
+    const nothing = spot('game/aiscripts/caller.xml', "'nothing'", 1).split(':');
+    expect(problems(callerText)).toEqual([`${nothing[1]}:${nothing[2]}-${Number(nothing[2]) + 'nothing'.length} 2 No AI script 'nothing' is known`]);
+    expect(problems(callerText, { schemas: game.schemas })).toEqual([]);
+    expect(problems(callerText, { schemas: game.schemas, index, validateScriptNames: false })).toEqual([]);
+
+    // A misspelt order: changed to the known one, also by fix all.
+    const misspelt = callerText.replace('<create_order object="this.ship" id="\'Attack\'"/>', '<create_order object="this.ship" id="\'Atack\'"/>');
+    const analysis = analyzeText(misspelt, { schemas: game.schemas, index }, uri);
+    const diagnostic = analysis.diagnostics.find((found) => found.code === 'order-undefined');
+    expect(diagnostic?.message).toBe("No order 'Atack' is known");
+    const fixes = quickFixes(analysis, diagnostic ? [diagnostic] : [], game);
+    expect(fixes.map((fix) => `${fix.title}${fix.isPreferred ? ' (preferred)' : ''}`)).toEqual(["Change to 'Attack' (preferred)"]);
+    // 'nothing' is close to no known name: it stays.
+    const all = fixAll(analysis, game);
+    expect(TextDocument.applyEdits(analysis.document, all?.edit?.changes?.[uri] ?? [])).toBe(callerText);
+
+    // An order the document defines itself counts before the index has it.
+    const own = [
+      '<aiscript name="order.new">',
+      '  <order id="NewOrder"/>',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <create_order object="this.ship" id="\'NewOrder\'"/>',
+      '      <run_script name="\'order.new\'"/>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+    ].join('\n');
+    expect(problems(own)).toEqual([]);
+  });
+
   describe('while typing', () => {
+    it('reports no name before its quote is closed', () => {
+      const typing = callerText.replace('<run_script name="$script"/>', '<run_script name="\'nothin');
+      const messages = analyzeText(typing, { schemas: game.schemas, index }).diagnostics.map((diagnostic) => diagnostic.message);
+      expect(messages).toContain("No AI script 'nothing' is known");
+      expect(messages.filter((message) => message.includes("'nothin'"))).toEqual([]);
+      for (let end = 0; end <= callerText.length; end += 7) {
+        expect(() => analyzeText(callerText.slice(0, end), { schemas: game.schemas, index })).not.toThrow();
+      }
+    });
+
     it('completes a name whose value is not closed, and answers on every cut without throwing', () => {
       const typing = callerText.replace('<run_script name="$script"/>', '<run_script name="\'move');
       const analysis = analyze('game/aiscripts/caller.xml', typing);

@@ -28,6 +28,7 @@ export * from './project/validateMdReferences';
 export * from './project/calls';
 export * from './project/callTargets';
 export * from './project/validateCallParameters';
+export * from './project/validateScriptNames';
 export * from './texts/textDatabase';
 export * from './texts/validateTexts';
 export * from './lua/luaScanner';

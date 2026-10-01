@@ -28,7 +28,7 @@ import {
 } from 'vscode-languageserver/node';
 import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   analyzeComparisonSide,
@@ -40,7 +40,10 @@ import {
   definitionAt,
   DocumentInfoRequestMethod,
   documentSymbols,
+  EditorTabsNotificationMethod,
+  fixAll,
   hoverAt,
+  isInside,
   languageOfTextFile,
   loadGameData,
   loadTexts,
@@ -68,6 +71,7 @@ import {
   type DocumentAnalysis,
   type DocumentInfoParams,
   type DocumentInfoResult,
+  type EditorTabsParams,
   type GameData,
   type PatchComparisonParams,
   type PatchComparisonResult,
@@ -87,6 +91,8 @@ interface X4CodeSenseSettings {
   languageNumber: string;
   limitLanguageOutput: boolean;
   validateXmlStructure: boolean;
+  /** Problems of the open documents only, or also of every other script in the workspace folders. */
+  diagnosticMode: 'openFilesOnly' | 'workspace';
   debug: boolean;
 }
 
@@ -96,6 +102,7 @@ const defaultSettings: X4CodeSenseSettings = {
   languageNumber: '44',
   limitLanguageOutput: false,
   validateXmlStructure: true,
+  diagnosticMode: 'openFilesOnly',
   debug: false,
 };
 
@@ -143,6 +150,24 @@ const sideTimers = new Map<string, NodeJS.Timeout>();
 const sideDelay = 250;
 /** Why a side of a patch comparison is not renamed in: its edits would land in the comparison. */
 const sideRenameRefusal = 'Rename in the patch or in the script, not in a side of their comparison';
+
+/**
+ * The checked scripts that are no open documents, by file key: the uri of their problems, how many, and as
+ * sent (nothing is sent for a first check without any). They are those of the client's editor tabs that
+ * the editor has not loaded yet, and with `diagnosticMode` `workspace` every script of the workspace.
+ */
+const workspaceProblems = new Map<string, { uri: string; count: number; sent: string }>();
+/** The files of the client's editor tabs, by file key. */
+let tabFiles = new Map<string, string>();
+/** The uri the client used for a file while it was open, by file key: its problems go there once it is closed. */
+const clientUris = new Map<string, string>();
+/** Counts checks of the workspace's scripts: a check that is no longer the latest stops. */
+let workspaceGeneration = 0;
+/** The timer of the check after a change, and what it is to check: every closed script, or these files by key. */
+let workspaceTimer: NodeJS.Timeout | undefined;
+let workspacePending: { all: boolean; files: Map<string, string> } = { all: false, files: new Map() };
+/** How long the check of the closed scripts waits after the last change of what scripts see of each other. */
+const workspaceDelay = 1000;
 
 /** Lua documents only get the hover of `ReadText`: they are never analysed as XML. */
 function isLua(document: TextDocument): boolean {
@@ -226,7 +251,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       renameProvider: { prepareProvider: true },
       documentSymbolProvider: { label: 'X4CodeSense' },
       workspaceSymbolProvider: true,
-      codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+      codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix, CodeActionKind.SourceFixAll] },
       semanticTokensProvider: { legend: semanticTokensLegend, full: { delta: true }, range: true },
     },
     serverInfo: {
@@ -340,7 +365,8 @@ function refreshTexts(): void {
 /**
  * Builds the script index again when the folders it comes from changed. It is built in slices, so
  * requests are answered meanwhile; until it is complete, what needs it is left out, then every open
- * document is analysed again. A newer build stops an older one.
+ * document is analysed again, and the closed scripts of the workspace when their problems are asked
+ * for. A newer build stops an older one.
  */
 async function refreshIndex(): Promise<void> {
   if (!game) {
@@ -417,6 +443,8 @@ async function refreshIndex(): Promise<void> {
       sendStatus();
     }
   }
+  // Only a build that completed gets here.
+  void checkWorkspace(true);
 }
 
 /**
@@ -492,7 +520,7 @@ async function refreshSettings(): Promise<void> {
   const received = (await connection.workspace.getConfiguration('x4CodeSense')) as Partial<X4CodeSenseSettings> | null;
   settings = { ...defaultSettings, ...(received ?? {}) };
   log(
-    `settings: unpackedFileLocation='${settings.unpackedFileLocation}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} debug=${settings.debug}`
+    `settings: unpackedFileLocation='${settings.unpackedFileLocation}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
   );
   await refreshGameData();
   refreshTexts();
@@ -511,6 +539,7 @@ connection.onInitialized(async () => {
       reanalyzeAll();
       void refreshIndex();
       sendStatus();
+      void checkWorkspace(true);
     });
   }
   if (hasConfigurationCapability) {
@@ -535,16 +564,44 @@ connection.onDidChangeWatchedFiles((params) => {
     changed = rereadFromDisk(file) || changed;
     debug(`${change.uri}: ${change.type === FileChangeType.Deleted ? 'deleted' : 'changed'} on disk`);
     reanalyzePatchesOf(file);
+    scheduleWorkspaceCheck([file, ...patchFilesOf(file)]);
   }
   if (changed) {
     reanalyzeAll();
+    scheduleWorkspaceCheck();
     sendStatus();
+  }
+});
+
+// The files of the editor tabs: those the editor has not loaded yet get their problems from the disk.
+connection.onNotification(EditorTabsNotificationMethod, (params: EditorTabsParams) => {
+  const files = new Map<string, string>();
+  for (const uri of params.uris) {
+    const file = filePathOf(uri);
+    if (file !== undefined) {
+      files.set(fileKey(file), file);
+      clientUris.set(fileKey(file), uri);
+    }
+  }
+  const added = new Map([...files].filter(([key]) => !tabFiles.has(key)));
+  const removed = [...tabFiles].filter(([key]) => !files.has(key));
+  tabFiles = files;
+  for (const [key, file] of removed) {
+    if (!isChecked(file)) {
+      clearWorkspaceProblems(key);
+    }
+  }
+  debug(`editor tabs: ${files.size} XML file(s), ${added.size} new, ${removed.length} closed`);
+  // While the game files are read or the index is built, the build checks them when it is done.
+  if (!indexing && loadingFolder === undefined) {
+    checkWorkspaceFiles(added);
   }
 });
 
 connection.onDidChangeConfiguration(async () => {
   await refreshSettings();
   reanalyzeAll();
+  void checkWorkspace(true);
 });
 
 function reanalyzeAll(except?: string): void {
@@ -593,6 +650,7 @@ function analyze(document: TextDocument): void {
   if (game?.index && analysis.structure && indexOpenDocument(document, game.index, analysis.structure)) {
     debug(`${document.uri}: names seen by other scripts changed`);
     reanalyzeAll(document.uri);
+    scheduleWorkspaceCheck();
   }
   const detection = analysis.detection;
   const description = detection.script
@@ -605,6 +663,7 @@ function analyze(document: TextDocument): void {
   const file = filePathOf(document.uri);
   if (file) {
     reanalyzePatchesOf(file, document.uri);
+    scheduleWorkspaceCheck(patchFilesOf(file, analysis.patch?.target.file));
   }
 }
 
@@ -688,12 +747,222 @@ function reanalyzePatchesOf(file: string, except?: string): void {
   }
 }
 
+/** A file's key for the bookkeeping: its full path without case, as Windows compares names. */
+function fileKey(file: string): string {
+  return path.resolve(file).toLowerCase();
+}
+
+/** The keys of the files open in the editor. */
+function openFiles(): Set<string> {
+  return new Set(
+    documents.all().flatMap((document) => {
+      const file = filePathOf(document.uri);
+      return file === undefined ? [] : [fileKey(file)];
+    })
+  );
+}
+
+/** The patches of a file, and of the file a patch changes, without the file itself: what they find depends on its text. */
+function patchFilesOf(file: string, target?: string): string[] {
+  const index = game?.index;
+  if (!index) {
+    return [];
+  }
+  const own = fileKey(file);
+  return [file, ...(target ? [target] : [])]
+    .flatMap((patched) => index.patchesOf(patched).map((patch) => patch.file))
+    .filter((patch) => fileKey(patch) !== own);
+}
+
+/** True when the workspace's problems are asked for and the file is an indexed script or patch in a workspace folder. */
+function isCheckedInWorkspace(file: string): boolean {
+  return settings.diagnosticMode === 'workspace' && game?.index?.hasFile(file) === true && workspaceFolders.some((folder) => isInside(file, folder));
+}
+
+/** True when the file's problems are shown while it is no open document: it is in an editor tab, or checked in the workspace. */
+function isChecked(file: string): boolean {
+  return tabFiles.has(fileKey(file)) || isCheckedInWorkspace(file);
+}
+
+/**
+ * Analyses a closed script of the workspace as it is on disk and publishes its problems when they
+ * changed, under the uri the client knows the file by. `shown` when the client shows other problems for
+ * it: those of the document just closed.
+ */
+function checkClosedFile(key: string, file: string, shown = false): void {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    clearWorkspaceProblems(key);
+    return;
+  }
+  const uri = clientUris.get(key) ?? pathToFileURL(file).toString();
+  const diagnostics = analyzeDocument(TextDocument.create(uri, 'xml', 0, text), analysisContext()).diagnostics;
+  const sent = JSON.stringify(diagnostics);
+  const published = workspaceProblems.get(key);
+  if (!shown && (published ? published.uri === uri && published.sent === sent : diagnostics.length === 0)) {
+    workspaceProblems.set(key, { uri, count: diagnostics.length, sent });
+    return;
+  }
+  if (published && published.uri !== uri && published.count > 0) {
+    void connection.sendDiagnostics({ uri: published.uri, diagnostics: [] });
+  }
+  workspaceProblems.set(key, { uri, count: diagnostics.length, sent });
+  void connection.sendDiagnostics({ uri, diagnostics });
+}
+
+/** Drops the problems published for a closed script. */
+function clearWorkspaceProblems(key: string): void {
+  const published = workspaceProblems.get(key);
+  workspaceProblems.delete(key);
+  if (published && published.count > 0) {
+    void connection.sendDiagnostics({ uri: published.uri, diagnostics: [] });
+  }
+}
+
+/**
+ * Checks the scripts that are no open documents again once changes pause: every one when no files are
+ * given, else those. Only when there are such scripts: editor tabs, or the workspace's when asked for.
+ */
+function scheduleWorkspaceCheck(files?: readonly string[]): void {
+  if ((tabFiles.size === 0 && (settings.diagnosticMode !== 'workspace' || !game?.index)) || files?.length === 0) {
+    return;
+  }
+  if (files) {
+    for (const file of files) {
+      workspacePending.files.set(fileKey(file), file);
+    }
+  } else {
+    workspacePending.all = true;
+  }
+  clearTimeout(workspaceTimer);
+  workspaceTimer = setTimeout(() => {
+    workspaceTimer = undefined;
+    const pending = workspacePending;
+    workspacePending = { all: false, files: new Map() };
+    if (pending.all) {
+      void checkWorkspace(false);
+    } else {
+      checkWorkspaceFiles(pending.files);
+    }
+  }, workspaceDelay);
+}
+
+/** Checks some scripts that are no open documents again; for files that are open or no longer checked, nothing is published or it is cleared. */
+function checkWorkspaceFiles(files: ReadonlyMap<string, string>): void {
+  const open = openFiles();
+  for (const [key, file] of files) {
+    if (open.has(key)) {
+      continue;
+    }
+    if (isChecked(file)) {
+      checkClosedFile(key, file);
+    } else {
+      clearWorkspaceProblems(key);
+    }
+  }
+}
+
+/**
+ * Checks every script that is no open document, as it is on disk, and publishes the problems that
+ * changed: the files of the editor tabs the editor has not loaded yet, and when the workspace's problems
+ * are asked for, the indexed scripts and patches in a workspace folder. Clears those of files no longer
+ * checked. In slices, so requests are answered meanwhile; a newer check stops this one, and while the
+ * game files are read or the index is built, the build checks them when it is done. Announced with
+ * progress and in the log after the index was built or the settings changed, silent after an edit.
+ */
+async function checkWorkspace(announce: boolean): Promise<void> {
+  const generation = ++workspaceGeneration;
+  clearTimeout(workspaceTimer);
+  workspaceTimer = undefined;
+  workspacePending = { all: false, files: new Map() };
+  if (indexing || loadingFolder !== undefined) {
+    return;
+  }
+  const index = settings.diagnosticMode === 'workspace' ? game?.index : undefined;
+  const wanted = new Map(tabFiles);
+  for (const entry of index?.entries() ?? []) {
+    if (workspaceFolders.some((folder) => isInside(entry.file, folder))) {
+      wanted.set(fileKey(entry.file), entry.file);
+    }
+  }
+  for (const key of [...workspaceProblems.keys()]) {
+    if (!wanted.has(key)) {
+      clearWorkspaceProblems(key);
+    }
+  }
+  let open = openFiles();
+  const files = [...wanted].filter(([key]) => !open.has(key)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  if (files.length === 0) {
+    return;
+  }
+  let finished = false;
+  let progress: WorkDoneProgressServerReporter | undefined;
+  if (announce) {
+    void connection.window.createWorkDoneProgress().then((reporter) => {
+      if (finished) {
+        reporter.done();
+      } else {
+        progress = reporter;
+        reporter.begin('X4CodeSense', 0, 'checking scripts on disk');
+      }
+    });
+  }
+  try {
+    const started = performance.now();
+    let slice = started;
+    let reported = started;
+    for (const [done, [key, file]] of files.entries()) {
+      if (generation !== workspaceGeneration) {
+        return;
+      }
+      if (!open.has(key)) {
+        checkClosedFile(key, file);
+      }
+      if (performance.now() - slice > 25) {
+        if (slice - reported > 250) {
+          progress?.report(Math.floor((100 * done) / files.length), `checking scripts on disk: ${done} of ${files.length}`);
+          reported = slice;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        slice = performance.now();
+        open = openFiles();
+      }
+    }
+    const counts = files.map(([key]) => workspaceProblems.get(key)?.count ?? 0);
+    const problems = counts.reduce((sum, count) => sum + count, 0);
+    (announce ? log : debug)(
+      `checked ${files.length} script(s) on disk in ${(performance.now() - started).toFixed(0)} ms: ${problems} problem(s) in ${counts.filter((count) => count > 0).length} of them`
+    );
+  } finally {
+    finished = true;
+    progress?.done();
+  }
+}
+
+// An open document's problems are its analysis's from now on: those of the file on disk are dropped.
+documents.onDidOpen((event) => {
+  const file = filePathOf(event.document.uri);
+  if (!file) {
+    return;
+  }
+  const key = fileKey(file);
+  clientUris.set(key, event.document.uri);
+  const published = workspaceProblems.get(key);
+  workspaceProblems.delete(key);
+  if (published && published.uri !== event.document.uri && published.count > 0) {
+    void connection.sendDiagnostics({ uri: published.uri, diagnostics: [] });
+  }
+});
+
 documents.onDidChangeContent((event) => {
   const textFile = textFileOf(event.document.uri);
   if (textFile && game) {
     // A text being written: scripts that refer to it are checked against the editor's content.
     game.texts.setFile(textFile, event.document.getText());
     reanalyzeAll();
+    scheduleWorkspaceCheck();
     return;
   }
   analyze(event.document);
@@ -709,13 +978,21 @@ documents.onDidClose((event) => {
   if (isLua(event.document)) {
     return;
   }
-  void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
   // Back to the file on disk, which may not have the unsaved changes.
   const file = filePathOf(event.document.uri);
-  if (file && rereadFromDisk(file)) {
+  const changed = file !== undefined && rereadFromDisk(file);
+  // A script still in a tab, or of the workspace when its problems are asked for, keeps its problems as it is on disk.
+  if (file && isChecked(file)) {
+    checkClosedFile(fileKey(file), file, true);
+  } else {
+    void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
+  }
+  if (changed) {
     reanalyzeAll();
+    scheduleWorkspaceCheck();
   } else if (file) {
     reanalyzePatchesOf(file);
+    scheduleWorkspaceCheck(patchFilesOf(file));
   }
 });
 
@@ -811,7 +1088,7 @@ connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
 // Other XML gets no outline from here, so other XML tooling gives it one.
 connection.onDocumentSymbol((params): DocumentSymbol[] | null => {
   const analysis = currentAnalysis(params.textDocument.uri);
-  return analysis?.structure ? documentSymbols(analysis) : null;
+  return analysis?.structure ? documentSymbols(analysis, game && { database: game.texts, language: textDisplay().language }) : null;
 });
 
 // The scripts, cues and interrupt library items of the index; the workspace's own first among equal matches.
@@ -826,18 +1103,34 @@ connection.onWorkspaceSymbol((params): WorkspaceSymbol[] => {
   return symbols;
 });
 
-// Quick fixes for the diagnostics the editor sends along, as far as the current analysis still has them.
-// The side of a patch comparison before the patch is read only.
+// Quick fixes for the diagnostics the editor sends along, as far as the current analysis still has them,
+// with one that applies every preferred fix of the document when it has two or more; and that one as
+// `source.fixAll` when asked for (the Source Action menu, `editor.codeActionsOnSave`). The side of a
+// patch comparison before the patch is read only.
 connection.onCodeAction((params): CodeAction[] => {
   const uri = params.textDocument.uri;
   const analysis = comparisonSideOf(uri)?.side === 'before' ? undefined : currentAnalysis(uri);
   const only = params.context.only;
-  if (!analysis || (only && !only.some((kind) => CodeActionKind.QuickFix.startsWith(kind)))) {
+  const asked = (kind: string): boolean => !only || only.some((wanted) => kind === wanted || kind.startsWith(`${wanted}.`));
+  if (!analysis) {
     return [];
   }
   const started = performance.now();
-  const actions = quickFixes(analysis, params.context.diagnostics, game);
-  debug(`${uri}: ${actions.length} quick fix(es) in ${(performance.now() - started).toFixed(1)} ms`);
+  const actions: CodeAction[] = [];
+  if (asked(CodeActionKind.QuickFix)) {
+    actions.push(...quickFixes(analysis, params.context.diagnostics, game));
+    const all = actions.length > 0 ? fixAllOf(analysis) : undefined;
+    if (all && (all.diagnostics?.length ?? 0) > 1) {
+      actions.push({ ...all, kind: CodeActionKind.QuickFix });
+    }
+  }
+  if (only && asked(CodeActionKind.SourceFixAll)) {
+    const all = fixAllOf(analysis);
+    if (all) {
+      actions.push(all);
+    }
+  }
+  debug(`${uri}: ${actions.length} code action(s) in ${(performance.now() - started).toFixed(1)} ms`);
   const analysed = analysis.document.uri;
   if (analysed === uri) {
     return actions;
@@ -852,6 +1145,18 @@ connection.onCodeAction((params): CodeAction[] => {
     return { ...action, edit: { ...action.edit, changes: { ...others, [uri]: own } } };
   });
 });
+
+/** Fix all of each analysis, worked out once: the editor asks for code actions whenever the caret moves onto a problem. */
+const fixAllByAnalysis = new WeakMap<DocumentAnalysis, CodeAction | null>();
+
+function fixAllOf(analysis: DocumentAnalysis): CodeAction | undefined {
+  let all = fixAllByAnalysis.get(analysis);
+  if (all === undefined) {
+    all = fixAll(analysis, game) ?? null;
+    fixAllByAnalysis.set(analysis, all);
+  }
+  return all ?? undefined;
+}
 
 /** Fills a builder with the semantic tokens of an open document; false for a document other XML tooling colours. */
 function buildTokens(uri: string, builder: SemanticTokensBuilder, range?: Range): boolean {

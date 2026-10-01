@@ -1,25 +1,29 @@
 /**
  * Corpus gate for AI script names and order ids, over the scripts of the extracted game with its DLCs
  * (X4_EXTRACTED) and of a folder of extensions (X4_MODS), never committed. Every name a call writes
- * literally is indexed at its place and is defined; every name a script defines or names hovers and leads
- * to its definitions; find references from the definition of the most named order and AI script lists
- * every place, within the ceiling.
+ * literally is indexed at its place and is defined, so the check of unknown names finds nothing; every
+ * name a script defines or names hovers and leads to its definitions; a typo planted in a name is
+ * reported and fixed back; find references from the definition of the most named order and AI script
+ * lists every place, within the ceiling.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import type { Location, MarkupContent } from 'vscode-languageserver-types';
+import type { Location, MarkupContent, TextEdit } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeText,
   definitionAt,
   escapeMarkdown,
+  fixAll,
   hoverAt,
   loadGameData,
+  quickFixes,
   referencesAt,
   scriptNameDefinitions,
   scriptNamesIn,
+  validateScriptNames,
   type ScriptNameKind,
 } from '../src';
 import { bestOf, fileCeilingMs } from './timing';
@@ -68,6 +72,9 @@ describe.skipIf(!extracted)('AI script names and order ids on the corpus', { tim
       }
       // The structure alone: what the features read.
       const analysis = analyzeText(lines.join('\n'), {}, pathToFileURL(entry.file).toString());
+      for (const diagnostic of validateScriptNames(analysis, index, 'X4CodeSense')) {
+        notDefined.push(`${where}:${diagnostic.range.start.line + 1}: ${diagnostic.message}`);
+      }
       for (const name of analysis.structure ? scriptNamesIn(analysis.structure, entry.schema) : []) {
         counts.written++;
         const hover = (hoverAt(analysis, name.start + 1, game)?.contents as MarkupContent | undefined)?.value ?? '';
@@ -88,6 +95,70 @@ describe.skipIf(!extracted)('AI script names and order ids on the corpus', { tim
     expect(counts.aiscript + counts.order).toBeGreaterThan(mods ? 2250 : 2150);
     expect(problems.slice(0, 20)).toEqual([]);
     expect(notDefined).toEqual([]);
+  });
+
+  it('reports a typo planted in the names calls write, and its preferred fix and fix all write the name back', () => {
+    const index = game.index;
+    if (!index) {
+      throw new Error('no index');
+    }
+    // What the check and its fix need; the other checks are left out, for time.
+    const context = {
+      schemas: game.schemas,
+      index,
+      validateStructure: false,
+      validateExpressions: false,
+      validateVariables: false,
+      validateNames: false,
+      validateRemoteCues: false,
+      validateCallParameters: false,
+    };
+    const counts = { planted: 0, fixed: 0, fixedByAll: 0 };
+    const problems: string[] = [];
+    let seen = 0;
+    for (const entry of index.entries()) {
+      const text = entry.kind === 'script' ? index.currentText(entry.file) : undefined;
+      const structure = text === undefined ? undefined : analyzeText(text).structure;
+      if (text === undefined || !structure || entry.kind !== 'script') {
+        continue;
+      }
+      for (const name of scriptNamesIn(structure, entry.schema)) {
+        if (name.defines || seen++ % 14 !== 0 || name.name.length < 3) {
+          continue;
+        }
+        // Two neighbouring letters swapped in the middle of every 14th name a call writes.
+        const at = Math.floor(name.name.length / 2);
+        const swapped = name.name.slice(0, at - 1) + name.name[at] + name.name[at - 1] + name.name.slice(at + 1);
+        if (swapped === name.name) {
+          continue;
+        }
+        counts.planted++;
+        const where = `${path.basename(entry.file)}: ${swapped}`;
+        const analysis = analyzeText(text.slice(0, name.start) + swapped + text.slice(name.end), context, pathToFileURL(entry.file).toString());
+        const document = analysis.document;
+        const diagnostic = analysis.diagnostics.find((found) => document.offsetAt(found.range.start) === name.start);
+        if (diagnostic?.code !== (name.kind === 'script' ? 'aiscript-undefined' : 'order-undefined')) {
+          problems.push(`${where} reported as ${diagnostic?.code ?? 'nothing'}`);
+          continue;
+        }
+        const written = (edits: TextEdit[] | undefined): string => TextDocument.applyEdits(document, edits ?? []);
+        const preferred = quickFixes(analysis, [diagnostic], game).find((action) => action.isPreferred);
+        if (written(preferred?.edit?.changes?.[document.uri]) === text) {
+          counts.fixed++;
+        } else {
+          problems.push(`${where} fixed by ${preferred?.title ?? 'nothing'}`);
+        }
+        if (written(fixAll(analysis, game)?.edit?.changes?.[document.uri]) === text) {
+          counts.fixedByAll++;
+        }
+      }
+    }
+    console.log(`script names: ${counts.planted} typos planted, ${counts.fixed} written back by the preferred fix, ${counts.fixedByAll} by fix all`);
+    // 160 with the mods folder, 156 without.
+    expect(counts.planted).toBeGreaterThan(150);
+    expect(problems.slice(0, 20)).toEqual([]);
+    // Without the other checks, the planted typo is all fix all has to fix.
+    expect(counts.fixedByAll).toBe(counts.planted);
   });
 
   it('finds every place the most named order and AI script are written, from their definitions, within the ceiling', () => {

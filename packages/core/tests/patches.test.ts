@@ -474,6 +474,15 @@ describe('editor features in patches', () => {
     expect(definitionAt(analysis, offset, withScripts).map(place)).toEqual(['game/aiscripts/order.go.xml:1:13']);
     const hover = hoverAt(analysis, offset, withScripts)?.contents;
     expect(hover && typeof hover === 'object' && 'value' in hover ? hover.value : '').toMatch(/^\*\*Go\*\* \*\(order of `order\.go`\)\*/);
+    expect(analysis.diagnostics.filter((diagnostic) => diagnostic.code === 'order-undefined')).toEqual([]);
+
+    // An order nothing defines, in what the patch brings in: reported in the patch, at the name.
+    const unknown = patchText.replace("'Go'", "'Gone'");
+    scripts.setStructure(patch, unknown, parseXml(unknown), 'late_mod', true);
+    const reported = analyzeFile(patch, unknown, { ...context, index: scripts }).diagnostics.filter((diagnostic) => diagnostic.code === 'order-undefined');
+    expect(reported.map((diagnostic) => `${diagnostic.range.start.line}:${diagnostic.range.start.character} ${diagnostic.message}`)).toEqual([
+      "2:42 No order 'Gone' is known",
+    ]);
   });
 
   it('renames what the content names where it lands, in the files it is written in', () => {

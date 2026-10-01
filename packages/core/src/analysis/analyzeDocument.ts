@@ -17,6 +17,7 @@ import { validateNames } from '../names/validateNames';
 import type { ScriptIndex } from '../project/scriptIndex';
 import { validateCallParameters } from '../project/validateCallParameters';
 import { validateMdReferences } from '../project/validateMdReferences';
+import { validateScriptNames } from '../project/validateScriptNames';
 import type { TextDatabase } from '../texts/textDatabase';
 import { validateTexts } from '../texts/validateTexts';
 import type { PatchAnalysis } from '../patches/patchAnalysis';
@@ -73,6 +74,12 @@ export interface AnalysisContext {
    * needs `index`.
    */
   validateCallParameters?: boolean;
+  /**
+   * Report AI script names and order ids a call writes literally (`run_script name="'move.generic'"`,
+   * `create_order id="'Attack'"`) that no indexed script defines. Defaults to true; needs `index`, and
+   * is only as complete as the configured extension folders.
+   */
+  validateScriptNames?: boolean;
   /**
    * Check only the elements for which this holds: their attributes, expressions, text and `md.`
    * references, and their children. The declarations, variables and names of the whole document are
@@ -210,6 +217,9 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     }
     if (context.validateCallParameters ?? true) {
       analysis.diagnostics.push(...validateCallParameters(analysis, context.index, diagnosticSource, checkElement));
+    }
+    if (context.index && (context.validateScriptNames ?? true)) {
+      analysis.diagnostics.push(...validateScriptNames(analysis, context.index, diagnosticSource, checkElement));
     }
   }
   return analysis;

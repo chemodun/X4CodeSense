@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   CodeActionRequest,
   CompletionRequest,
@@ -19,11 +19,13 @@ import {
   DefinitionRequest,
   DidChangeConfigurationNotification,
   DidChangeTextDocumentNotification,
+  DidChangeWatchedFilesNotification,
   DidChangeWorkspaceFoldersNotification,
   DidCloseTextDocumentNotification,
   DidOpenTextDocumentNotification,
   DocumentSymbolRequest,
   ExitNotification,
+  FileChangeType,
   HoverRequest,
   InitializedNotification,
   InitializeRequest,
@@ -52,6 +54,7 @@ import {
 } from 'vscode-languageserver/node';
 import {
   DocumentInfoRequestMethod,
+  EditorTabsNotificationMethod,
   loadGameData,
   patchAfterScheme,
   patchBeforeScheme,
@@ -192,7 +195,7 @@ beforeAll(async () => {
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
   expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
   expect(result.capabilities.workspaceSymbolProvider).toBe(true);
-  expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix'] });
+  expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix', 'source.fixAll'] });
   expect(result.capabilities.semanticTokensProvider).toEqual({ legend: semanticTokensLegend, full: { delta: true }, range: true });
   await connection.sendNotification(InitializedNotification.type, {});
 }, 30_000);
@@ -536,6 +539,45 @@ describe('quick fixes', () => {
     expect(actions.map((action) => `${action.kind} ${action.title}`)).toEqual(["quickfix Change to 'set_value'"]);
     expect(actions[0].edit?.changes?.[uri]).toEqual([{ range: diagnostic!.range, newText: 'set_value' }]);
     expect(await connection.sendRequest(CodeActionRequest.type, { ...request, context: { ...request.context, only: ['refactor'] } })).toEqual([]);
+    const closed = nextDiagnostics(uri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    await closed;
+  });
+
+  it('applies every preferred fix at once: in the light bulb when there are two or more, and as source.fixAll', async () => {
+    const uri = 'file:///mod/md/FixAll.xml';
+    const lines = [
+      '<mdscript name="F">',
+      '  <cues>',
+      '    <cue name="A">',
+      '      <actions>',
+      '        <set_valeu name="$x" exact="1"/>',
+      '        <debug_text text="1" filter=general/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    const published = await open(uri, lines.join('\n'));
+    const diagnostic = published.diagnostics.find((candidate) => candidate.code === 'unknown-element')!;
+    const request = { textDocument: { uri }, range: diagnostic.range, context: { diagnostics: [diagnostic] } };
+    const actions = (await connection.sendRequest(CodeActionRequest.type, request)) as CodeAction[];
+    expect(actions.map((action) => `${action.kind} ${action.title}${action.isPreferred ? ' *' : ''}`)).toEqual([
+      "quickfix Change to 'set_value' *",
+      'quickfix Apply all preferred fixes in this file (2)',
+    ]);
+    // On save or from the Source Action menu, without a diagnostic at the caret.
+    const source = (await connection.sendRequest(CodeActionRequest.type, {
+      textDocument: { uri },
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      context: { diagnostics: [], only: ['source.fixAll'] },
+    })) as CodeAction[];
+    expect(source.map((action) => `${action.kind} ${action.title}`)).toEqual(['source.fixAll Apply all preferred fixes in this file (2)']);
+    expect((source[0].edit?.changes?.[uri] ?? []).map((edit) => `${edit.range.start.line}: ${edit.newText}`)).toEqual(['4: set_value', '5: "general"']);
+    const closed = nextDiagnostics(uri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    await closed;
   });
 });
 
@@ -986,6 +1028,163 @@ describe('script index', () => {
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: callerUri } });
     await closed;
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  }, 30_000);
+});
+
+describe('problems of the workspace', () => {
+  it('checks the files of the editor tabs that the editor has not loaded, from the disk, until their tab closes', async () => {
+    const file = path.join(workDir, 'tabmod', 'md', 'tabbed.xml');
+    const lines = ['<mdscript name="Tabbed">', '  <cues>', '    <cue name="A>', '    </cue>', '  </cues>', '</mdscript>'];
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${lines.join('\n')}\n`);
+    const uri = pathToFileURL(file).toString();
+    const tabs = (uris: string[]): Promise<void> => connection.sendNotification(EditorTabsNotificationMethod, { uris });
+
+    // A tab restored at start, not shown: its problems come from the disk, without a version.
+    const restored = nextDiagnostics(uri);
+    await tabs([uri, 'file:///nowhere/md/missing.xml']);
+    expect(summarize(await restored)).toEqual(['3:15 unclosed-attribute']);
+    expect((await restored).version).toBeUndefined();
+
+    // Shown: the editor's text counts; closed with its tab still there: the disk again.
+    const fixed = diagnosticsCount(uri, 0);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri, languageId: 'xml', version: 1, text: `${lines.join('\n')}\n`.replace('"A>', '"A">') },
+    });
+    expect((await fixed).version).toBe(1);
+    const fromDisk = diagnosticsCount(uri, 1);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    expect((await fromDisk).version).toBeUndefined();
+
+    // Its tab closed.
+    const cleared = diagnosticsCount(uri, 0);
+    await tabs([]);
+    await cleared;
+  });
+
+  it('checks the closed scripts of the workspace when asked to, follows what they refer to, and clears them when no longer asked', async () => {
+    // A workspace of three extensions: one with scripts, and one that patches another's script.
+    const root = path.join(workDir, 'wsproblems');
+    const write = (relative: string, lines: string[]): { file: string; uri: string; text: string } => {
+      const file = path.join(root, relative);
+      const text = `${lines.join('\n')}\n`;
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      return { file, uri: pathToFileURL(file).toString(), text };
+    };
+    const order = write('wsmod/aiscripts/order.patrol.xml', ['<aiscript name="order.patrol">', '  <order id="Patrol"/>', '</aiscript>']);
+    const callerLines = (id: string): string[] => [
+      '<aiscript name="patrol.caller">',
+      '  <attention min="unknown">',
+      '    <actions>',
+      `      <create_order object="this.ship" id="'${id}'"/>`,
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+    ];
+    const caller = write('wsmod/aiscripts/patrol.caller.xml', callerLines('Patrl'));
+    const broken = write('wsmod/md/broken.xml', ['<mdscript name="Broken">', '  <cues>', '    <cue name="A>', '    </cue>', '  </cues>', '</mdscript>']);
+    const clean = write('wsmod/aiscripts/clean.xml', [
+      '<aiscript name="clean">',
+      '  <attention min="unknown">',
+      '    <actions/>',
+      '  </attention>',
+      '</aiscript>',
+    ]);
+    const target = write('wsbase/md/wsapi.xml', [
+      '<mdscript name="WsApi">',
+      '  <cues>',
+      '    <cue name="Register">',
+      '      <actions/>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ]);
+    write('wspatcher/content.xml', ['<content id="wspatcher" name="Patcher" version="100"/>']);
+    const patch = write('wspatcher/extensions/wsbase/md/wsapi.xml', [
+      '<diff>',
+      `  <add sel="//cue[@name='Register']/actions">`,
+      '    <debug_text text="1"/>',
+      '  </add>',
+      '</diff>',
+    ]);
+    const workspace = { uri: pathToFileURL(root).toString(), name: 'wsproblems' };
+    // The tests after this one see neither the folder nor the mode, also when it fails.
+    onTestFinished(async () => {
+      if (clientSettings.diagnosticMode !== 'openFilesOnly') {
+        clientSettings.diagnosticMode = 'openFilesOnly';
+        await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+      }
+      await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+    });
+
+    // Checked once the index with the workspace folder is built; a file without problems gets nothing.
+    // The connection has one handler per method: one takes them all.
+    const published = new Map<string, PublishDiagnosticsParams[]>();
+    const collecting = connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
+      published.set(params.uri, [...(published.get(params.uri) ?? []), params]);
+    });
+    clientSettings.diagnosticMode = 'workspace';
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    await vi.waitFor(() => expect(published.has(broken.uri) && published.has(caller.uri)).toBe(true), { timeout: 10_000 });
+    collecting.dispose();
+    // The fixture schemas do not know `create_order`.
+    const unknownOrder = ['4:8 unknown-element', '4:45 order-undefined'];
+    expect(published.get(caller.uri)?.map(summarize)).toEqual([unknownOrder]);
+    expect(published.get(broken.uri)?.map(summarize)).toEqual([['3:15 unclosed-attribute']]);
+    expect(published.get(caller.uri)?.[0].version).toBeUndefined();
+    expect(published.has(clean.uri)).toBe(false);
+    expect(published.has(patch.uri)).toBe(false);
+
+    // Open, its problems follow the editor; closed without saving, they are the file's on disk again.
+    expect(summarize(await open(caller.uri, caller.text))).toEqual(unknownOrder);
+    const edited = diagnosticsCount(caller.uri, 1);
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: caller.uri, version: 2 },
+      contentChanges: [{ text: `${callerLines('Patrol').join('\n')}\n` }],
+    });
+    await edited;
+    const reverted = diagnosticsCount(caller.uri, 2);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: caller.uri } });
+    expect((await reverted).version).toBeUndefined();
+
+    // The order renamed in the editor: the closed caller is checked again once typing pauses.
+    await open(order.uri, order.text);
+    const renamed = diagnosticsCount(caller.uri, 1);
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: order.uri, version: 2 },
+      contentChanges: [{ text: order.text.replace('"Patrol"', '"Patrl"') }],
+    });
+    await renamed;
+    const back = diagnosticsCount(caller.uri, 2);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: order.uri } });
+    await back;
+
+    // What a patch selects removed from its target in the editor, no name changed: the closed patch is checked again.
+    await open(target.uri, target.text);
+    const unmatched = diagnosticsCount(patch.uri, 1);
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: target.uri, version: 2 },
+      contentChanges: [{ text: target.text.replace('      <actions/>\n', '') }],
+    });
+    // On the step of the path that selects nothing.
+    expect(summarize(await unmatched)).toEqual(['2:36 patch-no-match']);
+    const matched = diagnosticsCount(patch.uri, 0);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: target.uri } });
+    await matched;
+
+    // Changed on disk.
+    const fixedOnDisk = diagnosticsCount(caller.uri, 1);
+    writeFileSync(caller.file, `${callerLines('Patrol').join('\n')}\n`);
+    await connection.sendNotification(DidChangeWatchedFilesNotification.type, { changes: [{ uri: caller.uri, type: FileChangeType.Changed }] });
+    await fixedOnDisk;
+
+    // Only the open files again: the closed ones' problems are cleared.
+    clientSettings.diagnosticMode = 'openFilesOnly';
+    const cleared = diagnosticsCount(broken.uri, 0);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await cleared;
   }, 30_000);
 });
 
