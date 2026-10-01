@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.4.0...x4-script-core@v0.4.1) (2026-10-01)
+
+
+### Performance Improvements
+
+* resolve each chain once, and allocate less per expression ([cc78372](https://github.com/chemodun/X4CodeSense/commit/cc783720f5726147ed47c8c1fc43f86ffd970fb7))
+
 ## [0.4.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.3.0...x4-script-core@v0.4.0) (2026-10-01)
 
 
