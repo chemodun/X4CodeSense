@@ -67,6 +67,7 @@ The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted val
 [*] A path names each element from the root: cues and libraries by `name`, other elements by `name`, `value`, [b]ref[/b] or [b]id[/b] when they have one, more attributes or a position only where siblings would share it.
 [*] Nothing is written unless the patch, applied again, gives exactly the side's elements and attributes and each operation selects what it did before. Otherwise the side stays unsaved and the reason is shown, for example a side that is not well-formed, or a change outside the root element.
 [/list]
+[*] Both sides of that diff are the script they show: hover, go to definition, references, the outline and semantic highlighting work in them as in the script itself, and in the side with the patch completion and quick fixes too. That side shows the problems the file before the patch does not have: those in what the patch brings in, those of your edits in the side, and what they break elsewhere in the script, such as a read of a variable whose [b]set_value[/b] the patch removes. The file's own problems are left to the file. Rename is refused in both sides; rename in the patch or in the script.
 [/list]
 [h2]Status bar[/h2]
 
@@ -183,6 +184,17 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [h2][b]🛠 Changelog[/b][/h2]
 
+[h2][0.4.0] - 2026-10-01[/h2]
+[list]
+[*] Added
+[list]
+[*] Both sides of the diff of a patch have the script's hover, go to definition, references, outline and semantic highlighting, and the side with the patch its completion and quick fixes. That side shows the problems the file before the patch does not have, also what the patch breaks elsewhere in the script.
+[/list]
+[*] Fixed
+[list]
+[*] A folder added to the workspace while the game files are still read is no longer left out of the index until a restart.
+[/list]
+[/list]
 [h2][0.3.0] - 2026-10-01[/h2]
 [list]
 [*] Added
