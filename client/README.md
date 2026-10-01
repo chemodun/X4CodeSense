@@ -42,7 +42,7 @@ In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the
 
 ### Navigation and rename
 
-- Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, order, interrupt library item or text where it is defined.
+- Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, order, interrupt library item or text where it is defined. With the installed game as the game files, its files open read-only, straight from its catalogs, and are the game's scripts there too: hover, go to definition, references and the outline work in them.
 - Find all references and rename, across scripts: variables, labels, cues and libraries (also as `md.Script.Cue` in other scripts and in the paths of patches), Mission Director script names, and interrupt library items. A rename edits the files of your workspace only; when the game or an extension outside the workspace uses the same name, it is refused, with the reason.
 - Find all references for AI script names and order ids: where they are defined and every call that names them as is (`'move.generic'`, `'Attack'`). They are not renamed: the game and any extension may name them.
 - The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order with its name as the game shows it, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path.
@@ -83,7 +83,7 @@ These open the other file when what is created belongs there; the game's own scr
 - Reported: a `sel` that selects nothing or several nodes, at the step where it stops matching; a patch with nothing to patch; an operation the game refuses; `sel` or `if` that is no valid XPath. The operations and their attributes are checked against the game's `diff.xsd`.
 - What an `add` or `replace` brings in is checked where it lands, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there.
 - In `sel` and `if`, hover tells what each step selects and where it is written, go to definition goes there, and completion offers the element and attribute names and the values, such as cue names, of the file as the operation finds it.
-- **Show What This Patch Changes**, also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. What an operation brings in is shown at the column of the element it replaces or is added next to, or one step deeper than the element it is added into. **Open the File This Patch Changes** opens that file.
+- **Show What This Patch Changes**, also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. What an operation brings in is shown at the column of the element it replaces or is added next to, or one step deeper than the element it is added into. **Open the File This Patch Changes** opens that file. Both work in a DLC's patch opened from the installed game as well, read only.
 - **Edit This Patch Above What It Changes**, also a button in the title bar, puts the patch in the upper part of the window and that diff full width below it. While the window stays so, a file opened in the diff's group, from the Explorer for example, moves up to the patch's group, and the diff below follows the patch in front above. A patch's diffs close with it, unless their side has changes not yet written. The side with the patch can be edited, and the caret follows between the patch and that side:
   - Typing in what the patch brings in, its elements and the values it sets, goes into the patch as you type, undo included.
   - Other changes, such as a value of the game's own script, an element added next to the game's or one removed, are written into the patch when you save that side (or press **Write Changes into the Patch** in its title bar). They become new operations with a full path, in the order of the places they change: `replace` of a value, `add` with `type` for a new attribute, `add` next to a neighbour for new elements, `remove`, or `replace` of a whole element whose new value spans lines. Elements next to what the patch brings in join its `add`. The patch shows the changes unsaved, and Undo there takes them back.
@@ -93,7 +93,7 @@ These open the other file when what is created belongs there; the game's own scr
 
 ### Status bar
 
-The status bar shows the type and name of the script, or the file a patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and which scripts show problems, and a click opens a menu of the commands.
+The status bar shows the type and name of the script, or the file a patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and where from, the extracted files or the installed game and its version, and which scripts show problems; a click opens a menu of the commands.
 
 ### Command line and CI
 
@@ -101,16 +101,18 @@ The same checks run outside VS Code with [x4-script-check](https://www.npmjs.com
 
 ```powershell
 npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
+npx x4-script-check --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" path\to\your\extension
 npx x4-script-check --fix --unpacked C:\X4\extracted path\to\your\extension
 ```
 
 ## 📚 Where its knowledge comes from
 
-X4CodeSense has no list of its own of what the game holds: no elements, properties, wares, factions, ships or macros. It reads them from the game files you extracted and from the extensions, so it follows the game version and the DLCs you have:
+X4CodeSense has no list of its own of what the game holds: no elements, properties, wares, factions, ships or macros. It reads them from the game files, extracted or straight from the catalogs of the installed game, and from the extensions, so it follows the game version and the DLCs you have:
 
 - The schemas in `libraries` (`md.xsd`, `aiscripts.xsd`, `common.xsd`, `diff.xsd`): every element, attribute and value with its documentation, where each may stand, and what an attribute holds: an expression, a cue, a label, a variable that receives a result.
 - `libraries/scriptproperties.xml`: the keywords, datatypes and properties of expressions, and the lookups it imports from other game files.
 - The texts in `t`; the scripts in `md` and `aiscripts` of the game, its DLCs, the extensions and your workspace; each extension's `content.xml` for the order the game loads them in.
+- Of an installed game, the catalogs `01.cat`, `02.cat` and so on, and those of the DLCs, the folders of its `extensions` whose names start with `ego_dlc_`: the files of `libraries`, `md`, `aiscripts` and `t` are read from them in place, nothing is extracted; the other folders of its `extensions` are your mods. `version.dat` gives the version the status bar shows.
 
 A few things the game's files do not say are built in:
 
@@ -122,13 +124,14 @@ A few things the game's files do not say are built in:
 
 ## ⚠️ Known limitations
 
-- Without the extracted game files, scripts are only checked for well-formedness: the schemas, the script properties, the texts and the game's scripts all come from them.
+- Without the game files, extracted or installed, scripts are only checked for well-formedness: the schemas, the script properties, the texts and the game's scripts all come from them.
+- Extensions are read from their files: an extension packed into catalogs of its own (`ext_01.cat`) is not read yet, the DLCs of an installed game aside.
 - Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
 - XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
 - In the side with the patch, text inside elements (which scripts do not have) and the order of attributes are not written into the patch. A changed comment of the game's script becomes its removal and a new comment. What a patch brings in and then changes again with another of its operations is changed where that operation does, not from the side.
 - AI scripts, Mission Director scripts and their patches are checked. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game, such as the `libraries`, are not checked.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
-- Semantic highlighting needs the extracted game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
+- Semantic highlighting needs the game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
 
 ## 🚀 Getting started
 
@@ -147,9 +150,14 @@ Or open [X4CodeSense on the Visual Studio Marketplace](https://marketplace.visua
 2. In the Extensions view, open the `...` menu at its top right and select "Install from VSIX...".
 3. Choose the downloaded file.
 
-### Extract the game files
+### The game files
 
-X4CodeSense reads the game's own files: the schemas `md.xsd`, `aiscripts.xsd`, `common.xsd` and `diff.xsd` and `scriptproperties.xml` from `libraries`, the texts from `t`, and the game's scripts. Extract them with Egosoft's [X Catalog Tool](https://wiki.egosoft.com/X4%20Foundations%20Wiki/Modding%20Support/X%20Catalog%20Tool/), which Steam users get with the "X Tools":
+X4CodeSense reads the game's own files: the schemas `md.xsd`, `aiscripts.xsd`, `common.xsd` and `diff.xsd` and `scriptproperties.xml` from `libraries`, the texts from `t`, and the game's scripts. It reads them from one of two places:
+
+- **The installed game**, nothing to extract: the folder holding `X4.exe` and the catalogs `01.cat`, `02.cat` and so on, such as `C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations`. The files of the game and of its DLCs are read from the catalogs in place, so they follow every update of the game.
+- **The extracted game files**, when you keep them extracted anyway. They come first when both are set.
+
+To extract them, use Egosoft's [X Catalog Tool](https://wiki.egosoft.com/X4%20Foundations%20Wiki/Modding%20Support/X%20Catalog%20Tool/), which Steam users get with the "X Tools":
 
 - the game's catalogs (`01.cat`, `02.cat` and so on) into one folder, which then holds `aiscripts`, `md`, `libraries`, `t` and more;
 - each DLC's catalogs (`ext_01.cat` and so on in `extensions/ego_dlc_*` of the game) into the folder of the same name under `extensions` of that folder, and copy each DLC's `content.xml` there from the game installation. The catalogs do not hold it, and without it the DLCs are read alphabetically instead of in the game's order, so patches of the same file by several DLCs are applied in the wrong order.
@@ -162,14 +170,16 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
 
 ### Set it up
 
-1. Run **X4CodeSense: Select the Extracted Game Files...** from the Command Palette (`Ctrl+Shift+P`), or click the X4CodeSense item in the status bar, and choose the folder you extracted the game to.
+1. Run **X4CodeSense: Select the Installed Game...** from the Command Palette (`Ctrl+Shift+P`), or click the X4CodeSense item in the status bar, and choose the folder the game is installed in. Or run **X4CodeSense: Select the Extracted Game Files...** and choose the folder you extracted the game to.
 2. Open your extension's folder as the workspace, or a folder with several extensions.
 3. If your extension uses the texts or scripts of other extensions that are not in the workspace, set `x4CodeSense.extensionsFolder` to where they are, for example `..` when your extensions sit side by side.
 4. Open a script. The status bar shows the progress while the game files are read and the scripts are indexed, a few seconds, and its tooltip tells what was read.
 
 ## ⚙️ Extension settings
 
-- `x4CodeSense.unpackedFileLocation` - the folder of the extracted game files (the folder holding `aiscripts`, `md`, `libraries` and `t`).
+- `x4CodeSense.unpackedFileLocation` - the folder of the extracted game files (the folder holding `aiscripts`, `md`, `libraries` and `t`). When set, it is used rather than `x4CodeSense.gameFolder`.
+  - _default_: empty
+- `x4CodeSense.gameFolder` - the folder of the installed game (the folder holding `X4.exe` and `01.cat`, `02.cat` and so on), read from its catalogs in place when `x4CodeSense.unpackedFileLocation` is empty.
   - _default_: empty
 - `x4CodeSense.extensionsFolder` - where the other extensions are, usually set per workspace. Relative to the workspace folder: empty or `.` is the workspace itself (a workspace of several extensions), `..` the folder above it (one workspace per extension, the extensions side by side); an absolute path is taken as is. The folder may be an extension or hold extensions, which are read in the order their `content.xml` dependencies give, so a dependency's texts and patches come before yours.
   - _default_: empty
@@ -190,7 +200,8 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
 
 All of them but **Write Changes into the Patch**, which belongs to the side with the patch, are also in the menu the status bar item opens.
 
-- **X4CodeSense: Select the Extracted Game Files...** - sets `x4CodeSense.unpackedFileLocation` with a folder picker: in the workspace settings when they set it, else in the user settings.
+- **X4CodeSense: Select the Installed Game...** - sets `x4CodeSense.gameFolder` with a folder picker: in the workspace settings when they set it, else in the user settings. When the extracted game files are set too, it offers to clear them, so that the installed game is used.
+- **X4CodeSense: Select the Extracted Game Files...** - sets `x4CodeSense.unpackedFileLocation` with a folder picker, in the same way.
 - **X4CodeSense: Choose Which Scripts Show Problems...** - sets `x4CodeSense.diagnosticMode` to the open scripts or every script in the workspace: in the workspace settings when they set it, else in the user settings.
 - **X4CodeSense: Show What This Patch Changes** - in a patch: a diff of the file it changes, without and with the patch.
 - **X4CodeSense: Edit This Patch Above What It Changes** - in a patch: the patch above that diff, the side with the patch editable.
@@ -198,7 +209,7 @@ All of them but **Write Changes into the Patch**, which belongs to the side with
 - **X4CodeSense: Open the File This Patch Changes** - in a patch.
 - **X4CodeSense: Show Output** - the language server's log, with the problems met reading the game files.
 - **X4CodeSense: Open Settings**
-- **X4CodeSense: Restart Language Server** - reads the game files and the scripts again, for example after the extracted files or an extension outside the workspace changed.
+- **X4CodeSense: Restart Language Server** - reads the game files and the scripts again, for example after the game was updated or an extension outside the workspace changed.
 
 ## 📄 License
 
@@ -212,9 +223,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [0.8.0] - unreleased
+### [0.8.0] - 2026-10-01
 
 - Added
+  - The installed game as the game files, nothing to extract: `x4CodeSense.gameFolder`, set with **Select the Installed Game...**, also from the status bar's menu. Its files and its DLCs' are read straight from their catalogs, and open read-only where go to definition, references and **Open the File This Patch Changes** lead.
+  - The status bar's tooltip tells where the game files come from, and the installed game's version.
   - The command-line checker reads an installed game with `--game`: its files and its DLCs' straight from their catalogs, without extracting them.
 - Fixed
   - An extension linked into a folder of extensions, as modders and mod managers do with a junction or a symbolic link, is found.

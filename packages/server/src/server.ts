@@ -43,12 +43,16 @@ import {
   documentSymbols,
   EditorTabsNotificationMethod,
   fixAll,
+  gameFileOf,
+  GameFileRequestMethod,
+  gameFileUri,
   hoverAt,
   isInside,
   languageOfTextFile,
   loadGameData,
   loadTexts,
   newProblems,
+  openInstalledGame,
   parseXml,
   PatchComparisonRequestMethod,
   PatchWriteRequestMethod,
@@ -74,6 +78,9 @@ import {
   type DocumentInfoResult,
   type EditorTabsParams,
   type GameData,
+  type GameFileParams,
+  type GameFileResult,
+  type GameSource,
   type PatchComparisonParams,
   type PatchComparisonResult,
   type PatchWriteParams,
@@ -88,6 +95,8 @@ import {
 /** Settings under the `x4CodeSense` section, mirrored from the client's package.json. */
 interface X4CodeSenseSettings {
   unpackedFileLocation: string;
+  /** The installed game, read from its catalogs when `unpackedFileLocation` is empty. */
+  gameFolder: string;
   extensionsFolder: string;
   languageNumber: string;
   limitLanguageOutput: boolean;
@@ -99,6 +108,7 @@ interface X4CodeSenseSettings {
 
 const defaultSettings: X4CodeSenseSettings = {
   unpackedFileLocation: '',
+  gameFolder: '',
   extensionsFolder: '',
   languageNumber: '44',
   limitLanguageOutput: false,
@@ -120,6 +130,8 @@ let snippetSupport = false;
 let workspaceFolderSupport = false;
 let semanticTokensRefreshSupport = false;
 let game: GameData | undefined;
+/** What the game data was loaded as: its key (see `gameKey`), where it comes from, and an installed game's version. */
+let loadedGame: { key: string; source: GameSource; version?: string } | undefined;
 /** Workspace folders on disk: extensions themselves or holders of extensions, and the base of a relative `extensionsFolder`. */
 let workspaceFolders: string[] = [];
 /** What the loaded texts were read with, so they are read again only when that changes. */
@@ -128,8 +140,8 @@ let textSources: string | undefined;
 let indexSources: string | undefined;
 /** Counts index builds: a build that is no longer the latest stops. */
 let indexGeneration = 0;
-/** The game folder being read, while it is. */
-let loadingFolder: string | undefined;
+/** The key of the game being read, while it is. */
+let loadingGame: string | undefined;
 /** True while the latest index build runs. */
 let indexing = false;
 /** What the latest complete index was built from: script files, and by id in load order the game's DLCs and the other extensions. */
@@ -151,6 +163,8 @@ const sideTimers = new Map<string, NodeJS.Timeout>();
 const sideDelay = 250;
 /** Why a side of a patch comparison is not renamed in: its edits would land in the comparison. */
 const sideRenameRefusal = 'Rename in the patch or in the script, not in a side of their comparison';
+/** Why a game document is not renamed in, nor its patch written. */
+const gameFileRefusal = "The game's files are read only";
 
 /**
  * The checked scripts that are no open documents, by file key: the uri of their problems, how many, and as
@@ -192,7 +206,7 @@ function debug(message: string): void {
 /** Sends the client what the server is doing and what it has read, when that changed since it was last sent. */
 function sendStatus(): void {
   const status: ServerStatus = {
-    state: loadingFolder !== undefined ? 'loading' : indexing ? 'indexing' : 'ready',
+    state: loadingGame !== undefined ? 'loading' : indexing ? 'indexing' : 'ready',
     schemas: game ? [...Object.keys(game.schemas.schemas), ...(game.schemas.diff ? ['diff'] : [])].sort() : [],
     properties: game?.properties !== undefined,
     texts: game?.texts.textCount ?? 0,
@@ -202,8 +216,12 @@ function sendStatus(): void {
     extensions: game?.index ? indexed.extensions : [],
     problems: game?.problems.length ?? 0,
   };
-  if (game) {
+  if (game && loadedGame) {
     status.gameFolder = game.folder;
+    status.gameSource = loadedGame.source;
+    if (loadedGame.version !== undefined) {
+      status.gameVersion = loadedGame.version;
+    }
   }
   const sent = JSON.stringify(status);
   if (sent !== sentStatus) {
@@ -231,6 +249,26 @@ function filePathOf(uri: string): string | undefined {
       return undefined;
     }
   }
+}
+
+/** The file of the game a game document stands for; undefined for other uris. */
+function gameFileOfUri(uri: string): string | undefined {
+  return game ? gameFileOf(game.folder, uri) : undefined;
+}
+
+/**
+ * The uri the client knows a file by: a file of an installed game's catalogs has no file on disk, so the
+ * client reads it as a game document.
+ */
+function clientUriOf(uri: string): string {
+  const file = game?.files.inCatalogs ? filePathOf(uri) : undefined;
+  return (game && file && game.files.inCatalogs?.(file) && gameFileUri(game.folder, file)) || uri;
+}
+
+/** The document an open one is analysed as: a game document as its file, as any of the game's files is. */
+function analysedDocument(document: TextDocument): TextDocument {
+  const file = gameFileOfUri(document.uri);
+  return file === undefined ? document : TextDocument.create(pathToFileURL(file).toString(), document.languageId, document.version, document.getText());
 }
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
@@ -261,44 +299,60 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   };
 });
 
-/** The game folder the settings ask for. */
-function wantedGameFolder(): string | undefined {
-  return settings.unpackedFileLocation.trim() === '' ? undefined : settings.unpackedFileLocation;
+/** The game the settings ask for: the extracted files when they are set, else the installed game. */
+function wantedGame(): { folder: string; source: GameSource } | undefined {
+  if (settings.unpackedFileLocation.trim() !== '') {
+    return { folder: settings.unpackedFileLocation, source: 'extracted' };
+  }
+  return settings.gameFolder.trim() === '' ? undefined : { folder: settings.gameFolder, source: 'installed' };
+}
+
+/** What tells one wanted game from another. */
+function gameKey(wanted: { folder: string; source: GameSource } | undefined): string | undefined {
+  return wanted && `${wanted.source} ${wanted.folder}`;
 }
 
 /**
- * Loads the schemas and script properties of the unpacked game files, once per folder. The client shows
- * progress meanwhile; a folder the settings no longer ask for when its turn comes is not read.
+ * Loads the schemas and script properties of the game files, once per folder: the extracted ones, or an
+ * installed game's read from its catalogs. The client shows progress meanwhile; a game the settings no
+ * longer ask for when its turn comes is not read.
  */
 async function refreshGameData(): Promise<void> {
-  const folder = wantedGameFolder();
-  if (folder === game?.folder || (folder === undefined && game === undefined) || (folder !== undefined && folder === loadingFolder)) {
+  const wanted = wantedGame();
+  const key = gameKey(wanted);
+  if (key === loadedGame?.key || (key !== undefined && key === loadingGame)) {
     return;
   }
   indexSources = undefined;
-  if (folder === undefined) {
+  if (wanted === undefined || key === undefined) {
     game = undefined;
-    warn('x4CodeSense.unpackedFileLocation is not set: scripts are not validated against the game schemas and have no property completion');
+    loadedGame = undefined;
+    warn(
+      'neither x4CodeSense.unpackedFileLocation nor x4CodeSense.gameFolder is set: scripts are not validated against the game schemas and have no property completion'
+    );
     return;
   }
-  loadingFolder = folder;
+  loadingGame = key;
   sendStatus();
   const progress = await connection.window.createWorkDoneProgress();
   progress.begin('X4CodeSense', undefined, 'reading the game files');
   await flush();
   try {
-    if (wantedGameFolder() !== folder) {
+    if (gameKey(wantedGame()) !== key) {
       return;
     }
     const started = performance.now();
     const options = textOptions();
-    game = loadGameData(folder, options);
+    const installed = wanted.source === 'installed' ? openInstalledGame(wanted.folder) : undefined;
+    game = loadGameData(wanted.folder, installed ? { ...options, files: installed } : options);
+    loadedGame = { key, source: wanted.source, ...(installed?.version !== undefined ? { version: installed.version } : {}) };
     textSources = JSON.stringify(options, (_key, value: unknown) => (value instanceof Set ? [...(value as Set<string>)] : value));
     overlayOpenTextFiles();
     const schemas = Object.keys(game.schemas.schemas);
     const properties = game.properties;
+    const from = installed ? `the catalogs of the installed game${installed.version ? ` ${installed.version}` : ''} in ${wanted.folder}` : wanted.folder;
     log(
-      `loaded ${schemas.length > 0 ? `schemas ${schemas.join(', ')}` : 'no schemas'}${properties ? `, ${properties.datatypes.size} datatypes and ${properties.keywords.length} keywords` : ', no script properties'}, ${game.texts.textCount} texts from ${game.texts.fileCount} files, from ${folder} in ${(performance.now() - started).toFixed(0)} ms`
+      `loaded ${schemas.length > 0 ? `schemas ${schemas.join(', ')}` : 'no schemas'}${properties ? `, ${properties.datatypes.size} datatypes and ${properties.keywords.length} keywords` : ', no script properties'}, ${game.texts.textCount} texts from ${game.texts.fileCount} files, from ${from} in ${(performance.now() - started).toFixed(0)} ms`
     );
     for (const problem of game.problems.slice(0, 50)) {
       warn(problem);
@@ -307,8 +361,8 @@ async function refreshGameData(): Promise<void> {
       warn(`${game.problems.length - 50} more problems not shown`);
     }
   } finally {
-    if (loadingFolder === folder) {
-      loadingFolder = undefined;
+    if (loadingGame === key) {
+      loadingGame = undefined;
     }
     progress.done();
   }
@@ -521,7 +575,7 @@ async function refreshSettings(): Promise<void> {
   const received = (await connection.workspace.getConfiguration('x4CodeSense')) as Partial<X4CodeSenseSettings> | null;
   settings = { ...defaultSettings, ...(received ?? {}) };
   log(
-    `settings: unpackedFileLocation='${settings.unpackedFileLocation}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
+    `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
   );
   await refreshGameData();
   refreshTexts();
@@ -594,7 +648,7 @@ connection.onNotification(EditorTabsNotificationMethod, (params: EditorTabsParam
   }
   debug(`editor tabs: ${files.size} XML file(s), ${added.size} new, ${removed.length} closed`);
   // While the game files are read or the index is built, the build checks them when it is done.
-  if (!indexing && loadingFolder === undefined) {
+  if (!indexing && loadingGame === undefined) {
     checkWorkspaceFiles(added);
   }
 });
@@ -646,7 +700,7 @@ function analyze(document: TextDocument): void {
     return;
   }
   const started = performance.now();
-  const analysis = analyzeDocument(document, analysisContext());
+  const analysis = analyzeDocument(analysedDocument(document), analysisContext());
   analysisByUri.set(document.uri, analysis);
   if (game?.index && analysis.structure && indexOpenDocument(document, game.index, analysis.structure)) {
     debug(`${document.uri}: names seen by other scripts changed`);
@@ -691,7 +745,7 @@ function analyzeSide(document: TextDocument): DocumentAnalysis | undefined {
   if (!side) {
     return undefined;
   }
-  const patch = filePathOf(side.patch);
+  const patch = filePathOf(side.patch) ?? gameFileOfUri(side.patch);
   const target = patch === undefined ? undefined : game?.index?.patchTarget(patch)?.file;
   const started = performance.now();
   const analysis = analyzeComparisonSide(document, side.side, target, analysisContext());
@@ -725,10 +779,16 @@ function currentAnalysis(uri: string): DocumentAnalysis | undefined {
   return document && staleSides.has(uri) ? analyzeSide(document) : analysisByUri.get(uri);
 }
 
-/** Locations as the client knows them: those in the analysis of a side of a patch comparison under the side's uri. */
+/**
+ * Locations as the client knows them: those in the document analysed for a side of a patch comparison or
+ * a game document under the uri the client sent, those in an installed game's catalogs as game documents.
+ */
 function locationsInClient(uri: string, analysis: DocumentAnalysis, locations: Location[]): Location[] {
   const analysed = analysis.document.uri;
-  return analysed === uri ? locations : locations.map((location) => (location.uri === analysed ? { ...location, uri } : location));
+  return locations.map((location) => {
+    const shown = location.uri === analysed ? uri : clientUriOf(location.uri);
+    return shown === location.uri ? location : { ...location, uri: shown };
+  });
 }
 
 /** Analyses the open patch documents again that a file affects: it is their target, or a patch applied before them. */
@@ -878,7 +938,7 @@ async function checkWorkspace(announce: boolean): Promise<void> {
   clearTimeout(workspaceTimer);
   workspaceTimer = undefined;
   workspacePending = { all: false, files: new Map() };
-  if (indexing || loadingFolder !== undefined) {
+  if (indexing || loadingGame !== undefined) {
     return;
   }
   const index = settings.diagnosticMode === 'workspace' ? game?.index : undefined;
@@ -1066,10 +1126,16 @@ connection.onReferences((params): Location[] => {
   return located ? locationsInClient(uri, located.analysis, referencesAt(located.analysis, located.offset, game)) : [];
 });
 
+/** Why nothing is renamed from a document: a side of a patch comparison or a game document; undefined for others. */
+function renameRefusal(uri: string): string | undefined {
+  return comparisonSideOf(uri) ? sideRenameRefusal : gameFileOfUri(uri) !== undefined ? gameFileRefusal : undefined;
+}
+
 // A rename may edit other files of the workspace, never the game's; a refusal is shown to the user.
 connection.onPrepareRename((params) => {
-  if (comparisonSideOf(params.textDocument.uri)) {
-    return new ResponseError(ErrorCodes.InvalidRequest, sideRenameRefusal);
+  const refusal = renameRefusal(params.textDocument.uri);
+  if (refusal) {
+    return new ResponseError(ErrorCodes.InvalidRequest, refusal);
   }
   const located = locate(params.textDocument.uri, params.position);
   const prepared = located ? prepareRenameAt(located.analysis, located.offset, game, { editableFolders: workspaceFolders }) : undefined;
@@ -1080,8 +1146,9 @@ connection.onPrepareRename((params) => {
 });
 
 connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
-  if (comparisonSideOf(params.textDocument.uri)) {
-    return new ResponseError(ErrorCodes.InvalidRequest, sideRenameRefusal);
+  const refusal = renameRefusal(params.textDocument.uri);
+  if (refusal) {
+    return new ResponseError(ErrorCodes.InvalidRequest, refusal);
   }
   const located = locate(params.textDocument.uri, params.position);
   const renamed = located ? renameAt(located.analysis, located.offset, params.newName, game, { editableFolders: workspaceFolders }) : undefined;
@@ -1106,16 +1173,19 @@ connection.onWorkspaceSymbol((params): WorkspaceSymbol[] => {
   const started = performance.now();
   const symbols = workspaceSymbols(index, params.query, { preferredFolders: workspaceFolders });
   debug(`workspace symbols for '${params.query}': ${symbols.length} in ${(performance.now() - started).toFixed(1)} ms`);
-  return symbols;
+  return symbols.map((symbol) => {
+    const uri = clientUriOf(symbol.location.uri);
+    return uri === symbol.location.uri ? symbol : { ...symbol, location: { ...symbol.location, uri } };
+  });
 });
 
 // Quick fixes for the diagnostics the editor sends along, as far as the current analysis still has them,
 // with one that applies every preferred fix of the document when it has two or more; and that one as
 // `source.fixAll` when asked for (the Source Action menu, `editor.codeActionsOnSave`). The side of a
-// patch comparison before the patch is read only.
+// patch comparison before the patch and the game documents are read only.
 connection.onCodeAction((params): CodeAction[] => {
   const uri = params.textDocument.uri;
-  const analysis = comparisonSideOf(uri)?.side === 'before' ? undefined : currentAnalysis(uri);
+  const analysis = comparisonSideOf(uri)?.side === 'before' || gameFileOfUri(uri) !== undefined ? undefined : currentAnalysis(uri);
   const only = params.context.only;
   const asked = (kind: string): boolean => !only || only.some((wanted) => kind === wanted || kind.startsWith(`${wanted}.`));
   if (!analysis) {
@@ -1218,13 +1288,28 @@ connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): Do
   const analysis = analysisByUri.get(params.uri);
   const detection = analysis?.detection;
   const patch = analysis?.patch;
-  const source = patch?.target.file === undefined ? undefined : game?.index?.sourceOf(patch.target.file);
+  const file = patch?.target.file;
+  const source = file === undefined ? undefined : game?.index?.sourceOf(file);
+  const uri = file === undefined ? undefined : clientUriOf(pathToFileURL(file).toString());
   return {
     metadata: detection?.script,
     isDiff: detection?.isDiff ?? false,
     rootElement: detection?.rootElement,
-    patchTarget: patch ? { ...patch.target, ...(source ? { source } : {}), earlier: patch.earlier } : undefined,
+    patchTarget: patch ? { ...patch.target, ...(uri ? { uri } : {}), ...(source ? { source } : {}), earlier: patch.earlier } : undefined,
   };
+});
+
+// The text of a game document: a file of the installed game's catalogs, read when the client shows it.
+connection.onRequest(GameFileRequestMethod, (params: GameFileParams): GameFileResult => {
+  const file = gameFileOfUri(params.uri);
+  if (!game || file === undefined) {
+    return null;
+  }
+  try {
+    return { text: game.files.readText(file) };
+  } catch {
+    return null;
+  }
 });
 
 // The file a patch changes, before and after the patch, for the client to compare.
@@ -1241,6 +1326,9 @@ connection.onRequest(PatchWriteRequestMethod, (params: PatchWriteParams): PatchW
   const document = documents.get(params.uri);
   const patch = analysisByUri.get(params.uri)?.patch;
   const refuse = (reason: string): PatchWriteResult => ({ edits: [], changes: [], refused: [{ line: 0, reason }] });
+  if (gameFileOfUri(params.uri) !== undefined) {
+    return refuse(gameFileRefusal);
+  }
   if (!document || !patch || !game?.index) {
     return refuse('The patch is not open, or the file it changes is not known yet');
   }

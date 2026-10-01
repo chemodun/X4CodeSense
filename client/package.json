@@ -49,7 +49,8 @@
     "workspaceContains:**/md/*.xml",
     "workspaceContains:**/aiscripts/*.xml",
     "onFileSystem:x4codesense-patch",
-    "onFileSystem:x4codesense-patched"
+    "onFileSystem:x4codesense-patched",
+    "onFileSystem:x4codesense-game"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -62,6 +63,11 @@
       {
         "command": "x4CodeSense.selectGameFolder",
         "title": "Select the Extracted Game Files...",
+        "category": "X4CodeSense"
+      },
+      {
+        "command": "x4CodeSense.selectInstalledGame",
+        "title": "Select the Installed Game...",
         "category": "X4CodeSense"
       },
       {
@@ -121,7 +127,7 @@
         },
         {
           "command": "x4CodeSense.editPatchWithResult",
-          "when": "x4CodeSense.documentKind == patch"
+          "when": "x4CodeSense.documentKind == patch && resourceScheme == file"
         },
         {
           "command": "x4CodeSense.writeSideIntoPatch",
@@ -156,7 +162,12 @@
         "x4CodeSense.unpackedFileLocation": {
           "type": "string",
           "default": "",
-          "description": "Path to the extracted vanilla game files (the folder holding aiscripts, md, libraries and t)."
+          "description": "Path to the extracted vanilla game files (the folder holding aiscripts, md, libraries and t). When set, they are used rather than the installed game of Game Folder."
+        },
+        "x4CodeSense.gameFolder": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the installed game: the folder holding X4.exe and the catalogs 01.cat, 02.cat and so on. Its files and those of its DLCs are read from the catalogs in place, nothing is extracted. Used when Unpacked File Location is empty."
         },
         "x4CodeSense.extensionsFolder": {
           "type": "string",
@@ -176,7 +187,7 @@
         "x4CodeSense.validateXmlStructure": {
           "type": "boolean",
           "default": true,
-          "description": "Check the order and completeness of child elements against the game's XSD schemas. Unknown elements and attributes and invalid attribute values are always reported when the unpacked game files are configured."
+          "description": "Check the order and completeness of child elements against the game's XSD schemas. Unknown elements and attributes and invalid attribute values are always reported when the game files are set."
         },
         "x4CodeSense.diagnosticMode": {
           "type": "string",
@@ -186,7 +197,7 @@
           ],
           "enumDescriptions": [
             "The problems of the scripts open in the editor, checked as you type.",
-            "Also the problems of every other script and patch in the workspace folders, as they are on disk. They are checked once the scripts are indexed, which needs the extracted game files, and again when something they refer to changes."
+            "Also the problems of every other script and patch in the workspace folders, as they are on disk. They are checked once the scripts are indexed, which needs the game files, and again when something they refer to changes."
           ],
           "default": "openFilesOnly",
           "description": "Which scripts the Problems panel shows problems of: only the open ones, or every script in the workspace folders."

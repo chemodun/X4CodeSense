@@ -20,6 +20,8 @@ const dlcPrefix = 'ego_dlc_';
 export interface InstalledGame extends FileSource {
   /** The game folder, the one holding `01.cat`. */
   readonly folder: string;
+  /** The game's version as its `version.dat` gives it, `900` for 9.00; undefined without that file. */
+  readonly version: string | undefined;
   readonly bundledExtensions: readonly string[];
   inCatalogs(file: string): boolean;
   readonly problems: readonly string[];
@@ -38,8 +40,18 @@ interface Located {
   loose: boolean;
 }
 
+/** The text of `version.dat` in the game folder, undefined without it. */
+function versionIn(folder: string, disk: FileSource): string | undefined {
+  try {
+    return disk.readText(path.join(folder, 'version.dat')).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 class CatalogGame implements InstalledGame {
   readonly folder: string;
+  readonly version: string | undefined;
   readonly bundledExtensions: readonly string[];
   readonly problems: readonly string[];
   private readonly base: Catalogs;
@@ -51,8 +63,10 @@ class CatalogGame implements InstalledGame {
     private readonly disk: FileSource
   ) {
     this.folder = path.resolve(folder);
+    this.version = versionIn(this.folder, disk);
     const keep = (file: string): boolean => readFolders.test(file);
-    this.base = Catalogs.open(gameCatalogs(this.folder), { keep });
+    const catalogFiles = gameCatalogs(this.folder);
+    this.base = Catalogs.open(catalogFiles, { keep });
     const extensions = path.join(this.folder, 'extensions');
     const dlcFolders = subfolderNames(disk, extensions)
       .filter((name) => name.toLowerCase().startsWith(dlcPrefix))
@@ -63,7 +77,8 @@ class CatalogGame implements InstalledGame {
     }
     this.bundledExtensions = dlcFolders;
     const problemText = (problem: CatalogProblem): string => `${problem.catalog}:${problem.line}: not a catalog entry: ${problem.text}`;
-    this.problems = [this.base, ...this.dlcs.values()].flatMap((catalogs) => catalogs.problems.map(problemText));
+    const notInstalled = catalogFiles.length === 0 ? [`${this.folder}: not an installed game, it has no 01.cat`] : [];
+    this.problems = [...notInstalled, ...[this.base, ...this.dlcs.values()].flatMap((catalogs) => catalogs.problems.map(problemText))];
   }
 
   /** The catalogs a path belongs to, and the path in them; undefined outside the game and its DLCs. */

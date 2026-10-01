@@ -6,6 +6,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { writeCatalog, type CatalogFile } from 'x4-catalog';
 import {
   analyzeText,
+  gameFileOf,
+  gameFileUri,
   isGameFile,
   isInstalledGame,
   loadGameData,
@@ -73,10 +75,18 @@ const names = (folder: string): string[] =>
     .sort();
 
 describe('an installed game read in place', () => {
-  it('is told by its catalogs', () => {
+  it('is told by its catalogs, and has the version of its version.dat', () => {
     expect(isInstalledGame(install)).toBe(true);
     expect(isInstalledGame(unpacked)).toBe(false);
     expect(files.folder).toBe(path.resolve(install));
+    expect(files.version).toBe('900');
+  });
+
+  it('says so when a folder opened as one has no catalogs', () => {
+    const notInstalled = openInstalledGame(unpacked);
+    expect(notInstalled.problems).toEqual([`${path.resolve(unpacked)}: not an installed game, it has no 01.cat`]);
+    expect(notInstalled.version).toBeUndefined();
+    expect(notInstalled.exists(path.join(unpacked, 'libraries', 'md.xsd'))).toBe(false);
   });
 
   it("reads the game's files from its catalogs, the later catalog winning, never a signature", () => {
@@ -116,6 +126,31 @@ describe('an installed game read in place', () => {
 
   it('lists the lines of its catalogs that are no entry', () => {
     expect(files.problems).toEqual([`${path.join(install, '02.cat')}:3: not a catalog entry: no entry`]);
+  });
+});
+
+describe('the documents of game files that have no file on disk', () => {
+  it('name a file by its path in the game folder, and back', () => {
+    const setup = at('md', 'setup.xml');
+    expect(gameFileUri(install, setup)).toBe('x4codesense-game:/md/setup.xml');
+    expect(gameFileOf(install, 'x4codesense-game:/md/setup.xml')).toBe(setup);
+    const dlcScript = path.join(dlc, 'md', 'dlc.xml');
+    expect(gameFileUri(install, dlcScript)).toBe('x4codesense-game:/extensions/ego_dlc_test/md/dlc.xml');
+    expect(gameFileOf(install, gameFileUri(install, dlcScript) ?? '')).toBe(dlcScript);
+    // Written otherwise, as clients may: with an empty authority, letters encoded.
+    expect(gameFileOf(install, 'x4codesense-game:///md/set%75p.xml')).toBe(setup);
+    const odd = at('a b', 'c#d.xml');
+    expect(gameFileUri(install, odd)).toBe('x4codesense-game:/a%20b/c%23d.xml');
+    expect(gameFileOf(install, 'x4codesense-game:/a%20b/c%23d.xml')).toBe(odd);
+  });
+
+  it('never stand for the game folder itself or anything outside it', () => {
+    expect(gameFileUri(install, install)).toBeUndefined();
+    expect(gameFileUri(install, path.join(root, 'elsewhere.xml'))).toBeUndefined();
+    expect(gameFileOf(install, 'x4codesense-game:/')).toBeUndefined();
+    expect(gameFileOf(install, 'x4codesense-game:/md/..%2F..%2Felsewhere.xml')).toBeUndefined();
+    expect(gameFileOf(install, 'x4codesense-game:/md/%E0%A4%A')).toBeUndefined();
+    expect(gameFileOf(install, pathToFileURL(at('md', 'setup.xml')).toString())).toBeUndefined();
   });
 });
 

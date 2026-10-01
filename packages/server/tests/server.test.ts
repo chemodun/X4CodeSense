@@ -6,7 +6,7 @@
  */
 import { build } from 'esbuild';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -52,9 +52,11 @@ import {
   type ProtocolConnection,
   type PublishDiagnosticsParams,
 } from 'vscode-languageserver/node';
+import { writeCatalog, type CatalogFile } from 'x4-catalog';
 import {
   DocumentInfoRequestMethod,
   EditorTabsNotificationMethod,
+  GameFileRequestMethod,
   loadGameData,
   patchAfterScheme,
   patchBeforeScheme,
@@ -63,6 +65,7 @@ import {
   semanticTokensLegend,
   StatusNotificationMethod,
   type DocumentInfoResult,
+  type GameFileResult,
   type PatchComparisonResult,
   type PatchWriteResult,
   type ServerStatus,
@@ -217,6 +220,7 @@ describe('status', () => {
     expect(ready).toEqual({
       state: 'ready',
       gameFolder: unpacked,
+      gameSource: 'extracted',
       schemas: ['aiscripts', 'diff', 'md'],
       properties: true,
       texts: ready.texts,
@@ -1333,6 +1337,7 @@ describe('patches', () => {
     expect((await documentInfo(patchUri)).patchTarget).toEqual({
       name: 'extensions/base/md/api.xml',
       file: fileURLToPath(apiUri),
+      uri: apiUri,
       source: 'base',
       earlier: [],
     });
@@ -1553,4 +1558,147 @@ describe('patches', () => {
     }
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   });
+});
+
+describe('an installed game read in place', () => {
+  it('reads the game from its catalogs when only gameFolder is set, and gives its files as read-only game documents', async () => {
+    // The install: the fixture's libraries and texts and a game script in its catalogs, a DLC whose patch changes the script.
+    const install = path.join(workDir, 'install');
+    const filesOf = (folder: string, prefix: string): CatalogFile[] =>
+      readdirSync(folder).map((name) => ({ path: `${prefix}/${name}`, data: readFileSync(path.join(folder, name)) }));
+    // A misspelt attribute: the game's script has a problem with a quick fix.
+    const setupLines = ['<mdscript name="Setup">', '  <cues>', '    <cue name="Start" instantiat="true"/>', '  </cues>', '</mdscript>'];
+    const setupText = `${setupLines.join('\n')}\n`;
+    mkdirSync(install, { recursive: true });
+    writeCatalog(path.join(install, '01.cat'), [
+      ...filesOf(path.join(unpacked, 'libraries'), 'libraries'),
+      ...filesOf(path.join(unpacked, 't'), 't'),
+      { path: 'md/setup.xml', data: setupText },
+    ]);
+    writeFileSync(path.join(install, 'version.dat'), '900\r\n');
+    const dlc = path.join(install, 'extensions', 'ego_dlc_test');
+    mkdirSync(dlc, { recursive: true });
+    writeFileSync(path.join(dlc, 'content.xml'), '<content id="ego_dlc_test" name="Test DLC" version="100"/>\n');
+    const dlcPatchText = `<diff>\n  <add sel="/mdscript/cues/cue[@name='Start']" type="@namespace">this</add>\n</diff>\n`;
+    writeCatalog(path.join(dlc, 'ext_01.cat'), [{ path: 'md/setup.xml', data: dlcPatchText }]);
+    // The workspace: a mod naming the game's cue, and patching the game's script.
+    const mods = path.join(workDir, 'installmods');
+    const write = (file: string, text: string): string => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      return pathToFileURL(file).toString();
+    };
+    write(path.join(mods, 'mine', 'content.xml'), '<content id="mine" name="Mine" version="100"/>\n');
+    const mineLines = [
+      '<mdscript name="Mine">',
+      '  <cues>',
+      '    <cue name="Own">',
+      '      <actions>',
+      '        <signal_cue_instantly cue="md.Setup.Start"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ];
+    const mineText = `${mineLines.join('\n')}\n`;
+    const mineUri = write(path.join(mods, 'mine', 'md', 'mine.xml'), mineText);
+    const minePatchText = '<diff>\n  <add sel="/mdscript/cues"><cue name="Mine"/></add>\n</diff>\n';
+    const minePatchUri = write(path.join(mods, 'mine', 'md', 'setup.xml'), minePatchText);
+    const workspace = { uri: pathToFileURL(mods).toString(), name: 'installmods' };
+
+    clientSettings.unpackedFileLocation = '';
+    clientSettings.gameFolder = install;
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    const ready = await statusWhere((status) => status.state === 'ready' && status.gameSource === 'installed' && status.extensions.includes('mine'));
+    expect(ready).toMatchObject({
+      gameFolder: install,
+      gameSource: 'installed',
+      gameVersion: '900',
+      schemas: ['aiscripts', 'diff', 'md'],
+      properties: true,
+      textFiles: 2,
+      dlcs: ['ego_dlc_test'],
+      extensions: ['mine'],
+      problems: loadGameData(unpacked).problems.length,
+    });
+
+    // From the workspace into the game: its script and its schema, as game documents.
+    const gameSetup = 'x4codesense-game:/md/setup.xml';
+    const at = (
+      uri: string,
+      lines: string[],
+      line: number,
+      needle: string
+    ): { textDocument: { uri: string }; position: { line: number; character: number } } => ({
+      textDocument: { uri },
+      position: { line, character: lines[line].indexOf(needle) + 1 },
+    });
+    const places = (locations: Location[] | null): string[] => (locations ?? []).map((location) => `${location.uri}:${location.range.start.line}`).sort();
+    expect(summarize(await open(mineUri, mineText))).toEqual([]);
+    expect(places((await connection.sendRequest(DefinitionRequest.type, at(mineUri, mineLines, 4, 'Start'))) as Location[])).toEqual([`${gameSetup}:2`]);
+    const inSchema = (await connection.sendRequest(DefinitionRequest.type, at(mineUri, mineLines, 4, 'signal_cue_instantly'))) as Location[];
+    expect(inSchema.map((location) => location.uri)).toEqual(['x4codesense-game:/libraries/md.xsd']);
+    const symbols = (await connection.sendRequest(WorkspaceSymbolRequest.type, { query: 'md.Setup.Start' })) ?? [];
+    expect(symbols.map((symbol) => `${symbol.name} ${(symbol.location as Location).uri}`)).toEqual([`Start ${gameSetup}`]);
+    // A patch of the game's script: the file it changes, as the client opens it.
+    expect(summarize(await open(minePatchUri, minePatchText))).toEqual([]);
+    expect((await documentInfo(minePatchUri)).patchTarget).toEqual({
+      name: 'md/setup.xml',
+      file: path.join(install, 'md', 'setup.xml'),
+      uri: gameSetup,
+      source: 'game',
+      earlier: [path.join(dlc, 'md', 'setup.xml')],
+    });
+
+    // The text of a game document, from the catalogs; none for a file the game does not have, nor for another uri.
+    const gameFile = (uri: string): Promise<GameFileResult> => connection.sendRequest<GameFileResult>(GameFileRequestMethod, { uri });
+    expect(await gameFile(gameSetup)).toEqual({ text: setupText });
+    expect(await gameFile('x4codesense-game:/md/nothing.xml')).toBeNull();
+    expect(await gameFile(mineUri)).toBeNull();
+
+    // Opened, it is the game's script, with its problems and the places of the workspace and the DLC that name its cue.
+    const opened = await open(gameSetup, setupText);
+    expect(summarize(opened)).toEqual(['3:23 unknown-attribute']);
+    expect((await documentInfo(gameSetup)).metadata).toMatchObject({ schema: 'md', name: 'Setup' });
+    const dlcPatch = 'x4codesense-game:/extensions/ego_dlc_test/md/setup.xml';
+    const references = await connection.sendRequest(ReferencesRequest.type, {
+      ...at(gameSetup, setupLines, 2, 'Start'),
+      context: { includeDeclaration: true },
+    });
+    expect(places(references)).toEqual([`${mineUri}:4`, `${dlcPatch}:1`, `${gameSetup}:2`]);
+    // Read only: no rename in it, no quick fixes.
+    await expect(connection.sendRequest(PrepareRenameRequest.type, at(gameSetup, setupLines, 2, 'Start'))).rejects.toMatchObject({
+      message: "The game's files are read only",
+    });
+    const fixRequest = { textDocument: { uri: gameSetup }, range: opened.diagnostics[0].range, context: { diagnostics: opened.diagnostics } };
+    expect(await connection.sendRequest(CodeActionRequest.type, fixRequest)).toEqual([]);
+
+    // The DLC's patch, opened as a game document: compared with the file it changes, never written.
+    expect(summarize(await open(dlcPatch, dlcPatchText))).toEqual([]);
+    expect((await documentInfo(dlcPatch)).patchTarget).toMatchObject({ name: 'md/setup.xml', uri: gameSetup, source: 'game', earlier: [] });
+    const compared = await connection.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, { uri: dlcPatch });
+    expect(compared?.before).toBe(setupText);
+    const written = await connection.sendRequest<PatchWriteResult>(PatchWriteRequestMethod, { uri: dlcPatch, version: 1, edited: compared?.after ?? '' });
+    expect(written.refused).toEqual([{ line: 0, reason: "The game's files are read only" }]);
+
+    for (const uri of [gameSetup, dlcPatch, minePatchUri, mineUri]) {
+      const closed = diagnosticsCount(uri, 0);
+      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+      await closed;
+    }
+
+    // Both set: the extracted files come first, and the game documents read from them.
+    clientSettings.unpackedFileLocation = unpacked;
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    const extracted = await statusWhere((status) => status.state === 'ready' && status.gameSource === 'extracted');
+    expect(extracted.gameFolder).toBe(unpacked);
+    expect(extracted.gameVersion).toBeUndefined();
+    expect(await gameFile(gameSetup)).toBeNull();
+    expect(await gameFile('x4codesense-game:/libraries/md.xsd')).toEqual({ text: readFileSync(path.join(unpacked, 'libraries', 'md.xsd'), 'utf8') });
+    clientSettings.gameFolder = '';
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+    await statusWhere((status) => status.state === 'ready' && !status.extensions.includes('mine'));
+  }, 30_000);
 });

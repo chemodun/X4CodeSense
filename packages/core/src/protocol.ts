@@ -29,6 +29,8 @@ export interface DocumentInfoResult {
 }
 
 export interface PatchTargetInfo extends PatchTarget {
+  /** The uri the client opens the file by, when there is one: a `file:` uri, or a game document (`gameFileScheme`). */
+  uri?: string;
   /** Where the file comes from: `game` or the id of an extension. */
   source?: string;
   /** The patches of the file the game applies before this one, in load order. */
@@ -38,11 +40,21 @@ export interface PatchTargetInfo extends PatchTarget {
 /** The server tells what it is doing and what it has read, whenever that changes. */
 export const StatusNotificationMethod = 'x4codesense/status';
 
+/** Where the game files come from: extracted to a folder, or an installed game read from its catalogs. */
+export type GameSource = 'extracted' | 'installed';
+
 export interface ServerStatus {
   /** `loading` while the game's files are read, `indexing` while the scripts are, `ready` otherwise. */
   state: 'loading' | 'indexing' | 'ready';
-  /** The extracted game files in use; absent while `x4CodeSense.unpackedFileLocation` is not set. */
+  /**
+   * The game files in use: the extracted ones (`x4CodeSense.unpackedFileLocation`), else the installed game
+   * read from its catalogs (`x4CodeSense.gameFolder`); absent while neither is set.
+   */
   gameFolder?: string;
+  /** Which of the two the game folder is, with it. */
+  gameSource?: GameSource;
+  /** The installed game's version as its `version.dat` gives it, `900` for 9.00; absent for extracted files. */
+  gameVersion?: string;
   /** The schemas read from its `libraries` folder, by name. */
   schemas: string[];
   /** True when `scriptproperties.xml` was read. */
@@ -109,3 +121,17 @@ export interface PatchWriteResult {
   changes: PatchWriteChange[];
   refused: PatchWriteRefusal[];
 }
+
+/**
+ * The scheme of the game's files read from an installed game's catalogs, which have no file on disk: read
+ * only documents whose path is the file's in the game folder, `x4codesense-game:/md/setup.xml`. The server
+ * sends every place in such a file under this scheme, and gives the text.
+ */
+export const gameFileScheme = 'x4codesense-game';
+
+/** Ask for the text of a game document; null when the game files read now have no such file. */
+export const GameFileRequestMethod = 'x4codesense/gameFile';
+
+export type GameFileParams = DocumentInfoParams;
+
+export type GameFileResult = { text: string } | null;

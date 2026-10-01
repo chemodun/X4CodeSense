@@ -5,6 +5,8 @@ import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerO
 import {
   DocumentInfoRequestMethod,
   EditorTabsNotificationMethod,
+  GameFileRequestMethod,
+  gameFileScheme,
   patchBeforeScheme,
   PatchComparisonRequestMethod,
   PatchWriteRequestMethod,
@@ -13,6 +15,8 @@ import {
   type DocumentInfoParams,
   type DocumentInfoResult,
   type EditorTabsParams,
+  type GameFileParams,
+  type GameFileResult,
   type PatchComparisonParams,
   type PatchComparisonResult,
   type PatchTargetInfo,
@@ -41,6 +45,7 @@ const neverOfferKey = 'x4CodeSense.neverOfferOldSettings';
 /** The commands the status bar's tooltip may run. */
 const tooltipCommands = [
   'x4CodeSense.selectGameFolder',
+  'x4CodeSense.selectInstalledGame',
   'x4CodeSense.selectDiagnosticMode',
   'x4CodeSense.showOutput',
   'x4CodeSense.openSettings',
@@ -74,12 +79,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(xmlFiles);
   const clientOptions: LanguageClientOptions = {
     // Lua files only get the hover of `ReadText` calls, with the text they read. The sides of a patch
-    // comparison are the script before and after the patch.
+    // comparison are the script before and after the patch; game documents the files of an installed game.
     documentSelector: [
       { scheme: 'file', language: 'xml' },
       { scheme: 'file', language: 'lua' },
       { scheme: comparisonScheme, language: 'xml' },
       { scheme: patchedScheme, language: 'xml' },
+      { scheme: gameFileScheme, language: 'xml' },
     ],
     synchronize: { configurationSection: 'x4CodeSense', fileEvents: xmlFiles },
     outputChannelName: 'X4CodeSense',
@@ -93,6 +99,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(statusBarItem);
 
   const comparisons = new PatchComparisons();
+  const gameFiles = new GameFiles();
   const sides = new PatchedSides({
     compare: async (patch) => {
       const params: PatchComparisonParams = { uri: patch };
@@ -116,9 +123,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     serverStatus = status;
     void updateStatusBar();
     if (nowReady) {
-      // Comparisons restored from the last session, or opened while the server was busy, get their text now.
+      // Comparisons and game documents restored from the last session, or opened while the server was busy,
+      // get their text now; game documents also after the game files were read again.
       comparisons.refreshAll();
       sides.refreshAll();
+      gameFiles.refreshAll();
     }
   });
   // The editor loads a restored tab only when it is shown: the server checks the others from the disk.
@@ -139,6 +148,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.tabGroups.onDidChangeTabs(sendTabs),
     vscode.window.tabGroups.onDidChangeTabGroups(sendTabs),
     vscode.workspace.registerTextDocumentContentProvider(comparisonScheme, comparisons),
+    vscode.workspace.registerTextDocumentContentProvider(gameFileScheme, gameFiles),
     vscode.workspace.registerFileSystemProvider(patchedScheme, sides, { isCaseSensitive: true }),
     sides,
     layout,
@@ -168,6 +178,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
     ),
     vscode.commands.registerCommand('x4CodeSense.selectGameFolder', selectGameFolder),
+    vscode.commands.registerCommand('x4CodeSense.selectInstalledGame', selectInstalledGame),
     vscode.commands.registerCommand('x4CodeSense.selectDiagnosticMode', selectDiagnosticMode),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('x4CodeSense.diagnosticMode')) {
@@ -230,9 +241,14 @@ async function activeDocumentInfo(): Promise<{ document: vscode.TextDocument; in
   return documentInfo(vscode.window.activeTextEditor?.document);
 }
 
-/** Asks the server about a document; the answer is undefined when it cannot tell now. */
+/** True for a game document: a file of the installed game, read only. */
+function isGameDocument(document: vscode.TextDocument | undefined): boolean {
+  return document?.uri.scheme === gameFileScheme;
+}
+
+/** Asks the server about a document on disk or of the game; the answer is undefined when it cannot tell now. */
 async function documentInfo(document: vscode.TextDocument | undefined): Promise<{ document: vscode.TextDocument; info: DocumentInfoResult } | undefined> {
-  if (!client || !document || document.languageId !== 'xml' || document.uri.scheme !== 'file') {
+  if (!client || !document || document.languageId !== 'xml' || (document.uri.scheme !== 'file' && !isGameDocument(document))) {
     return undefined;
   }
   try {
@@ -276,8 +292,13 @@ async function updateStatusBar(): Promise<void> {
   const icon = busy ? '$(sync~spin)' : missing ? '$(warning)' : kind === 'patch' ? '$(diff)' : '$(symbol-namespace)';
   item.text = `${icon} ${label}`;
   item.backgroundColor = missing ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
-  item.tooltip = tooltip(info);
+  item.tooltip = tooltip(info, isGameDocument(active.document));
   item.show();
+}
+
+/** A version as `version.dat` gives it, as the game shows it: `900` is 9.00. */
+function versionShown(version: string): string {
+  return /^\d{3,}$/.test(version) ? `${version.slice(0, -2)}.${version.slice(-2)}` : version;
 }
 
 /** Text as Markdown shows it literally: names such as extension ids may hold `_` or `*`. */
@@ -295,10 +316,10 @@ function plural(count: number, word: string, suffix = 's'): string {
 }
 
 /**
- * The tooltip of the status bar item. VS Code pads code spans in hovers, so no punctuation follows one:
- * it would look detached.
+ * The tooltip of the status bar item, for a document on disk or of the game. VS Code pads code spans in
+ * hovers, so no punctuation follows one: it would look detached.
  */
-function tooltip(info: DocumentInfoResult): vscode.MarkdownString {
+function tooltip(info: DocumentInfoResult, inGame: boolean): vscode.MarkdownString {
   const lines: string[] = [];
   const target = info.patchTarget;
   if (info.metadata) {
@@ -306,15 +327,18 @@ function tooltip(info: DocumentInfoResult): vscode.MarkdownString {
   } else if (target?.file) {
     const whose = target.source === 'game' ? "the game's file" : target.source ? `the file of ${escaped(target.source)}` : 'the file';
     const earlier = target.earlier.length === 0 ? '' : `, after ${plural(target.earlier.length, 'earlier patch', 'es')}`;
-    lines.push(
-      `**Patch** of \`${target.name}\` (${whose}${earlier})`,
-      '',
-      '[Open the file it changes](command:x4CodeSense.openPatchTarget) · [Show what it changes](command:x4CodeSense.comparePatch) · [Edit above what it changes](command:x4CodeSense.editPatchWithResult)'
-    );
+    const commands = ['[Open the file it changes](command:x4CodeSense.openPatchTarget)', '[Show what it changes](command:x4CodeSense.comparePatch)'];
+    if (!inGame) {
+      commands.push('[Edit above what it changes](command:x4CodeSense.editPatchWithResult)');
+    }
+    lines.push(`**Patch** of \`${target.name}\` (${whose}${earlier})`, '', commands.join(' · '));
   } else if (target) {
     lines.push(`**Patch** of \`${target.name}\` has nothing to patch: ${escaped(target.missing ?? 'the file is not found')}`);
   } else {
     lines.push('**Patch**: the file it changes is known once the scripts are indexed');
+  }
+  if (inGame) {
+    lines.push('', '$(lock) A file of the installed game, read from its catalogs: read only.');
   }
   lines.push('', '---', '');
   const status = serverStatus;
@@ -324,15 +348,19 @@ function tooltip(info: DocumentInfoResult): vscode.MarkdownString {
     lines.push('$(sync~spin) Reading the game files.');
   } else if (status.gameFolder === undefined) {
     lines.push(
-      '$(warning) The extracted game files are not set, so scripts are only checked for well-formedness. [Select the folder](command:x4CodeSense.selectGameFolder)'
+      '$(warning) The game files are not set, so scripts are only checked for well-formedness. Select [the extracted game files](command:x4CodeSense.selectGameFolder) or [the installed game](command:x4CodeSense.selectInstalledGame).'
     );
   } else if (status.schemas.length === 0) {
     lines.push(
-      `$(warning) The game files hold no schemas, so scripts are only checked for well-formedness. [Select another folder](command:x4CodeSense.selectGameFolder) instead of \`${status.gameFolder}\``
+      `$(warning) The game files hold no schemas, so scripts are only checked for well-formedness. Select [other extracted game files](command:x4CodeSense.selectGameFolder) or [another installed game](command:x4CodeSense.selectInstalledGame) instead of \`${status.gameFolder}\``
     );
   } else {
     const properties = status.properties ? 'script properties' : 'no script properties';
-    lines.push(`Game files: schemas ${status.schemas.join(', ')}, ${properties} and ${plural(status.texts, 'text')}, read from \`${status.gameFolder}\``);
+    const from =
+      status.gameSource === 'installed'
+        ? `read in place from the installed game${status.gameVersion ? ` ${escaped(versionShown(status.gameVersion))}` : ''} in`
+        : 'read from the extracted files in';
+    lines.push(`Game files: schemas ${status.schemas.join(', ')}, ${properties} and ${plural(status.texts, 'text')}, ${from} \`${status.gameFolder}\``);
   }
   if (status?.state === 'indexing') {
     lines.push('', '$(sync~spin) Indexing the scripts.');
@@ -374,15 +402,22 @@ async function showMenu(): Promise<void> {
   if (kindOf(activeInfo?.info) === 'patch') {
     entries.push(
       { label: '$(go-to-file) Open the File This Patch Changes', description: target?.name, command: 'x4CodeSense.openPatchTarget' },
-      { label: '$(diff) Show What This Patch Changes', command: 'x4CodeSense.comparePatch' },
-      { label: '$(split-vertical) Edit This Patch Above What It Changes', command: 'x4CodeSense.editPatchWithResult' }
+      { label: '$(diff) Show What This Patch Changes', command: 'x4CodeSense.comparePatch' }
     );
+    if (!isGameDocument(activeInfo?.document)) {
+      entries.push({ label: '$(split-vertical) Edit This Patch Above What It Changes', command: 'x4CodeSense.editPatchWithResult' });
+    }
   }
   entries.push(
     {
       label: '$(folder-opened) Select the Extracted Game Files...',
-      description: serverStatus?.gameFolder ?? 'not set',
+      description: gameSettingShown('unpackedFileLocation'),
       command: 'x4CodeSense.selectGameFolder',
+    },
+    {
+      label: '$(folder-library) Select the Installed Game...',
+      description: gameSettingShown('gameFolder'),
+      command: 'x4CodeSense.selectInstalledGame',
     },
     {
       label: '$(checklist) Choose Which Scripts Show Problems...',
@@ -430,8 +465,24 @@ async function selectDiagnosticMode(): Promise<void> {
   if (!picked || picked.mode === current) {
     return;
   }
-  const inWorkspace = configuration.inspect<string>('diagnosticMode')?.workspaceValue !== undefined;
-  await configuration.update('diagnosticMode', picked.mode, inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+  await configuration.update('diagnosticMode', picked.mode, settingTarget(configuration, 'diagnosticMode'));
+}
+
+/** Where a setting is written: in the workspace settings when they set it, else in the user settings. */
+function settingTarget(configuration: vscode.WorkspaceConfiguration, key: string): vscode.ConfigurationTarget {
+  return configuration.inspect(key)?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+}
+
+/** A setting of the game files as the menu shows it: its folder or `not set`, and whether the installed game is used. */
+function gameSettingShown(key: 'unpackedFileLocation' | 'gameFolder'): string {
+  const configuration = vscode.workspace.getConfiguration('x4CodeSense');
+  const folder = configuration.get<string>(key, '').trim();
+  if (folder === '') {
+    return 'not set';
+  }
+  return key === 'gameFolder' && configuration.get<string>('unpackedFileLocation', '').trim() !== ''
+    ? `${folder}, not used: the extracted files come first`
+    : folder;
 }
 
 /** Asks for the folder of the extracted game files and sets it where the setting is set: the workspace, else the user settings. */
@@ -462,8 +513,54 @@ async function selectGameFolder(): Promise<void> {
       return;
     }
   }
-  const inWorkspace = configuration.inspect<string>('unpackedFileLocation')?.workspaceValue !== undefined;
-  await configuration.update('unpackedFileLocation', folder.fsPath, inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+  await configuration.update('unpackedFileLocation', folder.fsPath, settingTarget(configuration, 'unpackedFileLocation'));
+}
+
+/**
+ * Asks for the folder of the installed game and sets it where the setting is set: the workspace, else the
+ * user settings. The extracted game files come first, so when they are set, offers to stop using them.
+ */
+async function selectInstalledGame(): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration('x4CodeSense');
+  const current = configuration.get<string>('gameFolder', '').trim();
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    title: 'The installed game: the folder holding X4.exe and the catalogs 01.cat, 02.cat and so on',
+    openLabel: 'Use This Game',
+    ...(current ? { defaultUri: vscode.Uri.file(current) } : {}),
+  });
+  const folder = picked?.[0];
+  if (!folder) {
+    return;
+  }
+  if (!(await exists(vscode.Uri.joinPath(folder, '01.cat')))) {
+    const useAnyway = 'Use It Anyway';
+    const choice = await vscode.window.showWarningMessage(
+      `${folder.fsPath} holds no 01.cat: it does not look like an installed game.`,
+      { modal: true },
+      useAnyway
+    );
+    if (choice !== useAnyway) {
+      return;
+    }
+  }
+  await configuration.update('gameFolder', folder.fsPath, settingTarget(configuration, 'gameFolder'));
+  const extracted = configuration.get<string>('unpackedFileLocation', '').trim();
+  if (extracted === '') {
+    return;
+  }
+  const target = settingTarget(configuration, 'unpackedFileLocation');
+  const useInstalled = 'Use the Installed Game';
+  const choice = await vscode.window.showInformationMessage(
+    `The extracted game files are set too, and they come first: ${extracted}. Clear them in the ${target === vscode.ConfigurationTarget.Workspace ? 'workspace' : 'user'} settings, so that the installed game is used?`,
+    { modal: true },
+    useInstalled
+  );
+  if (choice === useInstalled) {
+    await configuration.update('unpackedFileLocation', '', target);
+  }
 }
 
 /**
@@ -561,9 +658,10 @@ async function activePatch(): Promise<{ document: vscode.TextDocument; info: Doc
 }
 
 async function openPatchTarget(): Promise<void> {
-  const file = (await activePatch())?.info.patchTarget?.file;
-  if (file) {
-    await vscode.window.showTextDocument(vscode.Uri.file(file));
+  // A file of the installed game opens as a game document, the others from the disk.
+  const uri = (await activePatch())?.info.patchTarget?.uri;
+  if (uri) {
+    await vscode.window.showTextDocument(vscode.Uri.parse(uri));
   }
 }
 
@@ -583,6 +681,12 @@ async function editPatchWithResult(comparisons: PatchComparisons, sides: Patched
   const patch = await activePatch();
   const target = patch?.info.patchTarget;
   if (!patch || !target) {
+    return;
+  }
+  if (isGameDocument(patch.document)) {
+    void vscode.window.showInformationMessage(
+      "X4CodeSense: this patch is one of the game's files, which are read only. Show What This Patch Changes compares it with the file it changes."
+    );
     return;
   }
   // Two groups, one above the other; the editors of any other groups move into them.
@@ -656,5 +760,34 @@ class PatchComparisons implements vscode.TextDocumentContentProvider {
   /** Asks again for every side the editor shows. */
   refreshAll(): void {
     this.refresh(...vscode.workspace.textDocuments.filter((document) => document.uri.scheme === comparisonScheme).map((document) => document.uri));
+  }
+}
+
+/**
+ * The files of an installed game, read from its catalogs, which have no file on disk: documents of their
+ * own, read only as those of any content provider are, their text asked from the server.
+ */
+class GameFiles implements vscode.TextDocumentContentProvider {
+  private readonly changed = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this.changed.event;
+
+  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
+    const params: GameFileParams = { uri: uri.toString() };
+    let file: GameFileResult = null;
+    try {
+      file = client ? await client.sendRequest<GameFileResult>(GameFileRequestMethod, params) : null;
+    } catch {
+      // The server is starting or stopping.
+    }
+    return file?.text ?? `<!-- X4CodeSense: ${uri.path.slice(1)} is not among the game files read now. -->\n`;
+  }
+
+  /** Asks again for every game document the editor has. */
+  refreshAll(): void {
+    for (const document of vscode.workspace.textDocuments) {
+      if (isGameDocument(document)) {
+        this.changed.fire(document.uri);
+      }
+    }
   }
 }

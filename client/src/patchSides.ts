@@ -15,7 +15,7 @@
  * A caret moved in the patch moves to its place in the side, and back, where the patch's own pieces are.
  */
 import * as vscode from 'vscode';
-import { patchAfterScheme, type PatchComparisonResult, type PatchWriteParams, type PatchWriteResult } from 'x4-script-core';
+import { gameFileScheme, patchAfterScheme, type PatchComparisonResult, type PatchWriteParams, type PatchWriteResult } from 'x4-script-core';
 import { mapChanges, patchOffsetAt, sideOffsetAt, sideText, type Segment, type TextChange } from './patchPieces';
 
 /** The scheme of the patched side; the patch document's uri is in the query. */
@@ -97,7 +97,9 @@ export class PatchedSides implements vscode.FileSystemProvider, vscode.Disposabl
 
   async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
     const side = await this.sideOf(uri);
-    return { type: vscode.FileType.File, ctime: 0, mtime: side.mtime, size: Buffer.byteLength(side.served.text) };
+    // A patch of the installed game is one of its files, read only: so is its side.
+    const readOnly = side.patch.scheme === gameFileScheme ? { permissions: vscode.FilePermission.Readonly } : {};
+    return { type: vscode.FileType.File, ctime: 0, mtime: side.mtime, size: Buffer.byteLength(side.served.text), ...readOnly };
   }
 
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
