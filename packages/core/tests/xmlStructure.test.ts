@@ -181,6 +181,25 @@ describe('parseXml on broken input', () => {
     expect(name.end).toBe(name.valueEnd);
   });
 
+  it('keeps a value closed that only ends like the next attribute, when the tag goes on as it may after a value', () => {
+    // As in the game's gs_pirate1.xml (9.00): the comment ends with `otherobject=`.
+    const vanilla = '<a object="$ship" comment="use faction= instead of otherobject="/>\n<b/>';
+    expect(codes(parseXml(vanilla))).toEqual([]);
+    expect(parseXml(vanilla).elements[0].attributes.map((attribute) => [attribute.name, attribute.value])).toEqual([
+      ['object', '$ship'],
+      ['comment', 'use faction= instead of otherobject='],
+    ]);
+    expect(codes(parseXml('<a comment="x y=">text</a>'))).toEqual([]);
+    expect(parseXml('<a comment="x y=" z="1"/>').elements[0].attributes.map((attribute) => attribute.name)).toEqual(['comment', 'z']);
+    // While typing, the next attribute's value, a tag or the end of the text follow: the value is not closed.
+    expect(codes(parseXml('<a name="$x exact="$y"/>'))).toEqual(['unclosed-attribute']);
+    expect(codes(parseXml('<a name="$x exact="\n<b/>'))).toEqual(['unclosed-attribute', 'unclosed-attribute', 'unclosed-start-tag']);
+    expect(parseXml('<a name="$x exact="').elements[0].attributes.map((attribute) => [attribute.name, attribute.value])).toEqual([
+      ['name', '$x'],
+      ['exact', ''],
+    ]);
+  });
+
   it('ends an unclosed value before the /> of its own tag', () => {
     const text = '<a name="$x/>\n<b/>';
     const structure = parseXml(text);

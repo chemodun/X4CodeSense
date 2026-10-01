@@ -145,6 +145,17 @@ describe.skipIf(!extracted)('XML scanner on the vanilla corpus', { timeout: 60_0
     });
   }
 
+  it('matches the strict parser on every script and patch of the DLCs', () => {
+    const files: string[] = [];
+    for (const dlc of subfolders(path.join(root, 'extensions'))) {
+      for (const schema of scriptSchemas) {
+        files.push(...xmlFilesIn(path.join(dlc, schemaFolderName[schema])));
+      }
+    }
+    expect(files.length).toBeGreaterThan(0);
+    expect(checkFiles(root, files)).toEqual([]);
+  });
+
   it('scans all scripts quickly', () => {
     const files = [...xmlFilesIn(path.join(root, 'md')), ...xmlFilesIn(path.join(root, 'aiscripts'))];
     const texts = files.map((file) => readFileSync(file, 'utf8'));

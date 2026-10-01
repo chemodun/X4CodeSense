@@ -530,10 +530,10 @@ class Scanner {
 
   /**
    * Finds the end of a quoted value. The closing quote is the next quote of the same kind, unless it is
-   * preceded by what looks like the start of another attribute (`name="`): then the user forgot to close
-   * this value and it ends before that attribute. A `<` never belongs to a value: it means the closing
-   * quote is missing too, and the value ends before the `<`, or before a `>` that only whitespace separates
-   * from the `<`.
+   * preceded by what looks like the start of another attribute (`name="`) and what follows it cannot
+   * follow a value: then the user forgot to close this value and it ends before that attribute. A `<`
+   * never belongs to a value: it means the closing quote is missing too, and the value ends before the
+   * `<`, or before a `>` that only whitespace separates from the `<`.
    */
   private findValueEnd(valueStart: number, quote: number): { end: number; closed: boolean } {
     const text = this.text;
@@ -546,7 +546,10 @@ class Scanner {
         while (last >= valueStart && isWhitespace(text.charCodeAt(last))) {
           last--;
         }
-        const match = last >= valueStart && text.charCodeAt(last) === EQUALS ? attributeStartBeforeQuote.exec(text.slice(valueStart, position)) : null;
+        const match =
+          last >= valueStart && text.charCodeAt(last) === EQUALS && !this.mayFollowValue(position + 1)
+            ? attributeStartBeforeQuote.exec(text.slice(valueStart, position))
+            : null;
         if (match) {
           return { end: valueStart + match.index, closed: false };
         }
@@ -558,6 +561,17 @@ class Scanner {
       position++;
     }
     return { end: this.cutValueBefore(valueStart, position), closed: false };
+  }
+
+  /**
+   * True when what starts at the offset may follow a closed value in a start tag: the end of the tag, or
+   * whitespace and the next attribute. A value written `comment="use faction= instead of otherobject="/>`
+   * is closed then, though it ends like the start of another attribute.
+   */
+  private mayFollowValue(offset: number): boolean {
+    const next = this.skipWhitespace(offset);
+    const code = this.text.charCodeAt(next);
+    return code === GT || (code === SLASH && this.text.charCodeAt(next + 1) === GT) || (next > offset && isNameStart(code));
   }
 
   /** End of an unclosed value that runs up to `limit`: before a trailing `>` or `/>`, and without trailing whitespace. */
