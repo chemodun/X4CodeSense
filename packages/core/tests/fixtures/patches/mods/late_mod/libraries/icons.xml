@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: base_mod's file of this name is skipped, so its icon is not there. -->
+<diff>
+  <add sel="/icons">
+    <icon name="late_icon" texture="c.tga" />
+  </add>
+  <remove sel="/icons/icon[@name='base_icon']" />
+</diff>

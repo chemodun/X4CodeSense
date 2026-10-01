@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: after base_mod's merge file and early_mod's patch. -->
+<diff>
+  <add sel="/wares/ware[@id='base_ware']" type="@volume">2</add>
+  <remove sel="/wares/ware[@id='water']" />
+  <remove sel="/wares/ware[@id='missing']" silent="true" />
+</diff>

@@ -7,7 +7,8 @@
  * `after`; `type="@attr"` adds an attribute with the operation's text as value), `replace` (a node by the
  * operation's elements, an attribute's value by its text) and `remove`. An operation applies to
  * the one node its `sel` selects; with none or several, a condition (`if`) that does not hold, or one of
- * the cases the game refuses, it is skipped and the next one goes on.
+ * the cases the game refuses, it is skipped and the next one goes on. A library file of the game also
+ * gets the merge files of extensions, in the same load order (`mergeFile`).
  */
 import { textOf } from '../xml/miniXPath';
 import { attributeNamed, decodeAttributeValue, type XmlAttribute, type XmlElement, type XmlRegion, type XmlStructure } from '../xml/xmlStructure';
@@ -245,6 +246,24 @@ function insert(parent: PatchNode, index: number, nodes: PatchNode[], anchor: Pa
   }
   parent.children.splice(index, 0, ...nodes);
   parent.markChanged();
+}
+
+/**
+ * Merges a file into a tree as the game merges an extension's library file whose root has the name of the
+ * tree's: the children of its root, comments too, are appended to the tree's root. False when the roots
+ * differ, and the game skips the file.
+ */
+export function mergeFile(document: PatchNode, merge: PatchSource): boolean {
+  const root = merge.structure.roots[0];
+  const target = document.children.find((child) => child.kind === 'element');
+  if (!root || !target || root.name !== target.name) {
+    return false;
+  }
+  const nodes = new NodeBuilder(merge).nodes(root.children, root.startTagEnd, root.endTag?.start ?? root.end, target);
+  if (nodes.length > 0) {
+    insert(target, target.children.length, nodes, target, true);
+  }
+  return true;
 }
 
 /**

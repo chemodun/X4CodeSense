@@ -579,6 +579,33 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     }
   });
 
+  it("checks the patches and merge files in an extension's libraries against the game's files", async () => {
+    const libraries = path.join(extension, 'libraries');
+    const patch = path.join(libraries, 'wares.xml');
+    const patchText = `<diff><remove sel="/wares/ware[@id='gone']"/></diff>\n`;
+    // A merge file the game skips: its root is not the root of the game's languages.xml.
+    const skipped = path.join(libraries, 'languages.xml');
+    mkdirSync(libraries, { recursive: true });
+    writeFileSync(patch, patchText);
+    writeFileSync(skipped, '<wares/>\n');
+    // A file of a name the game does not have: what the game does with it is not known.
+    writeFileSync(path.join(libraries, 'mine.xml'), '<mine/>\n');
+    try {
+      const result = await run('--unpacked', unpacked, extension);
+      expect(result.code).toBe(1);
+      expect(lines(result)).toEqual([
+        `${skipped}:1:2: error: The game skips this file: its root 'wares' is neither 'diff' for a patch nor 'languages' for a merge into libraries/languages.xml [library-root-mismatch]`,
+        `${patch}:1:${patchText.indexOf('/ware[') + 1}: error: No matching node in libraries/wares.xml: 'ware[@id='gone']' selects nothing [patch-no-match]`,
+        '6 file(s) in 3 folder(s): 2 script(s), 2 patch(es), 2 finding(s) (2 error(s))',
+      ]);
+      // Without the game, a merge file is XML like any other; no file there is said to be no script.
+      const alone = await run(extension);
+      expect(lines(alone)).toEqual(['6 file(s) in 3 folder(s): 2 script(s), 2 patch(es), 0 finding(s) (no schema validation: pass --unpacked or --game)']);
+    } finally {
+      rmSync(libraries, { recursive: true, force: true });
+    }
+  });
+
   it('finds extensions one level below the given folder', async () => {
     const result = await run(workDir);
     expect(result.code).toBe(0);

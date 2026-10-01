@@ -29,7 +29,8 @@ type Diagnostic = DocumentAnalysis['diagnostics'][number];
 
 interface ScriptFolder {
   folder: string;
-  schema: ScriptSchema;
+  /** The scripts it holds; none for an extension's `libraries`, which holds patches and merge files of the game's library files. */
+  schema?: ScriptSchema;
 }
 
 /** The severities of findings, the most severe first, as the text output and `--fail-on` name them. */
@@ -100,9 +101,10 @@ const usage = `Usage: x4-script-check [options] [folder...]
 
 Checks every *.xml file in the md and aiscripts folders found directly under each given folder
 (default: the current folder) and one level deeper, and in the extensions/<folder>/md and
-.../aiscripts folders there, which hold patches of other extensions; the game folder itself
-stands for the game and its DLCs. With --unpacked or --game, a patch is applied to the file it
-changes: the game's, or the named extension's.
+.../aiscripts folders there, which hold patches of other extensions; also in the libraries
+folder of each extension, its patches and merge files of the game's library files. The game
+folder itself stands for the game and its DLCs. With --unpacked or --game, a patch is applied to
+the file it changes: the game's, or the named extension's.
 
 Options:
   --unpacked <folder>   extracted vanilla game files; enables validation against the game schemas
@@ -206,13 +208,16 @@ function subfolders(files: FileSource, folder: string): string[] {
 /**
  * Finds script folders under a root: `<root>/md`, `<root>/aiscripts` and the same one level deeper,
  * so a single extension and a folder full of extensions both work; also the patches of other
- * extensions an extension keeps in `extensions/<folder>/md` and `.../aiscripts`. The game folder
- * stands for the game and its DLCs: an installed game's `extensions` holds the player's mods as well.
+ * extensions an extension keeps in `extensions/<folder>/md` and `.../aiscripts`, and the `libraries`
+ * of each extension. The game folder stands for the game and its DLCs: an installed game's `extensions`
+ * holds the player's mods as well, and the game's own `libraries` is what the extensions' patch.
  */
 function collectScriptFolders(root: string, files: FileSource, game: GameData | undefined): ScriptFolder[] {
   const result: ScriptFolder[] = [];
   const isGame = game !== undefined && path.relative(root, path.resolve(game.folder)) === '';
   const candidates: string[] = isGame ? [root, ...[...bundledExtensionsOf(game.folder, files)].sort(inOrder)] : [root, ...subfolders(files, root)];
+  // Not those in `extensions/<folder>`: nothing tells that the game reads them.
+  const withLibraries = new Set(candidates.filter((candidate) => !isGame || candidate !== root));
   for (const candidate of [...candidates]) {
     if (!isGame || candidate !== root) {
       candidates.push(...subfolders(files, path.join(candidate, 'extensions')));
@@ -225,6 +230,10 @@ function collectScriptFolders(root: string, files: FileSource, game: GameData | 
         result.push({ folder, schema });
       }
     }
+    const libraries = path.join(candidate, 'libraries');
+    if (withLibraries.has(candidate) && files.isDirectory(libraries)) {
+      result.push({ folder: libraries });
+    }
   }
   return result;
 }
@@ -236,7 +245,7 @@ function byPosition(a: Finding, b: Finding): number {
   return first.line - second.line || first.character - second.character;
 }
 
-function checkFile(file: string, schema: ScriptSchema, context: AnalysisContext, game: GameData | undefined, counters: Counters): Finding[] {
+function checkFile(file: string, schema: ScriptSchema | undefined, context: AnalysisContext, game: GameData | undefined, counters: Counters): Finding[] {
   counters.files++;
   const document = TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, (game?.files ?? diskFiles).readText(file));
   const analysis = analyzeDocument(document, context);
@@ -248,13 +257,14 @@ function checkFile(file: string, schema: ScriptSchema, context: AnalysisContext,
   if (detection.script) {
     counters.scripts++;
     if (detection.script.schema !== schema) {
-      aboutFile('script-in-wrong-folder', `is a ${detection.script.schema} script but lies in the ${schemaFolderName[schema]} folder`);
+      aboutFile('script-in-wrong-folder', `is a ${detection.script.schema} script but lies in the ${schema ? schemaFolderName[schema] : 'libraries'} folder`);
     } else if (detection.script.name === '') {
       aboutFile('script-without-name', 'root element has no name attribute');
     }
   } else if (detection.isDiff) {
     counters.patches++;
-  } else {
+  } else if (schema) {
+    // In a script folder only: in `libraries` such a file is a merge file, which its analysis checks with the game.
     const root = detection.rootElement ? `root element <${detection.rootElement}>` : 'no root element';
     aboutFile('not-a-script', `not recognised as a script or a patch (${root})`);
   }

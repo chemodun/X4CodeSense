@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test merge file for X4CodeSense: the children of its root are added to the game's wares. -->
+<wares>
+  <!-- the base mod's ware -->
+  <ware id="base_ware" price="5" />
+</wares>

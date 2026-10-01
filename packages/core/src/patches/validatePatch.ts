@@ -9,22 +9,30 @@
  * - With the index: a patch with nothing to patch (`patch-target-missing`), and per operation a path that
  *   selects nothing (`patch-no-match`, error, information with `silent="true"`) or several nodes
  *   (`patch-several-matches`), and what the game refuses to do (`patch-invalid-operation`).
+ * - A merge file, a file in an extension's `libraries` that is no patch, whose root is not the root of the
+ *   game's file it merges into: the game skips it (`library-root-mismatch`).
  */
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
-import type { ScriptIndex } from '../project/scriptIndex';
+import type { PatchTarget, ScriptIndex } from '../project/scriptIndex';
 import { attributeNamed, rangeInValue, type XmlAttribute, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { parseXPath, parseXPathCondition, type XPath } from '../xml/xpath';
 import { diffSchemaName, type SchemaSet } from '../xsd/loadSchemas';
 import { typeNamesOf, type XsdAttribute, type XsdElement } from '../xsd/schema';
 import { validateStructure } from '../xsd/validateStructure';
-import { analyzePatch, type PatchAnalysis } from './patchAnalysis';
+import { afterEarlier, analyzePatch, type PatchAnalysis } from './patchAnalysis';
 import type { PatchOperation } from './patchTree';
 
 export type PatchDiagnosticCode =
-  'patch-path-syntax' | 'patch-path-unsupported' | 'patch-target-missing' | 'patch-no-match' | 'patch-several-matches' | 'patch-invalid-operation';
+  | 'patch-path-syntax'
+  | 'patch-path-unsupported'
+  | 'patch-target-missing'
+  | 'patch-no-match'
+  | 'patch-several-matches'
+  | 'patch-invalid-operation'
+  | 'library-root-mismatch';
 
 export interface PatchValidation {
   diagnostics: Diagnostic[];
@@ -126,7 +134,7 @@ export function validatePatch(document: TextDocument, structure: XmlStructure, o
       DiagnosticSeverity.Warning
     );
   }
-  const earlier = patch.earlier.length === 0 ? '' : ` after ${patch.earlier.length} earlier patch${patch.earlier.length === 1 ? '' : 'es'}`;
+  const earlier = afterEarlier(patch);
   for (const operation of patch.operations) {
     const sel = operation.sel;
     const pathOf = operation.path;
@@ -153,6 +161,39 @@ export function validatePatch(document: TextDocument, structure: XmlStructure, o
     }
   }
   return result;
+}
+
+/**
+ * The game's file a document merges into: for a file in an extension's `libraries` that is no patch, the
+ * game's library file of its name, when the game has it. What the game does with a file of another name is
+ * not known.
+ */
+export function mergeTargetOf(uri: string, index: ScriptIndex): PatchTarget | undefined {
+  const file = fileOf(uri);
+  const target = file !== undefined && index.isLibraryFile(file) ? index.patchTarget(file) : undefined;
+  return target?.file === undefined ? undefined : target;
+}
+
+/**
+ * Checks a merge file: the game adds the children of its root to the root of its file when the roots have
+ * the same name, and skips the file when they do not, as it logs: "Root node name … is not 'diff' for patch
+ * file or … for merge file".
+ */
+export function validateMergeFile(document: TextDocument, structure: XmlStructure, target: PatchTarget, index: ScriptIndex, source: string): Diagnostic[] {
+  const root = structure.roots[0];
+  const expected = target.file === undefined ? undefined : index.parsedFile(target.file)?.structure.roots[0]?.name;
+  if (!root || expected === undefined || root.name === expected) {
+    return [];
+  }
+  return [
+    {
+      range: Range.create(document.positionAt(root.nameStart), document.positionAt(root.nameEnd)),
+      message: `The game skips this file: its root '${root.name}' is neither 'diff' for a patch nor '${expected}' for a merge into ${target.name}`,
+      severity: DiagnosticSeverity.Error,
+      code: 'library-root-mismatch',
+      source,
+    },
+  ];
 }
 
 /** For a patch of a game file the game does not have: where a patch of an extension's file of that name goes. */

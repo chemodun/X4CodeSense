@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE icons SYSTEM "icons.dtd">
+<!-- Test library file for X4CodeSense: with a document type declaration, as the game's has. -->
+<icons>
+  <icon name="game_icon" texture="a.tga" />
+</icons>

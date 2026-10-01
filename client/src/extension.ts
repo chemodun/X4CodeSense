@@ -326,7 +326,12 @@ function tooltip(info: DocumentInfoResult, inGame: boolean): vscode.MarkdownStri
     lines.push(`**${schemaDisplayName[info.metadata.schema]}** \`${info.metadata.name}\``);
   } else if (target?.file) {
     const whose = target.source === 'game' ? "the game's file" : target.source ? `the file of ${escaped(target.source)}` : 'the file';
-    const earlier = target.earlier.length === 0 ? '' : `, after ${plural(target.earlier.length, 'earlier patch', 'es')}`;
+    const patches = target.earlier.length - target.merged.length;
+    const counted = [
+      ...(patches > 0 ? [plural(patches, 'earlier patch', 'es')] : []),
+      ...(target.merged.length > 0 ? [plural(target.merged.length, patches > 0 ? 'merge file' : 'earlier merge file')] : []),
+    ];
+    const earlier = counted.length === 0 ? '' : `, after ${listed(counted)}`;
     const commands = ['[Open the file it changes](command:x4CodeSense.openPatchTarget)', '[Show what it changes](command:x4CodeSense.comparePatch)'];
     if (!inGame) {
       commands.push('[Edit above what it changes](command:x4CodeSense.editPatchWithResult)');

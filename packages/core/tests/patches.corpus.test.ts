@@ -6,6 +6,8 @@
  * in the extensions, what does not apply and what is wrong where it lands is pinned with the reason. The
  * editor features see each operation's target as it found it, and what it brings in where it lands. The
  * target before and after each patch, as the client compares them, differ only where the patch changes it.
+ * The files in the `libraries` of both, patches and merge files of the game's library files, are applied
+ * and merged in load order the same way, their findings pinned.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -45,7 +47,7 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
   if (index) {
     context.index = index;
   }
-  const analyses: { file: string; source: string; analysis: DocumentAnalysis; ms: number }[] = [];
+  const analyses: { file: string; source: string; analysis: DocumentAnalysis; ms: number; library?: boolean }[] = [];
   for (const entry of index?.entries() ?? []) {
     if (entry.kind !== 'patch') {
       continue;
@@ -54,10 +56,21 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     const analysis = analyzeText(readFileSync(entry.file, 'utf8'), context, pathToFileURL(entry.file).toString());
     analyses.push({ file: entry.file, source: entry.source, analysis, ms: performance.now() - started });
   }
+  // The patches of library files go with the others; their merge files are checked on their own.
+  const merges: { file: string; source: string; analysis: DocumentAnalysis }[] = [];
+  for (const { file, source } of index?.libraryFiles() ?? []) {
+    const started = performance.now();
+    const analysis = analyzeText(readFileSync(file, 'utf8'), context, pathToFileURL(file).toString());
+    if (analysis.detection.isDiff) {
+      analyses.push({ file, source, analysis, ms: performance.now() - started, library: true });
+    } else {
+      merges.push({ file, source, analysis });
+    }
+  }
   const isDlc = (source: string): boolean => source.startsWith('ego_dlc_');
 
   it('applies every operation of the DLCs, with no diagnostic', () => {
-    const dlc = analyses.filter((patch) => isDlc(patch.source));
+    const dlc = analyses.filter((patch) => isDlc(patch.source) && !patch.library);
     const operations = dlc.flatMap((patch) => patch.analysis.patch?.operations ?? []);
     console.log(
       `${dlc.length} DLC patch files, ${operations.length} operations, ${operations.filter((operation) => operation.status === 'applied').length} applied`
@@ -85,7 +98,7 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
   ].sort();
 
   it.skipIf(!mods)('reports exactly the known findings in the extensions', () => {
-    const extensions = analyses.filter((patch) => !isDlc(patch.source));
+    const extensions = analyses.filter((patch) => !isDlc(patch.source) && !patch.library);
     const operations = extensions.flatMap((patch) => patch.analysis.patch?.operations ?? []);
     console.log(
       `${extensions.length} extension patch files, ${operations.length} operations, ${operations.filter((operation) => operation.status === 'applied').length} applied`
@@ -96,6 +109,42 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
       )
     );
     expect(findings.sort()).toEqual(knownModFindings);
+  });
+
+  /** What the files in the DLCs' `libraries` report. An entry that disappears must be removed here, and a new one needs an explanation. */
+  const knownDlcLibraryFindings = [
+    // The Split DLC, loaded before, removes the same blueprints from the tutorial's start; Terran's silent copies are for a game without it.
+    ...['pier_l', 'stor_container_s', 'conn_base', 'conn_cross', 'conn_vertical'].map(
+      (module) =>
+        `patch-no-match: No matching node in libraries/gamestarts.xml after 1 earlier patch: 'ware[@ware='module_par_${module}_01']' selects nothing (silent) (ego_dlc_terran/libraries/gamestarts.xml)`
+    ),
+  ];
+
+  /** The same for the extensions'. */
+  const knownModLibraryFindings = [
+    // The `_da` baskets come from DeadAir_Scripts, which depends on DeadAir_Eco and so loads after it: these silent adds find nothing.
+    ...['argon', 'paranid', 'teladi', 'split', 'boron'].map(
+      (race) =>
+        `patch-no-match: No matching node in libraries/baskets.xml after 4 earlier patches: 'basket[@id='all_container_${race}_da']' selects nothing (silent) (DeadAir_Eco/libraries/baskets.xml)`
+    ),
+  ];
+
+  it("applies the patches and merges the merge files in the DLCs' and the extensions' libraries, with the known findings", () => {
+    const patches = analyses.filter((patch) => patch.library);
+    const operations = patches.flatMap((patch) => patch.analysis.patch?.operations ?? []);
+    const afterMerges = patches.filter((patch) => (patch.analysis.patch?.merged.length ?? 0) > 0).length;
+    console.log(
+      `${patches.length} patches of library files, ${operations.length} operations, ${operations.filter((operation) => operation.status === 'applied').length} applied; ${merges.length} merge files, merged before ${afterMerges} of the patches`
+    );
+    expect(patches.filter((patch) => isDlc(patch.source)).length).toBeGreaterThan(80);
+    expect(merges.filter((merge) => isDlc(merge.source)).length).toBeGreaterThan(100);
+    expect(operations.length).toBeGreaterThan(1000);
+    expect(afterMerges).toBeGreaterThan(30);
+    expect(operations.filter((operation) => operation.status === 'unknown' || operation.status === 'invalid')).toEqual([]);
+    const findings = [...patches, ...merges].flatMap((file) =>
+      file.analysis.diagnostics.map((diagnostic) => `${String(diagnostic.code)}: ${diagnostic.message} (${file.source}/libraries/${path.basename(file.file)})`)
+    );
+    expect(findings.sort()).toEqual([...knownDlcLibraryFindings, ...(mods ? knownModLibraryFindings : [])].sort());
   });
 
   // The index of a node's children is dropped where a patch changes the tree; any answer it gives that a look at
@@ -131,12 +180,16 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     let inserted = 0;
     let names = 0;
     const wrong: string[] = [];
-    for (const { file, analysis } of analyses) {
+    for (const { file, analysis, library } of analyses) {
       const where = `${path.basename(path.dirname(path.dirname(file)))}/${path.basename(file)}`;
       const document = analysis.document;
-      for (const operation of analysis.patch?.operations ?? []) {
+      const operations = analysis.patch?.operations ?? [];
+      // Each hover applies the operations before its own again: of a library patch's, up to a thousand and
+      // more, ten spread from the first to the last.
+      const every = library ? Math.max(1, Math.ceil((operations.length - 1) / 9)) : 1;
+      for (const [number, operation] of operations.entries()) {
         const step = operation.path?.steps[operation.path.steps.length - 1];
-        if (operation.status !== 'applied' || !operation.sel || !step) {
+        if (operation.status !== 'applied' || !operation.sel || !step || (number % every !== 0 && number !== operations.length - 1)) {
           continue;
         }
         // The tree an operation is evaluated on is the one it was applied to: its path selects one node.
@@ -146,8 +199,9 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
         if (!told.includes('Selects 1 node')) {
           wrong.push(`${where} ${operation.path?.text ?? ''}: ${told.split('\n')[2] ?? 'no hover'}`);
         }
-        // What it brings in is seen in the patched target, and shown at its place in the patch.
-        for (const element of operation.inserted.flatMap((node) => node.element ?? [])) {
+        // What it brings in is seen in the patched target, and shown at its place in the patch; a library
+        // file has no schema to tell of it.
+        for (const element of library ? [] : operation.inserted.flatMap((node) => node.element ?? [])) {
           inserted++;
           const range = hoverAt(analysis, element.nameStart + 1, data)?.range;
           if (!range || document.offsetAt(range.start) !== element.nameStart) {
@@ -282,8 +336,9 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     let written = 0;
     let operations = 0;
     let largest = { size: 0, file: '', after: '' };
-    for (const { file, analysis } of analyses) {
-      const comparison = index && analysis.patch ? comparePatch(analysis.patch, index) : undefined;
+    // Not those of library files: written from nothing, the largest takes a minute (the next test edits them).
+    for (const { file, analysis, library } of analyses) {
+      const comparison = index && analysis.patch && !library ? comparePatch(analysis.patch, index) : undefined;
       if (!index || !comparison) {
         continue;
       }
@@ -312,6 +367,52 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     expect(best).toBeLessThan(patchCeilingMs);
   });
 
+  // As a user edits the side of a library patch where the game's text is, and saves it: a letter in the last
+  // attribute value the patch did not write. What is written gives the edited text, or the writer refuses. Of
+  // each library file, the patch loaded last, which finds the most earlier files.
+  it('writes an edit of the side of a patch of every library file into the patch', () => {
+    const last = new Map<string, (typeof analyses)[number]>();
+    for (const patch of analyses) {
+      const target = patch.analysis.patch?.target.file;
+      const known = target === undefined ? undefined : last.get(target);
+      if (patch.library && target !== undefined && (patch.analysis.patch?.earlier.length ?? 0) >= (known?.analysis.patch?.earlier.length ?? -1)) {
+        last.set(target, patch);
+      }
+    }
+    const refused: string[] = [];
+    let written = 0;
+    let slowest = { ms: 0, where: '' };
+    for (const { file, analysis } of last.values()) {
+      const comparison = index && analysis.patch ? comparePatch(analysis.patch, index) : undefined;
+      if (!index || !analysis.patch || !comparison) {
+        continue;
+      }
+      const ownAt = (offset: number): boolean => comparison.own.some((piece) => piece.start <= offset && offset < piece.end);
+      let at = comparison.after.lastIndexOf('="');
+      while (at > 0 && ownAt(at + 2)) {
+        at = comparison.after.lastIndexOf('="', at - 1);
+      }
+      if (at <= 0) {
+        continue;
+      }
+      const where = `${path.basename(path.dirname(path.dirname(file)))}/${path.basename(file)}`;
+      const started = performance.now();
+      const result = writePatch(analysis.patch, `${comparison.after.slice(0, at + 2)}Q${comparison.after.slice(at + 2)}`, index);
+      const ms = performance.now() - started;
+      if (ms > slowest.ms) {
+        slowest = { ms, where };
+      }
+      if (result.text === undefined) {
+        refused.push(`${where}: ${result.refused[0]?.reason ?? 'no patch'}`);
+      } else {
+        written++;
+      }
+    }
+    console.log(`${written} patches of ${last.size} library files written with an edit of their side; slowest ${slowest.where} ${slowest.ms.toFixed(0)} ms`);
+    expect(written).toBeGreaterThan(30);
+    expect(refused).toEqual([]);
+  });
+
   /**
    * The problems the side with a patch shows: those of the extensions' patches where they land, as the
    * patch documents report them (`knownModFindings`). The targets' own are in the side before the patch too.
@@ -326,8 +427,9 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     let compared = 0;
     let leftOut = 0;
     let largest = { run: (): unknown => undefined, where: '', size: 0, target: '' };
-    for (const { file, analysis } of analyses) {
-      const comparison = index && analysis.patch ? comparePatch(analysis.patch, index) : undefined;
+    for (const { file, analysis, library } of analyses) {
+      // The side of a library file is no script: there is nothing to check in it.
+      const comparison = index && analysis.patch && !library ? comparePatch(analysis.patch, index) : undefined;
       if (!comparison) {
         continue;
       }
@@ -360,9 +462,15 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     expect(best).toBeLessThan(1.5 * bestTarget);
   });
 
-  // A patch document's analysis includes the file it changes: twice the ceiling of a file.
+  // A patch document's analysis includes the file it changes: twice the ceiling of a file. The slowest of the
+  // scripts' patches, and of the library files'.
   it('analyses the slowest patches within the ceiling', () => {
-    const slowest = [...analyses].sort((a, b) => b.ms - a.ms).slice(0, 3);
+    const slowest = [false, true].flatMap((library) =>
+      analyses
+        .filter((patch) => (patch.library ?? false) === library)
+        .sort((a, b) => b.ms - a.ms)
+        .slice(0, 3)
+    );
     for (const patch of slowest) {
       const text = readFileSync(patch.file, 'utf8');
       const target = patch.analysis.patch?.target.file ?? '';

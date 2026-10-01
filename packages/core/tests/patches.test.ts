@@ -4,15 +4,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { Range } from 'vscode-languageserver-types';
 import {
+  afterEarlier,
   analyzeText,
   attributeNamed,
   comparePatch,
   completionAt,
   definitionAt,
+  documentTree,
   evaluateXPath,
   hoverAt,
   loadGameData,
   loadScriptIndex,
+  mergeFile,
   parseXml,
   parseXPath,
   prepareRenameAt,
@@ -24,6 +27,7 @@ import {
   type AnalysisContext,
   type DocumentAnalysis,
   type PatchNode,
+  type PatchSource,
 } from '../src';
 
 const fixtures = fileURLToPath(new URL('./fixtures/patches', import.meta.url));
@@ -73,12 +77,16 @@ describe('patch targets', () => {
     expect(folders).toEqual([
       'game/md game',
       'game/aiscripts game',
+      'game/libraries game',
       'mods/base_mod/md ws_12345 -> md at game/md',
       'mods/base_mod/aiscripts ws_12345 -> aiscripts at game/aiscripts',
+      'mods/base_mod/libraries ws_12345 -> libraries at game/libraries',
       'mods/early_mod/md early_mod -> md at game/md',
       'mods/early_mod/aiscripts early_mod -> aiscripts at game/aiscripts',
+      'mods/early_mod/libraries early_mod -> libraries at game/libraries',
       'mods/late_mod/md late_mod -> md at game/md',
       'mods/late_mod/aiscripts late_mod -> aiscripts at game/aiscripts',
+      'mods/late_mod/libraries late_mod -> libraries at game/libraries',
       'mods/late_mod/extensions/absent_mod/md late_mod -> extensions/absent_mod/md',
       'mods/late_mod/extensions/base_mod/md late_mod -> extensions/base_mod/md at mods/base_mod/md',
     ]);
@@ -732,5 +740,164 @@ describe('patches while typing', () => {
         renameAt(analysis, offset, 'renamed', data);
       }
     }
+  });
+});
+
+describe('library files', () => {
+  const libraries = (folder: string, name: string): string => path.join(folder, 'libraries', name);
+  const gameWares = libraries(gameFolder, 'wares.xml');
+  const gameIcons = libraries(gameFolder, 'icons.xml');
+  const baseWares = libraries(path.join(modsFolder, 'base_mod'), 'wares.xml');
+  const baseIcons = libraries(path.join(modsFolder, 'base_mod'), 'icons.xml');
+  const earlyWares = libraries(path.join(modsFolder, 'early_mod'), 'wares.xml');
+  const lateWares = libraries(path.join(modsFolder, 'late_mod'), 'wares.xml');
+  const lateIcons = libraries(path.join(modsFolder, 'late_mod'), 'icons.xml');
+  const nowhere = libraries(path.join(modsFolder, 'late_mod'), 'nowhere.xml');
+  const data = { ...game, index, folder: gameFolder };
+  const full = readFileSync(lateWares, 'utf8');
+  const late = analyzeFile(lateWares, full);
+  const at = (text: string, needle: string, delta = 0): number => text.indexOf(needle) + delta;
+  const hoverText = (analysis: DocumentAnalysis, offset: number): string => {
+    const found = hoverAt(analysis, offset, data)?.contents;
+    return found && typeof found === 'object' && 'value' in found ? found.value : '';
+  };
+  const place = (location: { uri: string; range: { start: { line: number; character: number } } }): string =>
+    `${relative(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}`;
+  const labels = (analysis: DocumentAnalysis, offset: number): string[] => completionAt(analysis, offset, data).map((item) => item.label);
+  const wares = (document: PatchNode | undefined): string[] =>
+    document
+      ? evaluateXPath(parseXPath('/wares/ware'), document).map((selection) =>
+          selection.kind === 'node' ? selection.node.attributes.map((attribute) => `${attribute.name}=${attribute.value}`).join(' ') : ''
+        )
+      : [];
+
+  it("ties a file in an extension's libraries to the game's file of its name, and lists the files of a name in load order", () => {
+    expect(index.patchTarget(lateWares)).toEqual({ file: gameWares, name: 'libraries/wares.xml' });
+    expect(index.patchTarget(nowhere)).toEqual({ name: 'libraries/nowhere.xml', missing: 'the game has no libraries/nowhere.xml' });
+    expect(index.patchTarget(gameWares)).toBeUndefined();
+    expect(index.patchesOf(gameWares).map((file) => `${file.source} ${relative(file.file)}`)).toEqual([
+      'ws_12345 mods/base_mod/libraries/wares.xml',
+      'early_mod mods/early_mod/libraries/wares.xml',
+      'late_mod mods/late_mod/libraries/wares.xml',
+    ]);
+    expect(index.patchesBefore(lateWares, gameWares).map((file) => relative(file.file))).toEqual([
+      'mods/base_mod/libraries/wares.xml',
+      'mods/early_mod/libraries/wares.xml',
+    ]);
+    expect(index.libraryFiles().map((file) => relative(file.file))).toEqual([
+      'mods/base_mod/libraries/icons.xml',
+      'mods/base_mod/libraries/wares.xml',
+      'mods/early_mod/libraries/wares.xml',
+      'mods/late_mod/libraries/icons.xml',
+      'mods/late_mod/libraries/nowhere.xml',
+      'mods/late_mod/libraries/wares.xml',
+    ]);
+    // Known by their folders, not indexed: none of them is a script.
+    expect([baseWares, gameWares, earlyPatch].map((file) => index.isLibraryFile(file))).toEqual([true, false, false]);
+    expect(index.hasFile(baseWares)).toBe(false);
+    expect(index.sourceOf(baseWares)).toBe('ws_12345');
+    expect(index.sourceOf(gameWares)).toBe('game');
+  });
+
+  it('merges the merge files and applies the patches loaded before a patch, as the game does', () => {
+    const patch = late.patch;
+    expect(patch?.earlier.map(relative)).toEqual(['mods/base_mod/libraries/wares.xml', 'mods/early_mod/libraries/wares.xml']);
+    expect(patch?.merged.map(relative)).toEqual(['mods/base_mod/libraries/wares.xml']);
+    expect(patch?.operations.map((operation) => `${operation.kind} ${operation.status}`)).toEqual(['add applied', 'remove applied', 'remove no-match']);
+    expect(wares(patch?.document)).toEqual(['id=energycells price=10', 'id=base_ware price=6 volume=2']);
+    // No schema tells what a library file holds: what a patch brings is not checked where it lands.
+    expect(patch?.patched).toBeUndefined();
+    expect(report(late)).toEqual([
+      "6 3 patch-no-match: No matching node in libraries/wares.xml after 1 earlier patch and 1 merge file: 'ware[@id='missing']' selects nothing (silent)",
+    ]);
+    expect(report(analyzeFile(earlyWares))).toEqual([]);
+    expect(report(analyzeFile(nowhere))).toEqual(['3 2 patch-target-missing: Nothing to patch: the game has no libraries/nowhere.xml']);
+  });
+
+  it('merges through the index of the root, and only a file of the same root', () => {
+    const source = (file: string, text: string): PatchSource => ({ file, text, structure: parseXml(text) });
+    const tree = documentTree(source('game.xml', '<wares><ware id="a"/></wares>'));
+    const select = (path: string): number => evaluateXPath(parseXPath(path), tree).length;
+    // Asked before the merge, so the root's index is built.
+    expect(select("/wares/ware[@id='b']")).toBe(0);
+    expect(mergeFile(tree, source('merge.xml', '<wares><!-- b --><ware id="b"/></wares>'))).toBe(true);
+    expect(select("/wares/ware[@id='b']")).toBe(1);
+    expect(tree.children[0].children.map((child) => child.kind)).toEqual(['element', 'comment', 'element']);
+    expect(mergeFile(tree, source('other.xml', '<icons><icon/></icons>'))).toBe(false);
+    expect(select('/wares/*')).toBe(2);
+  });
+
+  it('counts the earlier files by kind in messages', () => {
+    const files = (count: number): string[] => Array.from({ length: count }, (_, number) => `f${number}`);
+    expect(afterEarlier({ earlier: [], merged: [] })).toBe('');
+    expect(afterEarlier({ earlier: files(2), merged: [] })).toBe(' after 2 earlier patches');
+    expect(afterEarlier({ earlier: files(1), merged: files(1) })).toBe(' after 1 earlier merge file');
+    expect(afterEarlier({ earlier: files(3), merged: files(2) })).toBe(' after 1 earlier patch and 2 merge files');
+  });
+
+  it("skips and reports a file whose root is neither diff nor the game file's, as the game does", () => {
+    const skipped = analyzeFile(baseIcons);
+    expect(report(skipped)).toEqual([
+      "3 1 library-root-mismatch: The game skips this file: its root 'icon' is neither 'diff' for a patch nor 'icons' for a merge into libraries/icons.xml",
+    ]);
+    expect(covered(skipped, 'library-root-mismatch')).toEqual(['icon']);
+    const icons = analyzeFile(lateIcons);
+    expect(icons.patch?.earlier).toEqual([]);
+    expect(report(icons)).toEqual(["7 1 patch-no-match: No matching node in libraries/icons.xml: 'icon[@name='base_icon']' selects nothing"]);
+    // A merge file as it should be, and without the index any XML: nothing to report.
+    expect(report(analyzeFile(baseWares))).toEqual([]);
+    expect(report(analyzeFile(baseIcons, undefined, { schemas: game.schemas }))).toEqual([]);
+  });
+
+  it('follows the editor text of a merge file before the patch', () => {
+    const edited = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const text = readFileSync(baseWares, 'utf8').replace('base_ware', 'other_ware');
+    edited.setStructure(baseWares, text, parseXml(text), 'ws_12345', true);
+    const analysis = analyzeFile(lateWares, full, { ...context, index: edited });
+    expect(analysis.patch?.operations.map((operation) => operation.status)).toEqual(['no-match', 'applied', 'no-match']);
+    expect(wares(analysis.patch?.document)).toEqual(['id=energycells price=10', 'id=other_ware price=5']);
+  });
+
+  it('answers in a library patch from the game file as the patch finds it, merged into', () => {
+    expect(hoverText(late, at(full, "[@id='base_ware']", 2))).toBe(
+      '**ware\\[@id=\'base\\_ware\'\\]**\n\nSelects 1 node:\n\n- `<ware id="base_ware">` · added by the merge file of `ws_12345`, line 5'
+    );
+    expect(definitionAt(late, at(full, "[@id='base_ware']", 2), data).map(place)).toEqual(['mods/base_mod/libraries/wares.xml:4:3']);
+    expect(definitionAt(late, at(full, "[@id='water']", 2), data).map(place)).toEqual(['game/libraries/wares.xml:4:3']);
+    expect(labels(late, at(full, "[@id='base_ware']", 6))).toEqual(['energycells', 'water', 'base_ware']);
+  });
+
+  it('compares the game file before and after a library patch', () => {
+    const compared = late.patch && comparePatch(late.patch, index);
+    expect(compared?.name).toBe('libraries/wares.xml');
+    expect(compared?.before).toContain("<!-- the base mod's ware -->");
+    expect(compared?.before).toContain('<ware id="base_ware" price="6"/>');
+    expect(compared?.after).toContain('<ware id="base_ware" price="6" volume="2"/>');
+    expect(compared?.after).not.toContain('water');
+    // Its document type declaration is kept, as everything else around the root.
+    const icons = analyzeFile(lateIcons).patch;
+    expect(icons && comparePatch(icons, index)?.before).toBe(readFileSync(gameIcons, 'utf8'));
+  });
+
+  it('never throws on a half-typed library patch or merge file', () => {
+    for (const [file, text] of [
+      [lateWares, full],
+      [baseWares, readFileSync(baseWares, 'utf8')],
+    ]) {
+      for (let cut = 0; cut <= text.length; cut += 3) {
+        const analysis = analyzeFile(file, text.slice(0, cut));
+        const offset = Math.max(0, cut - 2);
+        hoverAt(analysis, offset, data);
+        completionAt(analysis, offset, data);
+        definitionAt(analysis, offset, data);
+        if (analysis.patch) {
+          comparePatch(analysis.patch, index);
+        }
+      }
+    }
+    // While its root is typed, a merge file shows what the game would make of it so far.
+    const typed = analyzeFile(baseWares, '<?xml version="1.0" encoding="utf-8"?>\n<wares>\n  <ware id="new" pri');
+    expect(typed.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('library-root-mismatch');
+    expect(typed.diagnostics.length).toBeGreaterThan(0);
   });
 });

@@ -91,8 +91,9 @@ function nodeText(node: PatchNode): string {
     const text = node.stringValue();
     return `<!--${text.length > 40 ? `${text.slice(0, 37)}...` : text}-->`;
   }
-  const name = node.attribute('name');
-  return name === undefined ? `<${node.name}>` : `<${node.name} name="${name}">`;
+  // What names it: `name` in scripts, mostly `id` in library files.
+  const named = ['name', 'id'].find((attribute) => node.attribute(attribute) !== undefined);
+  return named === undefined ? `<${node.name}>` : `<${node.name} ${named}="${node.attribute(named) ?? ''}">`;
 }
 
 function selectionText(selection: XPathSelection<PatchNode>): string {
@@ -122,7 +123,9 @@ function placeOfNode(
   if (source === patch.source) {
     return { document: analysis.document, ...region, label: 'added by this patch' };
   }
-  const label = file === patch.target.file ? path.basename(file) : `added by the patch of ${inlineCode(game.index?.sourceOf(file) ?? path.basename(file))}`;
+  const whose = inlineCode(game.index?.sourceOf(file) ?? path.basename(file));
+  const label =
+    file === patch.target.file ? path.basename(file) : patch.merged.includes(file) ? `added by the merge file of ${whose}` : `added by the patch of ${whose}`;
   return { document: documentOf(source), ...region, label };
 }
 

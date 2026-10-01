@@ -1235,6 +1235,14 @@ describe('problems of the workspace', () => {
       '  </add>',
       '</diff>',
     ]);
+    // A merge file in one extension's libraries, and a patch in another's of what it adds.
+    const merge = write('wsbase/libraries/wares.xml', ['<wares>', '  <ware id="wsware"/>', '</wares>']);
+    const libraryPatch = write('wspatcher/libraries/wares.xml', [
+      '<diff>',
+      `  <add sel="/wares/ware[@id='wsware']" type="@volume">1</add>`,
+      `  <remove sel="/wares/ware[@id='gone']" silent="true"/>`,
+      '</diff>',
+    ]);
     const workspace = { uri: pathToFileURL(root).toString(), name: 'wsproblems' };
     // The tests after this one see neither the folder nor the mode, also when it fails.
     onTestFinished(async () => {
@@ -1254,7 +1262,9 @@ describe('problems of the workspace', () => {
     clientSettings.diagnosticMode = 'workspace';
     await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
-    await vi.waitFor(() => expect(published.has(broken.uri) && published.has(caller.uri)).toBe(true), { timeout: 10_000 });
+    await vi.waitFor(() => expect(published.has(broken.uri) && published.has(caller.uri) && published.has(libraryPatch.uri)).toBe(true), {
+      timeout: 10_000,
+    });
     collecting.dispose();
     // The fixture schemas do not know `create_order`.
     const unknownOrder = ['4:8 unknown-element', '4:45 order-undefined'];
@@ -1263,6 +1273,9 @@ describe('problems of the workspace', () => {
     expect(published.get(caller.uri)?.[0].version).toBeUndefined();
     expect(published.has(clean.uri)).toBe(false);
     expect(published.has(patch.uri)).toBe(false);
+    // The library patch after the merge file: only its silent removal of a ware nobody adds.
+    expect(published.get(libraryPatch.uri)?.map(summarize)).toEqual([['3:22 patch-no-match']]);
+    expect(published.has(merge.uri)).toBe(false);
 
     // Open, its problems follow the editor; closed without saving, they are the file's on disk again.
     expect(summarize(await open(caller.uri, caller.text))).toEqual(unknownOrder);
@@ -1300,6 +1313,18 @@ describe('problems of the workspace', () => {
     const matched = diagnosticsCount(patch.uri, 0);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: target.uri } });
     await matched;
+
+    // The ware renamed in the merge file in the editor: the closed library patch is checked again.
+    await open(merge.uri, merge.text);
+    const unmerged = diagnosticsCount(libraryPatch.uri, 2);
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: merge.uri, version: 2 },
+      contentChanges: [{ text: merge.text.replace('wsware', 'other') }],
+    });
+    expect(summarize(await unmerged)).toEqual(['2:19 patch-no-match', '3:22 patch-no-match']);
+    const merged = diagnosticsCount(libraryPatch.uri, 1);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: merge.uri } });
+    await merged;
 
     // Changed on disk.
     const fixedOnDisk = diagnosticsCount(caller.uri, 1);
@@ -1340,6 +1365,7 @@ describe('patches', () => {
       uri: apiUri,
       source: 'base',
       earlier: [],
+      merged: [],
     });
     const compared = await connection.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, { uri: patchUri });
     const after = apiText.replace('<cue name="Register"/>', '<cue name="Register" instantiate="true"/>');
@@ -1580,7 +1606,11 @@ describe('an installed game read in place', () => {
     mkdirSync(dlc, { recursive: true });
     writeFileSync(path.join(dlc, 'content.xml'), '<content id="ego_dlc_test" name="Test DLC" version="100"/>\n');
     const dlcPatchText = `<diff>\n  <add sel="/mdscript/cues/cue[@name='Start']" type="@namespace">this</add>\n</diff>\n`;
-    writeCatalog(path.join(dlc, 'ext_01.cat'), [{ path: 'md/setup.xml', data: dlcPatchText }]);
+    // And a merge file, whose ware goes into the game's wares.
+    writeCatalog(path.join(dlc, 'ext_01.cat'), [
+      { path: 'md/setup.xml', data: dlcPatchText },
+      { path: 'libraries/wares.xml', data: '<wares>\n  <ware id="dlcware"/>\n</wares>\n' },
+    ]);
     // The workspace: a mod naming the game's cue, and patching the game's script.
     const mods = path.join(workDir, 'installmods');
     const write = (file: string, text: string): string => {
@@ -1604,6 +1634,10 @@ describe('an installed game read in place', () => {
     const mineUri = write(path.join(mods, 'mine', 'md', 'mine.xml'), mineText);
     const minePatchText = '<diff>\n  <add sel="/mdscript/cues"><cue name="Mine"/></add>\n</diff>\n';
     const minePatchUri = write(path.join(mods, 'mine', 'md', 'setup.xml'), minePatchText);
+    // And a patch of the game's wares, of the ware the DLC's merge file adds.
+    const mineWaresLines = ['<diff>', `  <add sel="/wares/ware[@id='dlcware']" type="@volume">1</add>`, '</diff>'];
+    const mineWaresText = `${mineWaresLines.join('\n')}\n`;
+    const mineWaresUri = write(path.join(mods, 'mine', 'libraries', 'wares.xml'), mineWaresText);
     const workspace = { uri: pathToFileURL(mods).toString(), name: 'installmods' };
 
     clientSettings.unpackedFileLocation = '';
@@ -1649,7 +1683,23 @@ describe('an installed game read in place', () => {
       uri: gameSetup,
       source: 'game',
       earlier: [path.join(dlc, 'md', 'setup.xml')],
+      merged: [],
     });
+    // A patch of a library file: after the DLC's merge file, whose ware it finds there.
+    expect(summarize(await open(mineWaresUri, mineWaresText))).toEqual([]);
+    const dlcWares = path.join(dlc, 'libraries', 'wares.xml');
+    expect((await documentInfo(mineWaresUri)).patchTarget).toEqual({
+      name: 'libraries/wares.xml',
+      file: path.join(install, 'libraries', 'wares.xml'),
+      uri: 'x4codesense-game:/libraries/wares.xml',
+      source: 'game',
+      earlier: [dlcWares],
+      merged: [dlcWares],
+    });
+    const intoMerge = (await connection.sendRequest(DefinitionRequest.type, at(mineWaresUri, mineWaresLines, 1, 'dlcware'))) as Location[];
+    expect(intoMerge.map((location) => `${location.uri}:${location.range.start.line}`)).toEqual([
+      'x4codesense-game:/extensions/ego_dlc_test/libraries/wares.xml:1',
+    ]);
 
     // The text of a game document, from the catalogs; none for a file the game does not have, nor for another uri.
     const gameFile = (uri: string): Promise<GameFileResult> => connection.sendRequest<GameFileResult>(GameFileRequestMethod, { uri });
@@ -1682,7 +1732,7 @@ describe('an installed game read in place', () => {
     const written = await connection.sendRequest<PatchWriteResult>(PatchWriteRequestMethod, { uri: dlcPatch, version: 1, edited: compared?.after ?? '' });
     expect(written.refused).toEqual([{ line: 0, reason: "The game's files are read only" }]);
 
-    for (const uri of [gameSetup, dlcPatch, minePatchUri, mineUri]) {
+    for (const uri of [gameSetup, dlcPatch, minePatchUri, mineWaresUri, mineUri]) {
       const closed = diagnosticsCount(uri, 0);
       await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
       await closed;

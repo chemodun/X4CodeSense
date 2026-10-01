@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test library file for X4CodeSense: the game's wares, merged into and patched by the extensions. -->
+<wares>
+  <ware id="energycells" price="10" />
+  <ware id="water" price="20" />
+</wares>

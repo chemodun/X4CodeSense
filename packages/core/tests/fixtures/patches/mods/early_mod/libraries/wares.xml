@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: changes the ware base_mod's merge file adds. -->
+<diff>
+  <replace sel="/wares/ware[@id='base_ware']/@price">6</replace>
+</diff>

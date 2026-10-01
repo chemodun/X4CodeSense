@@ -23,7 +23,7 @@ import { validateTexts } from '../texts/validateTexts';
 import type { PatchAnalysis } from '../patches/patchAnalysis';
 import { overlapsPieceOf, sourceOffsetAt, sourceRange, writePatchedTree } from '../patches/patchedDocument';
 import type { PatchSource } from '../patches/patchTree';
-import { validatePatch } from '../patches/validatePatch';
+import { mergeTargetOf, validateMergeFile, validatePatch } from '../patches/validatePatch';
 
 /** `source` of every diagnostic this library produces. */
 export const diagnosticSource = 'X4CodeSense';
@@ -112,7 +112,7 @@ function cueNames(structure: XmlStructure): Set<string> {
 export interface DocumentAnalysis {
   document: TextDocument;
   detection: DocumentDetection;
-  /** Element structure; present for scripts and patches, absent for other documents. */
+  /** Element structure; present for scripts, patches and merge files, absent for other documents. */
   structure?: XmlStructure;
   /** Schema declaration of each element that could be resolved; empty without schemas. */
   declarations: Map<XmlElement, XsdElement>;
@@ -136,14 +136,16 @@ export interface DocumentAnalysis {
  * Analyses one document: classifies it, and for scripts and patches scans the XML structure and reports
  * well-formedness problems as diagnostics. Scripts are then validated against their schema when one is
  * available; patches against `diff.xsd`, and with the index against the file they change, where what
- * they bring in is checked as part of that script. Other XML documents get no diagnostics, so other XML
- * tooling stays in charge of them.
+ * they bring in is checked as part of that script. With the index, a merge file in an extension's
+ * `libraries` is scanned as well, and its root checked. Other XML documents get no diagnostics, so other
+ * XML tooling stays in charge of them.
  */
 export function analyzeDocument(document: TextDocument, context: AnalysisContext = {}): DocumentAnalysis {
   const text = document.getText();
   const detection = detectDocument(text);
   const analysis: DocumentAnalysis = { document, detection, declarations: new Map(), diagnostics: [] };
-  if (!detection.script && !detection.isDiff) {
+  const merge = !detection.script && !detection.isDiff && context.index ? mergeTargetOf(document.uri, context.index) : undefined;
+  if (!detection.script && !detection.isDiff && !merge) {
     return analysis;
   }
   const structure = parseXml(text);
@@ -156,6 +158,10 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
       code: problem.code,
       source: diagnosticSource,
     });
+  }
+  if (merge && context.index) {
+    analysis.diagnostics.push(...validateMergeFile(document, structure, merge, context.index, diagnosticSource));
+    return analysis;
   }
   if (detection.isDiff) {
     const validation = validatePatch(document, structure, {
@@ -237,11 +243,19 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
  * that lie in what this patch brought in, placed in the patch document. The target's own findings and
  * those in what earlier patches brought in are theirs to report, and the patch document reports its own
  * well-formedness problems. So only the elements the patch's pieces touch are checked: what it inserted,
- * the elements it set values of, and their ancestors, whose children it changed.
+ * the elements it set values of, and their ancestors, whose children it changed. Only a script is
+ * analysed so: a library file has no schema to check it against.
  */
 function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, context: AnalysisContext): Diagnostic[] {
   const target = patch.target.file;
-  if (!patch.document || target === undefined || !patch.operations.some((operation) => operation.status === 'applied' && operation.kind !== 'remove')) {
+  const root = patch.document?.children.find((child) => child.kind === 'element');
+  if (
+    !patch.document ||
+    target === undefined ||
+    !root ||
+    !Object.values(rootElementName).includes(root.name) ||
+    !patch.operations.some((operation) => operation.status === 'applied' && operation.kind !== 'remove')
+  ) {
     return [];
   }
   const written = writePatchedTree(patch.document);

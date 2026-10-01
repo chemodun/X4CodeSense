@@ -399,7 +399,12 @@ class Completer {
  */
 export function completionAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined, options: CompletionOptions = {}): CompletionItem[] {
   if (!analysis.structure || (analysis.detection.isDiff && !scriptSchemaOf(analysis))) {
-    // XML that is no script, or a patch of such a file (texts, wares): text references only.
+    // XML that is no script, or a patch of such a file (texts, wares): the paths of a patch from the file it
+    // changes, else text references only.
+    const inPath = analysis.structure && game ? pathCompletionsAt(analysis, offset, game) : undefined;
+    if (inPath) {
+      return inPath;
+    }
     const texts = game?.texts;
     return texts && texts.fileCount > 0 ? (textReferenceCompletions(analysis.document, offset, texts, options) ?? []) : [];
   }

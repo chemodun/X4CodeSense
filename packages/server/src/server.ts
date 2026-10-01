@@ -823,21 +823,34 @@ function openFiles(): Set<string> {
   );
 }
 
-/** The patches of a file, and of the file a patch changes, without the file itself: what they find depends on its text. */
+/**
+ * The patches of a file, and of the file a patch or a merge file changes, without the file itself: what
+ * they find depends on its text.
+ */
 function patchFilesOf(file: string, target?: string): string[] {
   const index = game?.index;
   if (!index) {
     return [];
   }
   const own = fileKey(file);
+  target ??= index.isLibraryFile(file) ? index.patchTarget(file)?.file : undefined;
   return [file, ...(target ? [target] : [])]
     .flatMap((patched) => index.patchesOf(patched).map((patch) => patch.file))
     .filter((patch) => fileKey(patch) !== own);
 }
 
-/** True when the workspace's problems are asked for and the file is an indexed script or patch in a workspace folder. */
+/**
+ * True when the workspace's problems are asked for and the file is an indexed script or patch, or a file
+ * of an extension's `libraries`, in a workspace folder.
+ */
 function isCheckedInWorkspace(file: string): boolean {
-  return settings.diagnosticMode === 'workspace' && game?.index?.hasFile(file) === true && workspaceFolders.some((folder) => isInside(file, folder));
+  const index = game?.index;
+  return (
+    settings.diagnosticMode === 'workspace' &&
+    index !== undefined &&
+    (index.hasFile(file) || index.isLibraryFile(file)) &&
+    workspaceFolders.some((folder) => isInside(file, folder))
+  );
 }
 
 /** True when the file's problems are shown while it is no open document: it is in an editor tab, or checked in the workspace. */
@@ -928,9 +941,10 @@ function checkWorkspaceFiles(files: ReadonlyMap<string, string>): void {
 /**
  * Checks every script that is no open document, as it is on disk, and publishes the problems that
  * changed: the files of the editor tabs the editor has not loaded yet, and when the workspace's problems
- * are asked for, the indexed scripts and patches in a workspace folder. Clears those of files no longer
- * checked. In slices, so requests are answered meanwhile; a newer check stops this one, and while the
- * game files are read or the index is built, the build checks them when it is done. Announced with
+ * are asked for, the indexed scripts and patches and the files of extensions' `libraries` in a workspace
+ * folder. Clears those of files no longer checked. In slices, so requests are answered meanwhile; a newer
+ * check stops this one, and while the game files are read or the index is built, the build checks them
+ * when it is done. Announced with
  * progress and in the log after the index was built or the settings changed, silent after an edit.
  */
 async function checkWorkspace(announce: boolean): Promise<void> {
@@ -943,7 +957,7 @@ async function checkWorkspace(announce: boolean): Promise<void> {
   }
   const index = settings.diagnosticMode === 'workspace' ? game?.index : undefined;
   const wanted = new Map(tabFiles);
-  for (const entry of index?.entries() ?? []) {
+  for (const entry of [...(index?.entries() ?? []), ...(index?.libraryFiles() ?? [])]) {
     if (workspaceFolders.some((folder) => isInside(entry.file, folder))) {
       wanted.set(fileKey(entry.file), entry.file);
     }
@@ -1295,7 +1309,7 @@ connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): Do
     metadata: detection?.script,
     isDiff: detection?.isDiff ?? false,
     rootElement: detection?.rootElement,
-    patchTarget: patch ? { ...patch.target, ...(uri ? { uri } : {}), ...(source ? { source } : {}), earlier: patch.earlier } : undefined,
+    patchTarget: patch ? { ...patch.target, ...(uri ? { uri } : {}), ...(source ? { source } : {}), earlier: patch.earlier, merged: patch.merged } : undefined,
   };
 });
 

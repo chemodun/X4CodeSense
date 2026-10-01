@@ -33,8 +33,10 @@ export interface PatchTargetInfo extends PatchTarget {
   uri?: string;
   /** Where the file comes from: `game` or the id of an extension. */
   source?: string;
-  /** The patches of the file the game applies before this one, in load order. */
+  /** The patches of the file the game applies before this one, and the merge files it merges, in load order. */
   earlier: string[];
+  /** The merge files among them. */
+  merged: string[];
 }
 
 /** The server tells what it is doing and what it has read, whenever that changes. */

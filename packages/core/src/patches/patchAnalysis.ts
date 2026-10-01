@@ -6,20 +6,26 @@
  * game loads earlier applied first, then this patch; what became of each of its operations is what the
  * diagnostics and the features of a patch document work from. The patched target, written out and
  * analysed as a script, tells what the patch brings where it lands.
+ *
+ * A patch of a library file (`libraries/wares.xml`) finds the game's file with what the extensions loaded
+ * earlier did to it: their patches applied and their merge files merged, a file of another root skipped,
+ * as the game does.
  */
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { PatchTarget, ScriptIndex } from '../project/scriptIndex';
 import type { XmlElement } from '../xml/xmlStructure';
 import { writePatchedTree, type PatchedText } from './patchedDocument';
-import { applyPatch, documentTree, type PatchNode, type PatchOperation, type PatchSource } from './patchTree';
+import { applyPatch, documentTree, mergeFile, type PatchNode, type PatchOperation, type PatchSource } from './patchTree';
 
 export interface PatchAnalysis {
   /** The patch document. */
   source: PatchSource;
   /** The file the patch changes, or why there is none. */
   target: PatchTarget;
-  /** The patches applied before this one, in load order. */
+  /** The patches applied before this one, and the merge files merged, in load order. */
   earlier: string[];
+  /** The merge files among them. */
+  merged: string[];
   /** The target's tree with the earlier patches and this one applied; absent without a target file. */
   document?: PatchNode;
   operations: PatchOperation[];
@@ -42,21 +48,41 @@ export function analyzePatch(patch: PatchSource, index: ScriptIndex): PatchAnaly
       source: patch,
       target: target.file === undefined ? target : { name: target.name, missing: `${target.name} cannot be read` },
       earlier: [],
+      merged: [],
       operations: [],
     };
   }
-  const { document, earlier, uncertain } = tree;
-  return { source: patch, target, earlier, document, operations: applyPatch(document, patch, uncertain) };
+  const { document, earlier, merged, uncertain } = tree;
+  return { source: patch, target, earlier, merged, document, operations: applyPatch(document, patch, uncertain) };
 }
 
-/** The target's tree with the patches of sources loaded before the patch applied; undefined when the target cannot be read. */
-function earlierTree(patch: string, target: string, index: ScriptIndex): { document: PatchNode; earlier: string[]; uncertain: boolean } | undefined {
+/** " after 2 earlier patches", " after 1 earlier patch and 1 merge file", or nothing, for messages about a patch. */
+export function afterEarlier(patch: Pick<PatchAnalysis, 'earlier' | 'merged'>): string {
+  const merges = patch.merged.length;
+  const patches = patch.earlier.length - merges;
+  const counted = [
+    ...(patches > 0 ? [`${patches} earlier patch${patches === 1 ? '' : 'es'}`] : []),
+    ...(merges > 0 ? [`${merges} ${patches > 0 ? '' : 'earlier '}merge file${merges === 1 ? '' : 's'}`] : []),
+  ];
+  return counted.length === 0 ? '' : ` after ${counted.join(' and ')}`;
+}
+
+/**
+ * The target's tree with the patches and merge files of sources loaded before the patch applied; undefined
+ * when the target cannot be read.
+ */
+function earlierTree(
+  patch: string,
+  target: string,
+  index: ScriptIndex
+): { document: PatchNode; earlier: string[]; merged: string[]; uncertain: boolean } | undefined {
   const targetSource = index.parsedFile(target);
   if (!targetSource) {
     return undefined;
   }
   const document = documentTree({ file: target, ...targetSource });
   const earlier: string[] = [];
+  const merged: string[] = [];
   let uncertain = false;
   for (const before of index.patchesBefore(patch, target)) {
     const source = index.parsedFile(before.file);
@@ -64,11 +90,16 @@ function earlierTree(patch: string, target: string, index: ScriptIndex): { docum
       uncertain = true;
       continue;
     }
-    const operations = applyPatch(document, { file: before.file, ...source }, uncertain);
-    uncertain ||= operations.some((operation) => operation.status === 'unknown');
-    earlier.push(before.file);
+    if (source.structure.roots[0]?.name === 'diff') {
+      const operations = applyPatch(document, { file: before.file, ...source }, uncertain);
+      uncertain ||= operations.some((operation) => operation.status === 'unknown');
+      earlier.push(before.file);
+    } else if (mergeFile(document, { file: before.file, ...source })) {
+      earlier.push(before.file);
+      merged.push(before.file);
+    }
   }
-  return { document, earlier, uncertain };
+  return { document, earlier, merged, uncertain };
 }
 
 /** The target's tree as the patch finds it: the earlier patches applied, none of its own operations. Built anew. */

@@ -322,7 +322,7 @@ function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource,
   const space = to === undefined ? '' : source.text.slice(start, to);
   const lineBreak = space.search(/[\r\n]/);
   if (lineBreak === -1) {
-    writer.add(indent === undefined ? '\n' : `\n${indent}`);
+    writer.add(`${lineBreakOf(source.text)}${indent ?? ''}`);
     return;
   }
   const rest = space.slice(lineBreak);
@@ -337,6 +337,27 @@ function writeGap(writer: Writer, from: Cursor | undefined, source: PatchSource,
   // The indentation of the next one: its column when an operation brought it in, else its own as moved with what holds it.
   const lastLine = Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1;
   writer.add(text.slice(0, lastLine) + (indent ?? writer.shiftedIndent(source, text.slice(lastLine))));
+}
+
+/** The line break a file uses, by its first one. */
+function lineBreakOf(text: string): string {
+  const at = text.search(/[\r\n]/);
+  return at === -1 || text[at] === '\n' ? '\n' : text[at + 1] === '\n' ? '\r\n' : '\r';
+}
+
+/** Where a document type declaration that follows an offset, after spaces only, ends; the offset when none does. */
+function doctypeEnd(text: string, from: number): number {
+  let at = from;
+  while (at < text.length && /\s/.test(text[at])) {
+    at++;
+  }
+  if (!text.startsWith('<!DOCTYPE', at)) {
+    return from;
+  }
+  const subset = text.indexOf('[', at);
+  const close = text.indexOf('>', at);
+  const end = subset !== -1 && subset < close ? text.indexOf('>', text.indexOf(']', subset)) : close;
+  return end === -1 ? from : end + 1;
 }
 
 /** The indentation of a node's line in its file, when nothing else is before it on the line. */
@@ -405,14 +426,15 @@ function writeNode(writer: Writer, node: PatchNode): void {
   }
   const element = node.element;
   if (!element) {
-    // The XML declaration, which is no node of the tree, after the byte order mark when there is one.
+    // The XML declaration and a document type declaration (library files have them), which are no nodes of
+    // the tree, after the byte order mark when there is one.
     const text = source.text;
     const start = text.charCodeAt(0) === 0xfeff ? 1 : 0;
     const end = text.startsWith('<?xml', start) ? text.indexOf('?>', start) : -1;
     const next = text.indexOf('<', start + 1);
-    const declaration = end !== -1 && (next === -1 || next > end) ? end + 2 : 0;
-    writer.copy(source, 0, declaration);
-    writeChildren(writer, node, { source, offset: declaration }, source.text.length);
+    const prolog = doctypeEnd(text, end !== -1 && (next === -1 || next > end) ? end + 2 : 0);
+    writer.copy(source, 0, prolog);
+    writeChildren(writer, node, { source, offset: prolog }, source.text.length);
     return;
   }
   if (!node.changed && isComplete(element, source.text)) {

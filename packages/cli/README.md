@@ -14,6 +14,8 @@ npx x4-script-check --game "C:\Games\X4 Foundations" "C:\Games\X4 Foundations"  
 
 It looks for `md` and `aiscripts` folders directly under each given path and one level deeper, and for the patches of other extensions in `extensions/<folder>/md` and `.../aiscripts`. It checks every `*.xml` file in them, in the order of their names, and exits with 1 when there are findings (2 on a usage error). The game folder itself, given as a path to check, stands for the game and its DLCs.
 
+It checks each extension's `libraries` folder as well: a patch there (`<diff>`) is applied to the game's library file of the same name, after the patches and merge files of the extensions loaded before it, and counts as a patch. A merge file, whose root is the game file's (`<wares>` in `libraries/wares.xml`), is merged as the game merges it; one whose root is neither is reported, since the game skips it. Other files there are not reported as no scripts.
+
 Options:
 
 - `--game <folder>` - the installed game, the folder of `X4.exe`. Its files and those of its DLCs (the folders of its `extensions` whose names start with `ego_dlc_`) are read from their catalogs (`01.cat`, …, a DLC's `ext_01.cat`, …) where they lie: nothing is extracted, and the X Catalog Tool is not needed. The other folders in its `extensions`, the player's mods, are not part of the game: give them as paths to check or with `--extensions`. Used when `--unpacked` is not given. Also read from the `X4_GAME` environment variable.

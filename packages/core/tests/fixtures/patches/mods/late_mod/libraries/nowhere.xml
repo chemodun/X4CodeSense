@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test patch for X4CodeSense: the game has no library file of this name. -->
+<diff>
+  <add sel="/nothing">
+    <thing />
+  </add>
+</diff>

@@ -1,6 +1,6 @@
 # X4CodeSense
 
-Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`), Mission Director scripts (`md/*.xml`) and the patches (`<diff>`) that change them. X4CodeSense reads the game's schemas, script properties and texts, and the scripts of the game, its DLCs and your extensions, and checks your scripts as you type.
+Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`), Mission Director scripts (`md/*.xml`) and the patches (`<diff>`) that change them or the game's library files (`libraries/*.xml`). X4CodeSense reads the game's schemas, script properties and texts, and the scripts of the game, its DLCs and your extensions, and checks your scripts as you type.
 
 X4CodeSense is the successor of X4CodeComplete, written anew around a language server, so the same analysis also runs from the command line and in CI. It replaces X4CodeComplete and offers to take its settings.
 
@@ -80,8 +80,9 @@ These open the other file when what is created belongs there; the game's own scr
 ### Patches
 
 - A patch is applied to the file it changes as the game applies it, after the patches loaded before it: a patch in your extension's `md` or `aiscripts` folder changes the game's file of the same name, one in `extensions/<folder>/md` that extension's file.
+- A patch in your extension's `libraries` folder changes the game's library file of the same name, such as `libraries/wares.xml`. A file there whose root is that file's (`<wares>`) is a merge file: the game adds the children of its root to its file, and so do the patches loaded after it. A file whose root is neither `diff` nor the game file's is reported, since the game skips it.
 - Reported: a `sel` that selects nothing or several nodes, at the step where it stops matching; a patch with nothing to patch; an operation the game refuses; `sel` or `if` that is no valid XPath. The operations and their attributes are checked against the game's `diff.xsd`.
-- What an `add` or `replace` brings in is checked where it lands, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there.
+- What an `add` or `replace` brings in is checked where it lands in a script, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there.
 - In `sel` and `if`, hover tells what each step selects and where it is written, go to definition goes there, and completion offers the element and attribute names and the values, such as cue names, of the file as the operation finds it.
 - **Show What This Patch Changes**, also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. What an operation brings in is shown at the column of the element it replaces or is added next to, or one step deeper than the element it is added into. **Open the File This Patch Changes** opens that file. Both work in a DLC's patch opened from the installed game as well, read only.
 - **Edit This Patch Above What It Changes**, also a button in the title bar, puts the patch in the upper part of the window and that diff full width below it. While the window stays so, a file opened in the diff's group, from the Explorer for example, moves up to the patch's group, and the diff below follows the patch in front above. A patch's diffs close with it, unless their side has changes not yet written. The side with the patch can be edited, and the caret follows between the patch and that side:
@@ -111,7 +112,7 @@ X4CodeSense has no list of its own of what the game holds: no elements, properti
 
 - The schemas in `libraries` (`md.xsd`, `aiscripts.xsd`, `common.xsd`, `diff.xsd`): every element, attribute and value with its documentation, where each may stand, and what an attribute holds: an expression, a cue, a label, a variable that receives a result.
 - `libraries/scriptproperties.xml`: the keywords, datatypes and properties of expressions, and the lookups it imports from other game files.
-- The texts in `t`; the scripts in `md` and `aiscripts` of the game, its DLCs, the extensions and your workspace; each extension's `content.xml` for the order the game loads them in.
+- The texts in `t`; the scripts in `md` and `aiscripts` of the game, its DLCs, the extensions and your workspace; the files in `libraries` that the DLCs and extensions patch; each extension's `content.xml` for the order the game loads them in.
 - Of an installed game, the catalogs `01.cat`, `02.cat` and so on, and those of the DLCs, the folders of its `extensions` whose names start with `ego_dlc_`: the files of `libraries`, `md`, `aiscripts` and `t` are read from them in place, nothing is extracted; the other folders of its `extensions` are your mods. `version.dat` gives the version the status bar shows.
 
 A few things the game's files do not say are built in:
@@ -129,7 +130,8 @@ A few things the game's files do not say are built in:
 - Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
 - XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
 - In the side with the patch, text inside elements (which scripts do not have) and the order of attributes are not written into the patch. A changed comment of the game's script becomes its removal and a new comment. What a patch brings in and then changes again with another of its operations is changed where that operation does, not from the side.
-- AI scripts, Mission Director scripts and their patches are checked. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game, such as the `libraries`, are not checked.
+- AI scripts, Mission Director scripts and their patches are checked. The patches of library files are applied and their paths checked, but what they bring in is not, since the game has no schemas for those files. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
+- Writing the changes of the side of a large library file, such as `wares.xml` after the DLCs' patches, into its patch takes up to about a second.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
 - Semantic highlighting needs the game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
 
@@ -225,8 +227,15 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ### [0.9.0] - unreleased
 
+- Added
+  - Patches of the game's library files, in an extension's `libraries` folder (`libraries/wares.xml` and the like): applied to the game's file after the patches and merge files of the DLCs and extensions loaded before them, with the problems of their paths, completion, hover and go to definition in them, the status bar, and the diff of the file without and with the patch.
+  - Merge files in `libraries`, whose root is the game file's, merged as the game merges them before the patches loaded after them. A file there whose root is neither `diff` nor the game file's is reported (`library-root-mismatch`): the game skips it.
+  - The files of `libraries` are in the workspace's problems and in the checks of x4-script-check.
 - Changed
   - Patches are applied faster where a step of a path picks a node by an attribute's value, such as `cue[@name='Start']`: the node is found without looking at each of its siblings.
+  - Hover over a step of a patch's path names an element without `name` by its `id`.
+- Fixed
+  - In the diff of a patch, the file's document type declaration is kept, and the end tag of an element that gets its first child ends its line with the file's line break.
 
 ### [0.8.0] - 2026-10-01
 

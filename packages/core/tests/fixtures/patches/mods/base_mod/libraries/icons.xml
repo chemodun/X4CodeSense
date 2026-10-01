@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test library file for X4CodeSense: its root is neither diff nor the game file's, so the game skips it. -->
+<icon name="base_icon" texture="b.tga" />

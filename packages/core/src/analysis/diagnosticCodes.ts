@@ -63,6 +63,7 @@ export const diagnosticDescriptions: Readonly<Record<DiagnosticCode, string>> = 
   'patch-no-match': 'A patch operation whose path selects nothing in the file it changes.',
   'patch-several-matches': 'A patch operation whose path selects more than one node.',
   'patch-invalid-operation': 'A patch operation the game skips.',
+  'library-root-mismatch': "A file in an extension's libraries whose root is neither 'diff' nor the root of the game's file of its name, so the game skips it.",
   'param-unknown': 'A parameter a call passes that the script, library or cue it calls does not declare.',
   'aiscript-undefined': 'An AI script a call names that no known script defines.',
   'order-undefined': 'An order a call names that no known AI script defines.',
