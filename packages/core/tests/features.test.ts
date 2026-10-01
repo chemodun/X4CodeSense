@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { TextEdit } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
 import {
@@ -181,11 +181,13 @@ describe('completion', () => {
     expect(edit && 'range' in edit ? edit.range.start.character : undefined).toBe('        <do_if value="1 &lt; 2 and player.'.length);
   });
 
-  it('offers nothing without game data or outside scripts', () => {
+  it('offers nothing without game data, and outside scripts nothing but text references', () => {
     const { analysis, offset } = at(actions('<set_value name="$x" exact="player.|"/>'));
     expect(completionAt(analysis, offset, undefined)).toEqual([]);
     const other = at('<wares><ware id="x" name="|"/></wares>');
     expect(completionAt(other.analysis, other.offset, game)).toEqual([]);
+    const reference = at('<wares><ware id="x" name="{|"/></wares>');
+    expect(completionAt(reference.analysis, reference.offset, undefined)).toEqual([]);
   });
 });
 
@@ -498,5 +500,32 @@ describe('texts', () => {
     const item = completionAt(analysis, offset, game).find((candidate) => candidate.label === '4');
     expect(item?.detail).toBe('Hull and Shield');
     expect(item?.textEdit).toMatchObject({ range: { start: { character: 32 }, end: { character: 33 } } });
+  });
+
+  it('completes pages and text ids in XML that is no script, also while it does not parse', () => {
+    const ids = ['1', '2', '3', '4', '5', '6', '7'];
+    const pages = labels('<wares>\n  <ware id="x" name="{|"/>\n</wares>\n');
+    expect(pages.slice(0, 2)).toEqual(['1001', '1002']);
+    // Pages only: no keywords outside scripts.
+    expect(pages).not.toContain('player');
+    expect(labels('<wares>\n  <ware id="x" name="{10|"/>\n</wares>\n')).toEqual(['1001', '1002']);
+    expect(labels('<wares>\n  <ware id="x" name="{1001, |"/>\n</wares>\n')).toEqual(ids);
+    // In the text of a text file, and in a value whose quote is not closed yet.
+    expect(labels('<language>\n  <page id="2">\n    <t id="1">See {1001,|</t>\n')).toEqual(ids);
+    expect(labels('<wares>\n  <ware id="x" name="{1001,|\n</wares>\n')).toEqual(ids);
+    // `page="…" line="…"`: the line of the page, and the page beside a line.
+    expect(labels('<macros>\n  <macro name="m" page="1001" line="|"/>\n</macros>\n')).toEqual(ids);
+    expect(labels('<macros>\n  <macro name="m" page="|" line="1"/>\n</macros>\n').slice(0, 2)).toEqual(['1001', '1002']);
+    expect(labels('<macros>\n  <macro name="m" page="|"/>\n</macros>\n')).toEqual([]);
+    expect(labels('<wares>\n  <ware id="x" name="$x.{|"/>\n</wares>\n')).toEqual([]);
+    // A patch of a text file: what it adds is text too.
+    const patch = '<diff>\n  <add sel="/language/page[@id=\'1001\']">\n    <t id="90">{1001,|</t>\n  </add>\n</diff>\n';
+    const textPatch = analyzeText(patch.replace('|', ''), { schemas: game.schemas }, pathToFileURL(path.join(unpacked, 't', '0001-l044.xml')).toString());
+    expect(completionAt(textPatch, patch.indexOf('|'), game).map((candidate) => candidate.label)).toEqual(ids);
+    // The digits after the caret are replaced too.
+    const { analysis, offset } = at('<wares>\n  <ware id="x" name="{1001,|4}"/>\n</wares>\n');
+    const item = completionAt(analysis, offset, game).find((candidate) => candidate.label === '4');
+    expect(item?.detail).toBe('Hull and Shield');
+    expect(item?.textEdit).toMatchObject({ range: { start: { line: 1, character: 27 }, end: { line: 1, character: 28 } } });
   });
 });

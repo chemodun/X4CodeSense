@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { CompletionItemKind, Location, Range, type CompletionItem } from 'vscode-languageserver-types';
 import { missingTextMessage } from '../texts/validateTexts';
 import type { GameText, TextDatabase } from '../texts/textDatabase';
@@ -90,6 +91,47 @@ export function textPageCompletionItems(texts: TextDatabase, range: Range, prefi
     items.push(item);
   }
   return items;
+}
+
+/**
+ * Completion of a text reference in XML that is no script (wares, macros, the libraries, the text files):
+ * pages after `{`, ids after `{page,`, and in `page="…" line="…"` the page and the line. Looked for on
+ * the caret's line, as hover does, so it works whatever the document's structure; undefined elsewhere.
+ */
+export function textReferenceCompletions(
+  document: TextDocument,
+  offset: number,
+  texts: TextDatabase,
+  options: TextDisplayOptions = {}
+): CompletionItem[] | undefined {
+  const text = document.getText();
+  const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+  const lineEnd = text.indexOf('\n', offset);
+  const before = text.slice(lineStart, offset);
+  const after = text.slice(offset, lineEnd < 0 ? text.length : lineEnd);
+  // The digits after the caret are replaced as well.
+  const digitsAfter = /^\d*/.exec(after)?.[0].length ?? 0;
+  const range = (typed: string): Range => Range.create(document.positionAt(offset - typed.length), document.positionAt(offset + digitsAfter));
+  const id = /\{\s*(\d+)\s*,\s*(\d*)$/.exec(before);
+  if (id) {
+    return textIdCompletionItems(texts, Number(id[1]), range(id[2]), id[2], options);
+  }
+  // Not after a dot: `$x.{…}` is a lookup.
+  const page = /\{\s*(\d*)$/.exec(before);
+  if (page && !/\.\s*$/.test(before.slice(0, page.index))) {
+    return textPageCompletionItems(texts, range(page[1]), page[1]);
+  }
+  const line = /\bline\s*=\s*"(\d*)$/.exec(before);
+  const linePage = line && /\bpage\s*=\s*"(\d+)"/.exec(before.slice(0, line.index));
+  if (line && linePage) {
+    return textIdCompletionItems(texts, Number(linePage[1]), range(line[1]), line[1], options);
+  }
+  // A page attribute only next to a line attribute: `page` alone may mean anything.
+  const pageAttribute = /\bpage\s*=\s*"(\d*)$/.exec(before);
+  if (pageAttribute && /^\d*"\s+line\s*=/.test(after)) {
+    return textPageCompletionItems(texts, range(pageAttribute[1]), pageAttribute[1]);
+  }
+  return undefined;
 }
 
 /** Completion items for the text ids of a page, with the text as the game shows it. */

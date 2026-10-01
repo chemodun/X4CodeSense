@@ -17,7 +17,7 @@ import { completionsInPatch, insertionPointAt, patchedViewAt } from './patchCont
 import { pathCompletionsAt } from './patchPaths';
 import { mdCueCompletionItems, mdScriptCompletionItems } from './project';
 import { scriptNameCompletions } from './scriptNames';
-import { textIdCompletionItems, textPageCompletionItems, type TextDisplayOptions } from './texts';
+import { textIdCompletionItems, textPageCompletionItems, textReferenceCompletions, type TextDisplayOptions } from './texts';
 import { variableCompletionItems } from './variables';
 
 export interface CompletionOptions extends TextDisplayOptions {
@@ -398,6 +398,11 @@ class Completer {
  * completed as it is where it lands, and its paths from the target they select in.
  */
 export function completionAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined, options: CompletionOptions = {}): CompletionItem[] {
+  if (!analysis.structure || (analysis.detection.isDiff && !scriptSchemaOf(analysis))) {
+    // XML that is no script, or a patch of such a file (texts, wares): text references only.
+    const texts = game?.texts;
+    return texts && texts.fileCount > 0 ? (textReferenceCompletions(analysis.document, offset, texts, options) ?? []) : [];
+  }
   const view = patchedViewAt(analysis, offset);
   if (view) {
     return completionsInPatch(view, completionAt(view.analysis, view.offset, game, options));

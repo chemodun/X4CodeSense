@@ -29,7 +29,7 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 - Property chains in expressions (`player.ship.cargo.{$ware}.count`), keywords, and the values of lookups such as `class` or `ware`.
 - Variables visible at the caret, also after `this.`, `parent.` or a cue name, and the variables other scripts set for this one: interrupt library items, libraries spliced in with `include_actions`, `md.Script.Cue.$x`.
 - Labels, cues, libraries and interrupt library items; script names after `md.` and cue names after `md.Script.`, cues that an extension's patch adds included.
-- Texts: pages after `{` and text ids after `{page,`. Hover over `{page, id}` or `page="…" line="…"`, in any XML file, shows the text as the game shows it.
+- Texts: pages after `{` and text ids after `{page,`, and in `page="…" line="…"` the page and the line. Hover over `{page, id}` or `page="…" line="…"` shows the text as the game shows it. Both work in any XML file, wares, macros, the text files and their patches included.
 - The parameters of calls: in `run_script`, `run_interrupt_script`, `start_script`, `create_order`, `run_actions` and a `cue` with `ref`, signature help lists what the script, order or library declares, the parameter at the caret highlighted. `<param name="…">` completes the parameters not passed yet, those without a default first. Hover shows a parameter's description, default and type; go to definition leads to its declaration. The target must be written as is: `'order.trade.routine'`, `'Attack'`, `Lib` or `md.Script.Lib`.
 - AI script names and order ids: in `run_script name`, `run_interrupt_script name`, `start_script name` and `create_order id`, completion offers the AI scripts and orders of the game, its DLCs, the extensions and your workspace, inserted with their quotes. Hover over one, or over `<aiscript name>` and `<order id>`, shows what it is: an order's name and description as the game shows them, the parameters, where it is defined, and how often other scripts name it.
 - Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, its type when it can be told, and how often it is read.
@@ -216,6 +216,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - The command-line checker applies the preferred fixes with `--fix`, and writes SARIF for GitHub code scanning with `--format sarif`.
   - Quick fixes that create what nothing defines: a cue or library, also in the script `md.Script.Cue` names, a label, and a parameter a call passes in the script, order or library it calls.
   - Quick fixes for tags and children: a value or start tag left open is closed, a missing end tag added, an end tag that matches nothing renamed or removed, a required child added, a child moved where the schema allows it; and for the step of a patch's `sel` that selects nothing, the names the file has there.
+  - Completion of text references in any XML file, such as wares, macros and the text files, not only in scripts.
   - The README tells where X4CodeSense takes its knowledge from, and what is built in.
 - Fixed
   - A value whose text ends in `name=`, such as `comment="… instead of otherobject="` in `gs_pirate1.xml` of the Tides of Avarice DLC, is no longer taken for an unclosed value followed by another attribute.
