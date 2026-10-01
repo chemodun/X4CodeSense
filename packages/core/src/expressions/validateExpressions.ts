@@ -4,10 +4,9 @@ import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlElement } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdElement } from '../xsd/schema';
-import { isChainNode, stepsOf, type ChainNode } from './astChain';
+import { isChainNode, resolvedChainOf, type ChainNode } from './astChain';
 import { parsedValue } from './attributeExpression';
 import { walkExpression, type Expression } from './parser';
-import { resolveChain } from './propertyChain';
 
 export type ExpressionDiagnosticCode =
   | 'expression-syntax'
@@ -105,8 +104,7 @@ export function validateExpressions(
       };
 
       const checkChain = (outer: ChainNode): void => {
-        const { head, steps } = stepsOf(outer, text);
-        const resolved = resolveChain({ steps }, properties, schema);
+        const { head, steps, resolved } = resolvedChainOf(outer, text, properties, schema);
         checkHead(head, resolved.steps[0].keyword !== undefined);
         for (let index = 1; index < steps.length; index++) {
           const owner = resolved.owners[index];

@@ -26,10 +26,9 @@
  */
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { IndexedPosition, ScriptIndex } from '../project/scriptIndex';
-import { isChainNode, stepsOf } from '../expressions/astChain';
+import { isChainNode, resolvedChainOf } from '../expressions/astChain';
 import { parsedValue } from '../expressions/attributeExpression';
 import type { Expression } from '../expressions/parser';
-import { resolveChain } from '../expressions/propertyChain';
 import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { attributeNamed, offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
@@ -773,8 +772,7 @@ class Collector {
       return 'table';
     }
     if (isChainNode(node) || node.kind === 'name' || node.kind === 'string' || node.kind === 'number' || node.kind === 'list' || node.kind === 'textref') {
-      const { steps } = stepsOf(node, text);
-      const resolved = resolveChain({ steps }, this.properties, this.schema);
+      const { resolved } = resolvedChainOf(node, text, this.properties, this.schema);
       return resolved.steps[resolved.steps.length - 1].datatype?.name;
     }
     return undefined;

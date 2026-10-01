@@ -8,9 +8,11 @@ import {
   chainAtToken,
   completeChain,
   loadScriptProperties,
+  parseExpression,
   parseSegments,
   parseXml,
   resolveChain,
+  resolvedChainOf,
   ScriptProperties,
   selectElements,
   selectValue,
@@ -349,5 +351,22 @@ describe('property chains', () => {
     ]);
     expect(prefix.steps[4].datatype).toBeUndefined();
     expect(summary(resolve('player.ship.frobnicate'))).toEqual(['keyword player', 'player.ship', '?']);
+  });
+
+  it('resolves a chain of a parsed value once for all who ask, and again for another script kind', () => {
+    const text = '$a + player.ship.pilot';
+    const tree = parseExpression(text).expression;
+    if (tree.kind !== 'binary') {
+      throw new Error('a sum expected');
+    }
+    const first = resolvedChainOf(tree.right, text, properties, 'md');
+    expect(first.steps.map((step) => step.text)).toEqual(['player', 'ship', 'pilot']);
+    expect(summary(first.resolved)).toEqual(summary(resolve('player.ship.pilot')));
+    expect(resolvedChainOf(tree.right, text, properties, 'md')).toBe(first);
+    const aiscript = resolvedChainOf(tree.right, text, properties, 'aiscript');
+    expect(aiscript).not.toBe(first);
+    expect(summary(aiscript.resolved)).toEqual(summary(resolve('player.ship.pilot', 'aiscript')));
+    // A lone head is a chain of one step.
+    expect(summary(resolvedChainOf(tree.left, text, properties, 'md').resolved)).toEqual(['?']);
   });
 });

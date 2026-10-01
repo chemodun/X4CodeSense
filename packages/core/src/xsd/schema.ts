@@ -244,8 +244,22 @@ export function acceptsValue(type: XsdSimpleType, value: string): boolean {
   return acceptsNormalized(type, normalizeValue(value));
 }
 
-/** All enumeration values the type admits, across unions, lists and restriction chains, in declaration order. */
-export function enumerationsOf(type: XsdSimpleType): XsdEnumeration[] {
+const enumerationsCache = new WeakMap<XsdSimpleType, readonly XsdEnumeration[]>();
+
+/**
+ * All enumeration values the type admits, across unions, lists and restriction chains, in declaration
+ * order. Computed once per type: the expression checks ask it for every attribute.
+ */
+export function enumerationsOf(type: XsdSimpleType): readonly XsdEnumeration[] {
+  let cached = enumerationsCache.get(type);
+  if (!cached) {
+    cached = collectEnumerations(type);
+    enumerationsCache.set(type, cached);
+  }
+  return cached;
+}
+
+function collectEnumerations(type: XsdSimpleType): XsdEnumeration[] {
   const result: XsdEnumeration[] = [];
   const seen = new Set<string>();
   const visit = (current: XsdSimpleType): void => {

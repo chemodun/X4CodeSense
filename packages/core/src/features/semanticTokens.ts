@@ -31,11 +31,11 @@ import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { SemanticTokensLegend } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { declarationOf } from '../analysis/positionContext';
-import { isChainNode, stepsOf } from '../expressions/astChain';
+import { isChainNode, resolvedChainOf, stepsOf } from '../expressions/astChain';
 import { parsedValue } from '../expressions/attributeExpression';
 import type { Token } from '../expressions/lexer';
 import { walkExpression, type Expression } from '../expressions/parser';
-import { keywordForPlaceholder, resolveChain, type ChainOwner } from '../expressions/propertyChain';
+import { keywordForPlaceholder, type ChainOwner } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
 import type { NamedItemKind, NamedOccurrence } from '../names/namedItems';
 import { overlapsPieceOf, sourceRange } from '../patches/patchedDocument';
@@ -321,8 +321,8 @@ class Classifier {
 
   /** The steps of a chain after its head: each property covers as many steps as it has segments. */
   private chainRoles(outer: Expression, text: string, roles: Map<number, Classification>): void {
-    const { steps } = stepsOf(outer, text);
-    const resolved = this.properties ? resolveChain({ steps }, this.properties, this.schema) : undefined;
+    // Resolved by the expression checks already, in an analysis that ran them.
+    const { steps, resolved } = this.properties ? resolvedChainOf(outer, text, this.properties, this.schema) : { ...stepsOf(outer, text), resolved: undefined };
     let index = 1;
     while (index < steps.length) {
       // On a value of unknown type several properties may fit; they cover the same steps.

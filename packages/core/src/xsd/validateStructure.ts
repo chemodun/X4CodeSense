@@ -60,6 +60,18 @@ function describeExpected(attribute: XsdAttribute): string {
   return attribute.type.builtin === 'string' || attribute.type.builtin === 'other' ? 'text' : `a ${attribute.type.builtin}`;
 }
 
+const requiredByDeclaration = new WeakMap<XsdElement, readonly string[]>();
+
+/** The names of the attributes a declaration requires, in its order; worked out once per declaration, not per element. */
+function requiredAttributes(declaration: XsdElement): readonly string[] {
+  let required = requiredByDeclaration.get(declaration);
+  if (!required) {
+    required = [...declaration.attributes].filter(([, declared]) => declared.required).map(([name]) => name);
+    requiredByDeclaration.set(declaration, required);
+  }
+  return required;
+}
+
 class Validator {
   readonly diagnostics: Diagnostic[] = [];
   readonly declarations = new Map<XmlElement, XsdElement>();
@@ -115,12 +127,10 @@ class Validator {
 
   private validateAttributes(element: XmlElement, declaration: XsdElement): void {
     const allowed = declaration.attributes;
-    const present = new Set<string>();
     for (const attribute of element.attributes) {
       if (isInfrastructureAttribute(attribute.name)) {
         continue;
       }
-      present.add(attribute.name);
       const declared = allowed.get(attribute.name);
       if (!declared) {
         this.report('unknown-attribute', `Unknown attribute '${attribute.name}' in '${element.name}'`, attribute.nameStart, attribute.nameEnd);
@@ -128,8 +138,8 @@ class Validator {
       }
       this.validateValue(element, attribute, declared);
     }
-    for (const [name, declared] of allowed) {
-      if (declared.required && !present.has(name)) {
+    for (const name of requiredAttributes(declaration)) {
+      if (!element.attributes.some((attribute) => attribute.name === name)) {
         this.report('missing-required-attribute', `Missing required attribute '${name}' in '${element.name}'`, element.nameStart, element.nameEnd);
       }
     }

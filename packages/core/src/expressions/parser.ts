@@ -61,10 +61,16 @@ export interface ParsedExpression {
 /** Errors reported for one expression at most; later ones are usually consequences of the first. */
 const maxErrors = 5;
 
-const comparisonOperators: ReadonlySet<string> = new Set(['lt', 'le', 'gt', 'ge', '<', '<=', '>', '>=']);
-const equalityOperators: ReadonlySet<string> = new Set(['==', '!=']);
-const additiveOperators: ReadonlySet<string> = new Set(['+', '-']);
-const multiplicativeOperators: ReadonlySet<string> = new Set(['*', '/', '%']);
+/** The binary operators by precedence, loosest first: the operands of a level are expressions of the next, those of the last unary. */
+const binaryLevels: readonly ReadonlySet<string>[] = [
+  new Set(['or']),
+  new Set(['and']),
+  new Set(['==', '!=']),
+  new Set(['lt', 'le', 'gt', 'ge', '<', '<=', '>', '>=']),
+  new Set(['+', '-']),
+  new Set(['*', '/', '%']),
+  new Set(['^']),
+];
 
 class Parser {
   private position = 0;
@@ -177,42 +183,23 @@ class Parser {
     return node;
   }
 
-  private parseBinary(next: () => Expression, operators: ReadonlySet<string>): Expression {
-    let left = next();
-    while (this.atOperator(operators)) {
+  /** The operators of `binaryLevels[level]`, left-associative, between operands of the next level. */
+  private parseBinary(level: number): Expression {
+    let left = this.parseOperand(level + 1);
+    while (this.atOperator(binaryLevels[level])) {
       const operator = this.advance().text as BinaryOperator;
-      const right = next();
+      const right = this.parseOperand(level + 1);
       left = { kind: 'binary', operator, left, right, start: left.start, end: right.end };
     }
     return left;
   }
 
+  private parseOperand(level: number): Expression {
+    return level < binaryLevels.length ? this.parseBinary(level) : this.parseUnary();
+  }
+
   private parseOr(): Expression {
-    return this.parseBinary(() => this.parseAnd(), new Set(['or']));
-  }
-
-  private parseAnd(): Expression {
-    return this.parseBinary(() => this.parseEquality(), new Set(['and']));
-  }
-
-  private parseEquality(): Expression {
-    return this.parseBinary(() => this.parseComparison(), equalityOperators);
-  }
-
-  private parseComparison(): Expression {
-    return this.parseBinary(() => this.parseAdditive(), comparisonOperators);
-  }
-
-  private parseAdditive(): Expression {
-    return this.parseBinary(() => this.parseMultiplicative(), additiveOperators);
-  }
-
-  private parseMultiplicative(): Expression {
-    return this.parseBinary(() => this.parsePower(), multiplicativeOperators);
-  }
-
-  private parsePower(): Expression {
-    return this.parseBinary(() => this.parseUnary(), new Set(['^']));
+    return this.parseBinary(0);
   }
 
   private parseUnary(): Expression {
