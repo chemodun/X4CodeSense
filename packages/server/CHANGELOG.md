@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.4.1...x4-script-language-server@v0.5.0) (2026-10-01)
+
+
+### Features
+
+* AI script names and order ids in calls ([14f3af5](https://github.com/chemodun/X4CodeSense/commit/14f3af585fe529c584e7d3202581b81bbd0caf14))
+* Go to Symbol in Workspace ([8b66c33](https://github.com/chemodun/X4CodeSense/commit/8b66c33e14a89ecbe049c7738b5db61b0f3db1b1))
+* the parameters of calls, and param-unknown ([190388a](https://github.com/chemodun/X4CodeSense/commit/190388a9486fce2681443ae93db40e4a9aaeeb34))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.4.1 to 0.5.0
+
 ## [0.4.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.4.0...x4-script-language-server@v0.4.1) (2026-10-01)
 
 
