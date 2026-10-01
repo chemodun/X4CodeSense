@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { Location } from 'vscode-languageserver-types';
 import { describe, expect, it } from 'vitest';
 import {
+  analyzeComparisonSide,
   analyzeText,
   hoverAt,
   loadGameData,
@@ -420,6 +422,28 @@ describe('references and rename across scripts', () => {
     expect(hoverText(user, 4, 'Api')).toContain('Referenced 1 time in 1 other file');
     expect(hoverText(library, 3, 'SharedActions')).toContain('Referenced 0 times here, 1 time in 1 other file');
     expect(hoverText(base, 2, 'Core')).toContain('Referenced 0 times here, 1 time in 1 other file');
+  });
+
+  it('takes a side of a patch comparison for the file it shows', () => {
+    // The side with a patch that adds a cue before Register: the file's places are the side's, one line down.
+    const text = (texts.get(api) ?? '').replace('  <cues>\n', '  <cues>\n    <cue name="Added"/>\n');
+    const document = TextDocument.create('x4codesense-patched:/api.xml?patch%3Dfile%253A%252F%252F%252Fpatch.xml', 'xml', 1, text);
+    const sideContext = { schemas: game.schemas, properties: game.properties, index: scripts };
+    const side = analyzeComparisonSide(document, 'after', api, sideContext);
+    const offset = side.document.offsetAt({ line: 3, character: text.split('\n')[3].indexOf('Register') + 1 });
+    const hover = hoverAt(side, offset, withIndex);
+    expect(hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '').toContain(
+      'Referenced 2 times here, 2 times in 1 other file'
+    );
+    const down = (found: string): string => found.replace(/^api\.xml:(\d+)/, (_all, line: string) => `api.xml:${Number(line) + 1}`);
+    const expected = [place(api, 2, 'Register'), place(api, 5, 'Register'), place(api, 6, 'Register')].map(down);
+    expect(places(referencesAt(side, offset, withIndex))).toEqual([...expected, place(user, 4, 'Register'), place(user, 5, 'Register')].sort());
+    // Under its own uri, the file's places would be another file's.
+    const alone = analyzeComparisonSide(document, 'after', undefined, sideContext);
+    const aloneHover = hoverAt(alone, offset, withIndex);
+    expect(aloneHover && typeof aloneHover.contents === 'object' && 'value' in aloneHover.contents ? aloneHover.contents.value : '').toContain(
+      'Referenced 2 times here, 3 times in 2 other files'
+    );
   });
 
   it('renames a variable of a cue written md.Script.Cue.$x in other scripts', () => {

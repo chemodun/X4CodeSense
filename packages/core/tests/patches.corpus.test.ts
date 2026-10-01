@@ -10,19 +10,23 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { describe, expect, it } from 'vitest';
 import {
+  analyzeComparisonSide,
   analyzeText,
   attributeNamed,
   comparePatch,
   hoverAt,
   loadGameData,
+  newProblems,
   offsetInValue,
   parseXml,
   pathNamesOf,
   referencesAt,
   scriptSchemaOf,
   type AnalysisContext,
+  type ComparisonSide,
   type DocumentAnalysis,
   type PatchComparison,
 } from '../src';
@@ -278,6 +282,54 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     expect(written).toBeGreaterThan(100);
     expect(refused).toEqual([]);
     expect(best).toBeLessThan(patchCeilingMs);
+  });
+
+  /**
+   * The problems the side with a patch shows: those of the extensions' patches where they land, as the
+   * patch documents report them (`knownModFindings`). The targets' own are in the side before the patch too.
+   */
+  const knownSideProblems = [
+    "expression-unknown-property: 'npctemplateentry' has no property 'controlpost' (lsrpcr/conversations.xml:879)",
+    "expression-unknown-property: 'npctemplateentry' has no property 'controlpost' (lsrpcr/order.move.wait.object.xml:118)",
+  ].sort();
+
+  it('shows in the side with each patch only the problems the file before it does not have', () => {
+    const kept: string[] = [];
+    let compared = 0;
+    let leftOut = 0;
+    let largest = { run: (): unknown => undefined, where: '', size: 0, target: '' };
+    for (const { file, analysis } of analyses) {
+      const comparison = index && analysis.patch ? comparePatch(analysis.patch, index) : undefined;
+      if (!comparison) {
+        continue;
+      }
+      compared++;
+      const where = `${path.basename(path.dirname(path.dirname(file)))}/${path.basename(file)}`;
+      // Each side as the server analyses it, as the file the patch changes.
+      const side = (name: ComparisonSide, text: string): DocumentAnalysis =>
+        analyzeComparisonSide(TextDocument.create(`x4codesense-patched:/${comparison.name}`, 'xml', 1, text), name, comparison.file, context);
+      const before = side('before', comparison.before);
+      const run = (): DocumentAnalysis => side('after', comparison.after);
+      const after = run();
+      if (comparison.after.length > largest.size) {
+        largest = { run, where, size: comparison.after.length, target: comparison.file };
+      }
+      const problems = newProblems(after, before);
+      leftOut += after.diagnostics.length - problems.length;
+      kept.push(...problems.map((problem) => `${String(problem.code)}: ${String(problem.message)} (${where}:${problem.range.start.line + 1})`));
+    }
+    const best = bestOf(5, largest.run);
+    const targetText = readFileSync(largest.target, 'utf8');
+    const bestTarget = bestOf(5, () => analyzeText(targetText, context, pathToFileURL(largest.target).toString()));
+    console.log(
+      `${compared} patches with both sides analysed: ${kept.length} problems in the sides with the patch, ${leftOut} of the targets left out; the largest side ${largest.where} (${largest.size} characters) best of 5 ${best.toFixed(1)} ms, its target alone (${targetText.length} characters) ${bestTarget.toFixed(1)} ms`
+    );
+    expect(compared).toBeGreaterThan(100);
+    expect(leftOut).toBeGreaterThan(0);
+    expect(kept.sort()).toEqual(mods ? knownSideProblems : []);
+    // A side is a whole script: it costs what its target costs when it is opened itself, with all the
+    // server knows (the index, texts and variables, which the file ceiling's analysis leaves out).
+    expect(best).toBeLessThan(1.5 * bestTarget);
   });
 
   // A patch document's analysis includes the file it changes: twice the ceiling of a file.

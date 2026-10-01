@@ -70,6 +70,13 @@ export type PatchComparisonParams = DocumentInfoParams;
 export type PatchComparisonResult = (PatchComparison & { version: number }) | null;
 
 /**
+ * The schemes of the two sides of a patch comparison: the file before the patch (read only), and after it
+ * (editable). The patch document's uri is the `patch` parameter of the query.
+ */
+export const patchBeforeScheme = 'x4codesense-patch';
+export const patchAfterScheme = 'x4codesense-patched';
+
+/**
  * Ask what a patch must become so that the file it changes, with the patch applied, is the edited text of
  * the comparison's side with the patch.
  */

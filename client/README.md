@@ -65,6 +65,7 @@ The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted val
   - Other changes, such as a value of the game's own script, an element added next to the game's or one removed, are written into the patch when you save that side (or press **Write Changes into the Patch** in its title bar). They become new operations with a full path, in the order of the places they change: `replace` of a value, `add` with `type` for a new attribute, `add` next to a neighbour for new elements, `remove`, or `replace` of a whole element whose new value spans lines. Elements next to what the patch brings in join its `add`. The patch shows the changes unsaved, and Undo there takes them back.
   - A path names each element from the root: cues and libraries by `name`, other elements by `name`, `value`, `ref` or `id` when they have one, more attributes or a position only where siblings would share it.
   - Nothing is written unless the patch, applied again, gives exactly the side's elements and attributes and each operation selects what it did before. Otherwise the side stays unsaved and the reason is shown, for example a side that is not well-formed, or a change outside the root element.
+- Both sides of that diff are the script they show: hover, go to definition, references, the outline and semantic highlighting work in them as in the script itself, and in the side with the patch completion and quick fixes too. That side shows the problems the file before the patch does not have: those in what the patch brings in, those of your edits in the side, and what they break elsewhere in the script, such as a read of a variable whose `set_value` the patch removes. The file's own problems are left to the file. Rename is refused in both sides; rename in the patch or in the script.
 
 ### Status bar
 
@@ -166,6 +167,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [0.4.0] - 2026-10-01
+
+- Added
+  - Both sides of the diff of a patch have the script's hover, go to definition, references, outline and semantic highlighting, and the side with the patch its completion and quick fixes. That side shows the problems the file before the patch does not have, also what the patch breaks elsewhere in the script.
+- Fixed
+  - A folder added to the workspace while the game files are still read is no longer left out of the index until a restart.
 
 ### [0.3.0] - 2026-10-01
 

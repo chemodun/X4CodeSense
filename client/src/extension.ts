@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
 import {
   DocumentInfoRequestMethod,
+  patchBeforeScheme,
   PatchComparisonRequestMethod,
   PatchWriteRequestMethod,
   schemaDisplayName,
@@ -30,7 +31,7 @@ import {
 } from './x4CodeCompleteSettings';
 
 /** The scheme of the left side of a patch comparison, the file before the patch: the patch document's uri is in the query. */
-const comparisonScheme = 'x4codesense-patch';
+const comparisonScheme = patchBeforeScheme;
 
 /** Set when the offer of X4CodeComplete's settings was answered with Never; Settings Sync carries it to other machines. */
 const neverOfferKey = 'x4CodeSense.neverOfferOldSettings';
@@ -69,10 +70,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const xmlFiles = vscode.workspace.createFileSystemWatcher('**/*.xml');
   context.subscriptions.push(xmlFiles);
   const clientOptions: LanguageClientOptions = {
-    // Lua files only get the hover of `ReadText` calls, with the text they read.
+    // Lua files only get the hover of `ReadText` calls, with the text they read. The sides of a patch
+    // comparison are the script before and after the patch.
     documentSelector: [
       { scheme: 'file', language: 'xml' },
       { scheme: 'file', language: 'lua' },
+      { scheme: comparisonScheme, language: 'xml' },
+      { scheme: patchedScheme, language: 'xml' },
     ],
     synchronize: { configurationSection: 'x4CodeSense', fileEvents: xmlFiles },
     outputChannelName: 'X4CodeSense',

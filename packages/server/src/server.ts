@@ -29,8 +29,10 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
+  analyzeComparisonSide,
   analyzeDocument,
   comparePatch,
+  comparisonSideOf,
   completionAt,
   definitionAt,
   DocumentInfoRequestMethod,
@@ -39,6 +41,7 @@ import {
   languageOfTextFile,
   loadGameData,
   loadTexts,
+  newProblems,
   parseXml,
   PatchComparisonRequestMethod,
   PatchWriteRequestMethod,
@@ -128,6 +131,14 @@ const analysisByUri = new Map<string, DocumentAnalysis>();
 const tokenBuilders = new Map<string, SemanticTokensBuilder>();
 /** The `ReadText` calls of each open Lua document, found at the first hover after a change. */
 const readTextCallsByUri = new Map<string, { version: number; calls: ReadTextCall[] }>();
+/** The sides of patch comparisons whose analysis is not of their current text or context: a request analyses them at once. */
+const staleSides = new Set<string>();
+/** The timer of each side of a patch comparison that publishes its problems, analysing it first when it is still stale. */
+const sideTimers = new Map<string, NodeJS.Timeout>();
+/** How long a side of a patch comparison waits after its last change: a side is a whole script, which typing in the patch changes too. */
+const sideDelay = 250;
+/** Why a side of a patch comparison is not renamed in: its edits would land in the comparison. */
+const sideRenameRefusal = 'Rename in the patch or in the script, not in a side of their comparison';
 
 /** Lua documents only get the hover of `ReadText`: they are never analysed as XML. */
 function isLua(document: TextDocument): boolean {
@@ -484,14 +495,7 @@ async function refreshSettings(): Promise<void> {
 }
 
 connection.onInitialized(async () => {
-  if (hasConfigurationCapability) {
-    await connection.client.register(DidChangeConfigurationNotification.type, { section: 'x4CodeSense' });
-    await refreshSettings();
-  } else {
-    await refreshGameData();
-    void refreshIndex();
-    sendStatus();
-  }
+  // Followed from the start: a folder added while the game's files are read counts once they are.
   if (workspaceFolderSupport) {
     connection.workspace.onDidChangeWorkspaceFolders((event) => {
       const removed = new Set(event.removed.map((folder) => filePathOf(folder.uri)));
@@ -502,6 +506,14 @@ connection.onInitialized(async () => {
       void refreshIndex();
       sendStatus();
     });
+  }
+  if (hasConfigurationCapability) {
+    await connection.client.register(DidChangeConfigurationNotification.type, { section: 'x4CodeSense' });
+    await refreshSettings();
+  } else {
+    await refreshGameData();
+    void refreshIndex();
+    sendStatus();
   }
   log('server initialized');
 });
@@ -565,6 +577,10 @@ function analyze(document: TextDocument): void {
   if (isLua(document)) {
     return;
   }
+  if (comparisonSideOf(document.uri)) {
+    scheduleSide(document.uri);
+    return;
+  }
   const started = performance.now();
   const analysis = analyzeDocument(document, analysisContext());
   analysisByUri.set(document.uri, analysis);
@@ -584,6 +600,69 @@ function analyze(document: TextDocument): void {
   if (file) {
     reanalyzePatchesOf(file, document.uri);
   }
+}
+
+/** Marks a side of a patch comparison as not analysed as it is, and publishes its problems after a pause. */
+function scheduleSide(uri: string): void {
+  staleSides.add(uri);
+  clearTimeout(sideTimers.get(uri));
+  sideTimers.set(
+    uri,
+    setTimeout(() => {
+      sideTimers.delete(uri);
+      publishSides(uri);
+    }, sideDelay)
+  );
+}
+
+/**
+ * Analyses a side of a patch comparison now, as the script it shows: as the file the patch changes, once
+ * the index knows that file.
+ */
+function analyzeSide(document: TextDocument): DocumentAnalysis | undefined {
+  staleSides.delete(document.uri);
+  const side = comparisonSideOf(document.uri);
+  if (!side) {
+    return undefined;
+  }
+  const patch = filePathOf(side.patch);
+  const target = patch === undefined ? undefined : game?.index?.patchTarget(patch)?.file;
+  const started = performance.now();
+  const analysis = analyzeComparisonSide(document, side.side, target, analysisContext());
+  analysisByUri.set(document.uri, analysis);
+  debug(`${document.uri}: the side ${side.side} the patch, ${target ? `as ${target}` : 'target not known'}, ${(performance.now() - started).toFixed(1)} ms`);
+  return analysis;
+}
+
+/**
+ * Publishes the problems of both sides of the comparison a side belongs to: in the side with the patch,
+ * those the side before it does not have; none in that side, since they are the target's.
+ */
+function publishSides(uri: string): void {
+  const patch = comparisonSideOf(uri)?.patch;
+  const sides = documents.all().flatMap((document) => {
+    const side = comparisonSideOf(document.uri);
+    return side && side.patch === patch ? [{ document, side: side.side }] : [];
+  });
+  const before = sides.find((side) => side.side === 'before');
+  const beforeAnalysis = before && currentAnalysis(before.document.uri);
+  for (const { document, side } of sides) {
+    const analysis = side === 'after' ? currentAnalysis(document.uri) : undefined;
+    const diagnostics = analysis ? newProblems(analysis, beforeAnalysis) : [];
+    void connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics });
+  }
+}
+
+/** The analysis of an open document; a side of a patch comparison not analysed as it is now is analysed at once. */
+function currentAnalysis(uri: string): DocumentAnalysis | undefined {
+  const document = documents.get(uri);
+  return document && staleSides.has(uri) ? analyzeSide(document) : analysisByUri.get(uri);
+}
+
+/** Locations as the client knows them: those in the analysis of a side of a patch comparison under the side's uri. */
+function locationsInClient(uri: string, analysis: DocumentAnalysis, locations: Location[]): Location[] {
+  const analysed = analysis.document.uri;
+  return analysed === uri ? locations : locations.map((location) => (location.uri === analysed ? { ...location, uri } : location));
 }
 
 /** Analyses the open patch documents again that a file affects: it is their target, or a patch applied before them. */
@@ -618,6 +697,9 @@ documents.onDidClose((event) => {
   analysisByUri.delete(event.document.uri);
   tokenBuilders.delete(event.document.uri);
   readTextCallsByUri.delete(event.document.uri);
+  staleSides.delete(event.document.uri);
+  clearTimeout(sideTimers.get(event.document.uri));
+  sideTimers.delete(event.document.uri);
   if (isLua(event.document)) {
     return;
   }
@@ -633,7 +715,7 @@ documents.onDidClose((event) => {
 
 /** The analysis and caret offset behind a request, when the document is open and analysed. */
 function locate(uri: string, position: { line: number; character: number }): { analysis: DocumentAnalysis; offset: number } | undefined {
-  const analysis = analysisByUri.get(uri);
+  const analysis = currentAnalysis(uri);
   const document = documents.get(uri);
   if (!analysis || !document) {
     return undefined;
@@ -678,17 +760,22 @@ connection.onHover((params): Hover | null => {
 });
 
 connection.onDefinition((params): Location[] => {
-  const located = locate(params.textDocument.uri, params.position);
-  return located ? definitionAt(located.analysis, located.offset, game, textDisplay()) : [];
+  const uri = params.textDocument.uri;
+  const located = locate(uri, params.position);
+  return located ? locationsInClient(uri, located.analysis, definitionAt(located.analysis, located.offset, game, textDisplay())) : [];
 });
 
 connection.onReferences((params): Location[] => {
-  const located = locate(params.textDocument.uri, params.position);
-  return located ? referencesAt(located.analysis, located.offset, game) : [];
+  const uri = params.textDocument.uri;
+  const located = locate(uri, params.position);
+  return located ? locationsInClient(uri, located.analysis, referencesAt(located.analysis, located.offset, game)) : [];
 });
 
 // A rename may edit other files of the workspace, never the game's; a refusal is shown to the user.
 connection.onPrepareRename((params) => {
+  if (comparisonSideOf(params.textDocument.uri)) {
+    return new ResponseError(ErrorCodes.InvalidRequest, sideRenameRefusal);
+  }
   const located = locate(params.textDocument.uri, params.position);
   const prepared = located ? prepareRenameAt(located.analysis, located.offset, game, { editableFolders: workspaceFolders }) : undefined;
   if (prepared && 'refused' in prepared) {
@@ -698,6 +785,9 @@ connection.onPrepareRename((params) => {
 });
 
 connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
+  if (comparisonSideOf(params.textDocument.uri)) {
+    return new ResponseError(ErrorCodes.InvalidRequest, sideRenameRefusal);
+  }
   const located = locate(params.textDocument.uri, params.position);
   const renamed = located ? renameAt(located.analysis, located.offset, params.newName, game, { editableFolders: workspaceFolders }) : undefined;
   if (renamed && 'refused' in renamed) {
@@ -708,26 +798,40 @@ connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
 
 // Other XML gets no outline from here, so other XML tooling gives it one.
 connection.onDocumentSymbol((params): DocumentSymbol[] | null => {
-  const analysis = analysisByUri.get(params.textDocument.uri);
+  const analysis = currentAnalysis(params.textDocument.uri);
   return analysis?.structure ? documentSymbols(analysis) : null;
 });
 
 // Quick fixes for the diagnostics the editor sends along, as far as the current analysis still has them.
+// The side of a patch comparison before the patch is read only.
 connection.onCodeAction((params): CodeAction[] => {
-  const analysis = analysisByUri.get(params.textDocument.uri);
+  const uri = params.textDocument.uri;
+  const analysis = comparisonSideOf(uri)?.side === 'before' ? undefined : currentAnalysis(uri);
   const only = params.context.only;
   if (!analysis || (only && !only.some((kind) => CodeActionKind.QuickFix.startsWith(kind)))) {
     return [];
   }
   const started = performance.now();
   const actions = quickFixes(analysis, params.context.diagnostics, game);
-  debug(`${params.textDocument.uri}: ${actions.length} quick fix(es) in ${(performance.now() - started).toFixed(1)} ms`);
-  return actions;
+  debug(`${uri}: ${actions.length} quick fix(es) in ${(performance.now() - started).toFixed(1)} ms`);
+  const analysed = analysis.document.uri;
+  if (analysed === uri) {
+    return actions;
+  }
+  // The edits of a side's analysis are the side's.
+  return actions.map((action) => {
+    const changes = action.edit?.changes;
+    if (!changes || !(analysed in changes)) {
+      return action;
+    }
+    const { [analysed]: own, ...others } = changes;
+    return { ...action, edit: { ...action.edit, changes: { ...others, [uri]: own } } };
+  });
 });
 
 /** Fills a builder with the semantic tokens of an open document; false for a document other XML tooling colours. */
 function buildTokens(uri: string, builder: SemanticTokensBuilder, range?: Range): boolean {
-  const analysis = analysisByUri.get(uri);
+  const analysis = currentAnalysis(uri);
   const document = documents.get(uri);
   if (!analysis || !document) {
     return false;

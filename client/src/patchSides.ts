@@ -15,11 +15,11 @@
  * A caret moved in the patch moves to its place in the side, and back, where the patch's own pieces are.
  */
 import * as vscode from 'vscode';
-import type { PatchComparisonResult, PatchWriteParams, PatchWriteResult } from 'x4-script-core';
+import { patchAfterScheme, type PatchComparisonResult, type PatchWriteParams, type PatchWriteResult } from 'x4-script-core';
 import { mapChanges, patchOffsetAt, sideOffsetAt, sideText, type Segment, type TextChange } from './patchPieces';
 
 /** The scheme of the patched side; the patch document's uri is in the query. */
-export const patchedScheme = 'x4codesense-patched';
+export const patchedScheme = patchAfterScheme;
 
 /** What the sides need of the language server, and where they log. */
 export interface SideServer {

@@ -51,6 +51,8 @@ import {
 import {
   DocumentInfoRequestMethod,
   loadGameData,
+  patchAfterScheme,
+  patchBeforeScheme,
   PatchComparisonRequestMethod,
   PatchWriteRequestMethod,
   semanticTokensLegend,
@@ -1028,6 +1030,98 @@ describe('patches', () => {
     const closed = diagnosticsCount(patchUri, 0);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: patchUri } });
     await closed;
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  });
+
+  it('gives both sides of a patch comparison the features of the script, and the side with the patch its new problems', async () => {
+    const mods = path.join(workDir, 'sidemods');
+    const write = (file: string, text: string): string => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      return pathToFileURL(file).toString();
+    };
+    // The target has a problem of its own, the patch brings in another.
+    const apiText =
+      '<mdscript name="Api">\n  <cues>\n    <cue name="Register">\n      <actions>\n        <set_value name="$a" exact="1 +"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    write(path.join(mods, 'base', 'md', 'api.xml'), apiText);
+    write(path.join(mods, 'patcher', 'content.xml'), '<content id="patcher" name="Patcher" version="100"/>\n');
+    const patchText = `<diff>\n  <add sel="//cue[@name='Register']/actions">\n    <set_value name="$b" exact="$a"/>\n    <set_value name="$s" exact="player.ship"/>\n    <set_value name="$c" exact="2 *"/>\n  </add>\n</diff>\n`;
+    const patchUri = write(path.join(mods, 'patcher', 'extensions', 'base', 'md', 'api.xml'), patchText);
+    const workspace = { uri: pathToFileURL(mods).toString(), name: 'sidemods' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    await statusWhere((status) => status.state === 'ready' && status.extensions.includes('patcher'));
+    expect(summarize(await open(patchUri, patchText))).toEqual(['5:36 expression-syntax']);
+    const compared = await connection.sendRequest<PatchComparisonResult>(PatchComparisonRequestMethod, { uri: patchUri });
+    const before = compared?.before ?? '';
+    const after = compared?.after ?? '';
+    const afterLines = after.split('\n');
+    expect(afterLines.slice(4, 8).map((line) => line.trim())).toEqual([
+      '<set_value name="$a" exact="1 +"/>',
+      '<set_value name="$b" exact="$a"/>',
+      '<set_value name="$s" exact="player.ship"/>',
+      '<set_value name="$c" exact="2 *"/>',
+    ]);
+
+    // The sides as VS Code sends them: the patch's uri in the query, which is encoded once more.
+    const query = encodeURIComponent(new URLSearchParams({ patch: patchUri }).toString());
+    const beforeUri = `${patchBeforeScheme}:/before/extensions/base/md/api.xml?${query}`;
+    const afterUri = `${patchAfterScheme}:/extensions/base/md/api.xml?${query}`;
+    expect(summarize(await open(beforeUri, before))).toEqual([]);
+    const lineOf = (params: PublishDiagnosticsParams): string[] =>
+      params.diagnostics.map((diagnostic) => `${diagnostic.range.start.line + 1} ${diagnostic.code}`);
+    expect(lineOf(await open(afterUri, after))).toEqual(['8 expression-syntax']);
+
+    // The features of the script, the side's own places under its uri.
+    const inAfter = (line: number, needle: string, delta = 1): { textDocument: { uri: string }; position: { line: number; character: number } } => ({
+      textDocument: { uri: afterUri },
+      position: { line, character: afterLines[line].indexOf(needle) + delta },
+    });
+    const hover = await connection.sendRequest(HoverRequest.type, inAfter(6, 'player', 2));
+    expect(hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '').toContain('**player** *(keyword)*');
+    const definitions = (await connection.sendRequest(DefinitionRequest.type, inAfter(5, '$a'))) as Location[];
+    expect(definitions.map((location) => `${location.uri === afterUri ? 'side' : location.uri}:${location.range.start.line}`)).toEqual(['side:4']);
+    const completions = await connection.sendRequest(CompletionRequest.type, inAfter(6, 'player.', 'player.'.length));
+    const labels = Array.isArray(completions) ? completions.map((item) => item.label) : (completions?.items.map((item) => item.label) ?? []);
+    expect(labels).toContain('ship');
+    const tokens = await connection.sendRequest(SemanticTokensRequest.type, { textDocument: { uri: beforeUri } });
+    expect(tokens?.data.length).toBeGreaterThan(0);
+    await expect(connection.sendRequest(PrepareRenameRequest.type, inAfter(5, '$a'))).rejects.toThrow(
+      'Rename in the patch or in the script, not in a side of their comparison'
+    );
+
+    // A misspelt element in the side: its quick fix edits the side. The side before the patch is read only.
+    const misspelt = nextDiagnostics(afterUri, (params) => params.diagnostics.some((diagnostic) => diagnostic.code === 'unknown-element'));
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: afterUri, version: 2 },
+      contentChanges: [{ text: after.replace('<set_value name="$s"', '<set_valeu name="$s"') }],
+    });
+    const unknown = (await misspelt).diagnostics.find((diagnostic) => diagnostic.code === 'unknown-element');
+    const fixRequest = { textDocument: { uri: afterUri }, range: unknown!.range, context: { diagnostics: [unknown!] } };
+    const fixes = (await connection.sendRequest(CodeActionRequest.type, fixRequest)) as CodeAction[];
+    expect(fixes.map((fix) => Object.keys(fix.edit?.changes ?? {}))).toEqual([[afterUri]]);
+    expect(await connection.sendRequest(CodeActionRequest.type, { ...fixRequest, textDocument: { uri: beforeUri } })).toEqual([]);
+    const restored = nextDiagnostics(afterUri, (params) => params.diagnostics.every((diagnostic) => diagnostic.code !== 'unknown-element'));
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: afterUri, version: 3 },
+      contentChanges: [{ text: after }],
+    });
+    await restored;
+
+    // Typing half a tag in the side: its well-formedness problem shows there, and hover still answers.
+    const typed = nextDiagnostics(afterUri);
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: afterUri, version: 4 },
+      contentChanges: [{ range: { start: { line: 7, character: 0 }, end: { line: 7, character: 0 } }, text: '        <set_value name="$d\n' }],
+    });
+    const typedHover = await connection.sendRequest(HoverRequest.type, inAfter(6, 'player', 2));
+    expect(typedHover && typeof typedHover.contents === 'object' && 'value' in typedHover.contents ? typedHover.contents.value : '').toContain('**player**');
+    expect(lineOf(await typed)).toEqual(['8 unclosed-attribute', '8 unclosed-start-tag', '9 expression-syntax']);
+
+    for (const uri of [beforeUri, afterUri, patchUri]) {
+      const closed = diagnosticsCount(uri, 0);
+      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+      await closed;
+    }
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   });
 });
