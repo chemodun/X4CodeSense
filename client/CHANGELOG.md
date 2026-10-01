@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.1](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.4.0...x4codesense@v0.4.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* the diff follows a patch moved up from the diff's group ([45b35f6](https://github.com/chemodun/X4CodeSense/commit/45b35f6bede9f781f59b132500c2c61bee157405))
+
+
+### Performance Improvements
+
+* resolve each chain once, and allocate less per expression ([cc78372](https://github.com/chemodun/X4CodeSense/commit/cc783720f5726147ed47c8c1fc43f86ffd970fb7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.4.0 to 0.4.1
+
 ## [0.4.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.3.0...x4codesense@v0.4.0) (2026-10-01)
 
 

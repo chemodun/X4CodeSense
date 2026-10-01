@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.4.0...x4-script-language-server@v0.4.1) (2026-10-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.4.0 to 0.4.1
+
 ## [0.4.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.3.0...x4-script-language-server@v0.4.0) (2026-10-01)
 
 
