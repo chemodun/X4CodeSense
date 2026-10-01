@@ -127,7 +127,6 @@ jobs:
       - name: Publish to npm
         env:
           TAG: ${{ github.event.release.tag_name }}
-          DIRECT_PUBLISH: ${{ vars.NPM_DIRECT_PUBLISH }}
         run: |
           case "${TAG%%@*}" in
             x4-script-core) WORKSPACE=packages/core ;;
@@ -150,9 +149,5 @@ jobs:
             exit 0
           fi
           npm --version
-          if [ "${DIRECT_PUBLISH}" = true ]; then
-            npm publish --workspace "${WORKSPACE}"
-          else
-            npm stage publish --workspace "${WORKSPACE}"
-            echo "::notice::${NAME}@${VERSION} is staged: approve it on npmjs.com or with npm stage approve"
-          fi
+          npm publish --workspace "${WORKSPACE}"
+          echo "::notice::${NAME}@${VERSION} is published"
