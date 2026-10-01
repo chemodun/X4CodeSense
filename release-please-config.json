@@ -22,6 +22,7 @@
     { "type": "test", "section": "Tests", "hidden": true }
   ],
   "packages": {
+    "packages/catalog": { "release-type": "node", "component": "x4-catalog" },
     "packages/core": { "release-type": "node", "component": "x4-script-core" },
     "packages/server": { "release-type": "node", "component": "x4-script-language-server" },
     "packages/cli": { "release-type": "node", "component": "x4-script-check" },

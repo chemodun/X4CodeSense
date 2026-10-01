@@ -1,0 +1,44 @@
+{
+  "name": "x4-catalog",
+  "version": "0.0.0",
+  "description": "Reads the catalogs of X4: Foundations (.cat/.dat) in place, without extracting them, and writes new ones.",
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "files": [
+    "out/**/*.js",
+    "out/**/*.d.ts",
+    "out/**/*.map",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Chem O'Dun",
+    "email": "chemodun@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chemodun/X4CodeSense.git",
+    "directory": "packages/catalog"
+  },
+  "homepage": "https://github.com/chemodun/X4CodeSense#readme",
+  "bugs": {
+    "url": "https://github.com/chemodun/X4CodeSense/issues"
+  },
+  "keywords": [
+    "x4",
+    "x4-foundations",
+    "egosoft",
+    "modding",
+    "catalog",
+    "cat",
+    "dat",
+    "unpack"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  }
+}

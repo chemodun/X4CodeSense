@@ -16,6 +16,7 @@
     "node": ">=22"
   },
   "workspaces": [
+    "packages/catalog",
     "packages/core",
     "packages/server",
     "packages/cli",
@@ -31,7 +32,7 @@
     "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "clean": "rimraf packages/core/out packages/server/out packages/cli/out client/out client/dist",
+    "clean": "rimraf packages/catalog/out packages/core/out packages/server/out packages/cli/out client/out client/dist",
     "package": "npm run build && npm run package -w client"
   },
   "devDependencies": {

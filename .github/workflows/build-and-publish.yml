@@ -99,7 +99,7 @@ jobs:
         run: npx --yes @vscode/vsce@4 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
 
   npm-package:
-    if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@')) }}
+    if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-catalog@') || startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -129,6 +129,7 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           case "${TAG%%@*}" in
+            x4-catalog) WORKSPACE=packages/catalog ;;
             x4-script-core) WORKSPACE=packages/core ;;
             x4-script-language-server) WORKSPACE=packages/server ;;
             x4-script-check) WORKSPACE=packages/cli ;;
