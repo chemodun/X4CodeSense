@@ -79,7 +79,7 @@ The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted val
 
 ### Status bar
 
-The status bar shows the type and name of the script, or the file a patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read, and a click opens a menu of the commands.
+The status bar shows the type and name of the script, or the file a patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and which scripts show problems, and a click opens a menu of the commands.
 
 ### Command line and CI
 
@@ -160,6 +160,7 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
 All of them but **Write Changes into the Patch**, which belongs to the side with the patch, are also in the menu the status bar item opens.
 
 - **X4CodeSense: Select the Extracted Game Files...** - sets `x4CodeSense.unpackedFileLocation` with a folder picker: in the workspace settings when they set it, else in the user settings.
+- **X4CodeSense: Choose Which Scripts Show Problems...** - sets `x4CodeSense.diagnosticMode` to the open scripts or every script in the workspace: in the workspace settings when they set it, else in the user settings.
 - **X4CodeSense: Show What This Patch Changes** - in a patch: a diff of the file it changes, without and with the patch.
 - **X4CodeSense: Edit This Patch Above What It Changes** - in a patch: the patch above that diff, the side with the patch editable.
 - **X4CodeSense: Write Changes into the Patch** - in the side with the patch: saves it, which writes its changes into the patch.
@@ -180,10 +181,10 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [0.6.0] - unreleased
+### [0.6.0] - 2026-10-01
 
 - Added
-  - The problems of every script and patch in the workspace, not only of the open ones, when `x4CodeSense.diagnosticMode` is `workspace`.
+  - The problems of every script and patch in the workspace, not only of the open ones, when `x4CodeSense.diagnosticMode` is `workspace`; **Choose Which Scripts Show Problems** sets it, also from the status bar's menu.
   - Apply all preferred fixes in this file: in the light bulb, and as `source.fixAll` for `editor.codeActionsOnSave`.
   - A warning for an AI script name or order id that a call writes as is and no script defines, with a quick fix to the known name it is close to.
   - The outline shows an order's name as the game shows it.

@@ -1029,6 +1029,52 @@ describe('script index', () => {
     await closed;
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   }, 30_000);
+
+  it("follows the parameters of an order edited in another document: a caller's unknown parameter becomes known", async () => {
+    const mod = path.join(workDir, 'parammods', 'parammod');
+    const orderFile = path.join(mod, 'aiscripts', 'order.guard.xml');
+    const orderText = (params: string): string =>
+      `<aiscript name="order.guard">\n  <order id="Guard">\n    <params>\n${params}    </params>\n  </order>\n</aiscript>\n`;
+    mkdirSync(path.dirname(orderFile), { recursive: true });
+    writeFileSync(orderFile, orderText('      <param name="area"/>\n'));
+    const callerLines = [
+      '<aiscript name="guard.caller">',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <create_order object="this.ship" id="\'Guard\'">',
+      '        <param name="duration" value="2h"/>',
+      '      </create_order>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+    ];
+    const callerUri = pathToFileURL(path.join(mod, 'aiscripts', 'guard.caller.xml')).toString();
+    const orderUri = pathToFileURL(orderFile).toString();
+    const workspace = { uri: pathToFileURL(mod).toString(), name: 'parammod' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    // Once indexed, the order is found and its parameter checked; the fixture schemas do not know `create_order`.
+    const unknown = nextDiagnostics(callerUri, (params) => params.diagnostics.some((diagnostic) => diagnostic.code === 'param-unknown'));
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: callerUri, languageId: 'xml', version: 1, text: `${callerLines.join('\n')}\n` },
+    });
+    expect(summarize(await unknown)).toContain('5:22 param-unknown');
+
+    // The parameter declared in the editor, before saving: the caller is checked again.
+    const known = nextDiagnostics(callerUri, (params) => !params.diagnostics.some((diagnostic) => diagnostic.code === 'param-unknown'));
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: orderUri, languageId: 'xml', version: 1, text: orderText('      <param name="area"/>\n') },
+    });
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: orderUri, version: 2 },
+      contentChanges: [{ text: orderText('      <param name="area"/>\n      <param name="duration"/>\n') }],
+    });
+    await known;
+
+    for (const uri of [orderUri, callerUri]) {
+      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    }
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  }, 30_000);
 });
 
 describe('problems of the workspace', () => {

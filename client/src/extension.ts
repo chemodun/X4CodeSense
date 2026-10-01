@@ -41,6 +41,7 @@ const neverOfferKey = 'x4CodeSense.neverOfferOldSettings';
 /** The commands the status bar's tooltip may run. */
 const tooltipCommands = [
   'x4CodeSense.selectGameFolder',
+  'x4CodeSense.selectDiagnosticMode',
   'x4CodeSense.showOutput',
   'x4CodeSense.openSettings',
   'x4CodeSense.restartServer',
@@ -167,6 +168,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
     ),
     vscode.commands.registerCommand('x4CodeSense.selectGameFolder', selectGameFolder),
+    vscode.commands.registerCommand('x4CodeSense.selectDiagnosticMode', selectDiagnosticMode),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('x4CodeSense.diagnosticMode')) {
+        void updateStatusBar();
+      }
+    }),
     vscode.commands.registerCommand('x4CodeSense.openPatchTarget', openPatchTarget),
     vscode.commands.registerCommand('x4CodeSense.comparePatch', () => comparePatch(comparisons, sides)),
     vscode.commands.registerCommand('x4CodeSense.editPatchWithResult', () => editPatchWithResult(comparisons, sides, layout)),
@@ -347,6 +354,7 @@ function tooltip(info: DocumentInfoResult): vscode.MarkdownString {
       `$(warning) ${status.problems} problem${status.problems === 1 ? '' : 's'} reading the game files: [see the output](command:x4CodeSense.showOutput)`
     );
   }
+  lines.push('', `Problems are shown for ${diagnosticModeShown[diagnosticMode()]} · [Change](command:x4CodeSense.selectDiagnosticMode)`);
   lines.push(
     '',
     '---',
@@ -376,6 +384,11 @@ async function showMenu(): Promise<void> {
       description: serverStatus?.gameFolder ?? 'not set',
       command: 'x4CodeSense.selectGameFolder',
     },
+    {
+      label: '$(checklist) Choose Which Scripts Show Problems...',
+      description: diagnosticModeShown[diagnosticMode()],
+      command: 'x4CodeSense.selectDiagnosticMode',
+    },
     { label: '$(output) Show Output', command: 'x4CodeSense.showOutput' },
     { label: '$(settings-gear) Open Settings', command: 'x4CodeSense.openSettings' },
     { label: '$(debug-restart) Restart Language Server', description: 'reads the game files and the scripts again', command: 'x4CodeSense.restartServer' }
@@ -384,6 +397,41 @@ async function showMenu(): Promise<void> {
   if (picked) {
     await vscode.commands.executeCommand(picked.command);
   }
+}
+
+type DiagnosticMode = 'openFilesOnly' | 'workspace';
+
+/** Which scripts show their problems, as `x4CodeSense.diagnosticMode` says. */
+function diagnosticMode(): DiagnosticMode {
+  return vscode.workspace.getConfiguration('x4CodeSense').get<DiagnosticMode>('diagnosticMode', 'openFilesOnly');
+}
+
+const diagnosticModeShown: Record<DiagnosticMode, string> = { openFilesOnly: 'the open scripts', workspace: 'every script in the workspace' };
+
+/** Asks which scripts show their problems and sets it where the setting is set: the workspace, else the user settings. */
+async function selectDiagnosticMode(): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration('x4CodeSense');
+  const current = diagnosticMode();
+  type Entry = vscode.QuickPickItem & { mode: DiagnosticMode };
+  const entries: Entry[] = [
+    { label: '$(files) The Open Scripts', detail: 'The scripts open in the editor, checked as you type', mode: 'openFilesOnly' },
+    {
+      label: '$(folder) Every Script in the Workspace',
+      detail: 'Also every other script and patch in the workspace folders, as they are on disk',
+      mode: 'workspace',
+    },
+  ];
+  for (const entry of entries) {
+    if (entry.mode === current) {
+      entry.description = 'current';
+    }
+  }
+  const picked = await vscode.window.showQuickPick(entries, { title: 'X4CodeSense: Which Scripts Show Problems' });
+  if (!picked || picked.mode === current) {
+    return;
+  }
+  const inWorkspace = configuration.inspect<string>('diagnosticMode')?.workspaceValue !== undefined;
+  await configuration.update('diagnosticMode', picked.mode, inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
 }
 
 /** Asks for the folder of the extracted game files and sets it where the setting is set: the workspace, else the user settings. */

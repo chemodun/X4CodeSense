@@ -65,6 +65,11 @@
         "category": "X4CodeSense"
       },
       {
+        "command": "x4CodeSense.selectDiagnosticMode",
+        "title": "Choose Which Scripts Show Problems...",
+        "category": "X4CodeSense"
+      },
+      {
         "command": "x4CodeSense.showOutput",
         "title": "Show Output",
         "category": "X4CodeSense"
