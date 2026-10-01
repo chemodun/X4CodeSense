@@ -22,7 +22,11 @@ export class PatchLayout implements vscode.Disposable {
   private arranged = false;
   private readonly disposables: vscode.Disposable[];
 
-  constructor() {
+  /**
+   * `moved` is called with a file moved to the patches' group: VS Code then reports no change of the active
+   * editor (the comparison's side stays the last one reported), so the comparison would not follow it.
+   */
+  constructor(private readonly moved: (editor: vscode.TextEditor) => void) {
     this.disposables = [vscode.window.tabGroups.onDidChangeTabs((event) => this.tabsChanged(event))];
   }
 
@@ -59,9 +63,9 @@ export class PatchLayout implements vscode.Disposable {
       const input = tab.input;
       if (tab.group.viewColumn === groups.comparisons.viewColumn && input instanceof vscode.TabInputText && input.uri.scheme === 'file') {
         const preview = tab.isPreview;
-        void Promise.resolve(vscode.window.tabGroups.close(tab)).then(() =>
-          vscode.window.showTextDocument(input.uri, { viewColumn: groups.patches.viewColumn, preview })
-        );
+        void Promise.resolve(vscode.window.tabGroups.close(tab))
+          .then(() => vscode.window.showTextDocument(input.uri, { viewColumn: groups.patches.viewColumn, preview }))
+          .then((editor) => this.moved(editor));
       }
     }
   }

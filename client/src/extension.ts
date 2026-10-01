@@ -103,7 +103,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     log: (line) => languageClient.outputChannel.appendLine(line),
   });
-  const layout = new PatchLayout();
+  const inFront = (editor: vscode.TextEditor | undefined): void => {
+    void updateStatusBar();
+    void followPatch(editor, layout, comparisons, sides);
+  };
+  const layout: PatchLayout = new PatchLayout(inFront);
   languageClient.onNotification(StatusNotificationMethod, (status: ServerStatus) => {
     const nowReady = status.state === 'ready' && serverStatus?.state !== 'ready';
     serverStatus = status;
@@ -120,10 +124,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.registerFileSystemProvider(patchedScheme, sides, { isCaseSensitive: true }),
     sides,
     layout,
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      void updateStatusBar();
-      void followPatch(editor, layout, comparisons, sides);
-    }),
+    vscode.window.onDidChangeActiveTextEditor(inFront),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.languageId !== 'xml' || event.document.uri.scheme !== 'file' || event.contentChanges.length === 0) {
         return;
