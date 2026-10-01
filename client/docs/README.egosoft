@@ -184,6 +184,17 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=130][u]🛠 Changelog[/u][/size]
 
+[size=125][u][0.4.1] - unreleased[/u][/size]
+[list]
+[*] Fixed
+[list]
+[*] A patch opened in the group of the diff, such as from the Explorer while the diff has the focus, moves to the patches as before, and now its diff opens below it.
+[/list]
+[*] Changed
+[list]
+[*] Typing in large scripts is faster: semantic highlighting takes up to half the time it took, the checks up to a tenth less.
+[/list]
+[/list]
 [size=125][u][0.4.0] - 2026-10-01[/u][/size]
 [list]
 [*] Added
