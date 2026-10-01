@@ -168,7 +168,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [0.4.1] - unreleased
+### [0.4.1] - 2026-10-01
 
 - Fixed
   - A patch opened in the group of the diff, such as from the Explorer while the diff has the focus, moves to the patches as before, and now its diff opens below it.
