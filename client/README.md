@@ -13,6 +13,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 - XML well-formedness: unclosed tags, missing or unquoted attribute values, missing end tags, repeated attributes.
 - Validation against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes, invalid attribute values.
 - Expressions, parsed as the game parses them: syntax errors, `@` combined with `?`, text references that are not `{page, id}` literals, `%d` in format strings.
+- Formats, `'%s of %s'.[$a, $b]` and `{page, id}.[…]`: fewer arguments than the placeholders take is a warning; arguments no placeholder takes, which are not shown, are reported as information.
 - Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword.
 - Names, checked across the game, its DLCs and your extensions: labels, cues and libraries, interrupt library items, `md.Script.Cue`, and text references that no file defines; names defined twice.
 - Variables that are read but never set, following the cue namespace rules of the Mission Director.
@@ -211,7 +212,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [0.7.0] - unreleased
+### [0.7.0] - 2026-10-01
 
 - Added
   - The command-line checker applies the preferred fixes with `--fix`, and writes SARIF for GitHub code scanning with `--format sarif`.
@@ -219,6 +220,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - Quick fixes for tags and children: a value or start tag left open is closed, a missing end tag added, an end tag that matches nothing renamed or removed, a required child added, a child moved where the schema allows it; and for the step of a patch's `sel` that selects nothing, the names the file has there.
   - Completion of text references in any XML file, such as wares, macros and the text files, not only in scripts.
   - Signature help for the arguments of a format, `'%s of %s'.[…]` or `{page, id}.[…]`, with the placeholder of the argument at the caret highlighted.
+  - A warning for a format given fewer arguments than it takes, and information for arguments it does not show.
   - The README tells where X4CodeSense takes its knowledge from, and what is built in.
 - Fixed
   - A value whose text ends in `name=`, such as `comment="… instead of otherobject="` in `gs_pirate1.xml` of the Tides of Avarice DLC, is no longer taken for an unclosed value followed by another attribute.

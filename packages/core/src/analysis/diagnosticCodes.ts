@@ -1,4 +1,4 @@
-import type { ExpressionDiagnosticCode } from '../expressions/validateExpressions';
+import type { ExpressionDiagnosticCode, FormatDiagnosticCode } from '../expressions/validateExpressions';
 import type { NameDiagnosticCode } from '../names/validateNames';
 import type { PatchDiagnosticCode } from '../patches/validatePatch';
 import type { CallParameterDiagnosticCode } from '../project/validateCallParameters';
@@ -13,6 +13,7 @@ export type DiagnosticCode =
   | XmlProblemCode
   | StructureDiagnosticCode
   | ExpressionDiagnosticCode
+  | FormatDiagnosticCode
   | NameDiagnosticCode
   | VariableDiagnosticCode
   | TextDiagnosticCode
@@ -48,6 +49,8 @@ export const diagnosticDescriptions: Readonly<Record<DiagnosticCode, string>> = 
   'expression-format-specifier': "A format specifier the game does not know, such as '%d'.",
   'expression-unknown-keyword': 'An expression that starts with a name that is no keyword the game knows.',
   'expression-unknown-property': "A property its owner does not have, by the game's script properties.",
+  'format-arguments-missing': 'A format given fewer arguments than its placeholders take.',
+  'format-arguments-unused': 'Arguments of a format that no placeholder takes, so they are not shown.',
   'label-undefined': 'A label the AI script does not define.',
   'name-duplicate': 'A cue, library, label or interrupt library item defined twice where its name must be unique.',
   'cue-undefined': 'A cue or library that no known script defines.',

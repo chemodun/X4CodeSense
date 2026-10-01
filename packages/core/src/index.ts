@@ -16,6 +16,7 @@ export * from './expressions/parser';
 export * from './expressions/astChain';
 export * from './expressions/attributeExpression';
 export * from './expressions/propertyChain';
+export * from './expressions/formats';
 export * from './expressions/validateExpressions';
 export * from './variables/variables';
 export * from './variables/validateVariables';

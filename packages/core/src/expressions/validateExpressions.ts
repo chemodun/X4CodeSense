@@ -1,11 +1,13 @@
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
 import type { ScriptProperties } from '../properties/scriptProperties';
+import type { TextDatabase } from '../texts/textDatabase';
 import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlElement } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, type XsdElement } from '../xsd/schema';
 import { isChainNode, resolvedChainOf, type ChainNode } from './astChain';
 import { parsedValue } from './attributeExpression';
+import { formatArgumentCount, formatPlaceholders } from './formats';
 import { walkExpression, type Expression } from './parser';
 
 export type ExpressionDiagnosticCode =
@@ -16,9 +18,16 @@ export type ExpressionDiagnosticCode =
   | 'expression-unknown-keyword'
   | 'expression-unknown-property';
 
+/** The arguments of a format: fewer than it takes, or more. */
+export type FormatDiagnosticCode = 'format-arguments-missing' | 'format-arguments-unused';
+
 export interface ExpressionValidationOptions {
   /** Script properties; without them keywords and properties are not checked. */
   properties?: ScriptProperties;
+  /** The texts, for the formats that `{page, id}.[…]` names; without them only formats written as strings are counted. */
+  texts?: TextDatabase;
+  /** Count the arguments of formats; defaults to true. */
+  formats?: boolean;
   /** Script kind of the document, needed for the keyword set. */
   schema?: ScriptSchema;
   /** Names that may start a chain besides keywords: the cues and libraries of the document. */
@@ -27,11 +36,24 @@ export interface ExpressionValidationOptions {
   checkElement?: (element: XmlElement) => boolean;
 }
 
+/** The text of a format: a string, or the English text a `{page, id}` with numbers names; undefined when not known. */
+function formatOf(object: Expression, texts: TextDatabase | undefined): string | undefined {
+  if (object.kind === 'string') {
+    return object.unterminated ? undefined : object.text.slice(1, -1);
+  }
+  if (object.kind === 'textref' && object.page.kind === 'number' && object.id.kind === 'number' && texts) {
+    const picked = texts.pick(Number(object.page.text), Number(object.id.text), '44');
+    return picked && texts.display(picked.text, picked.language);
+  }
+  return undefined;
+}
+
 /**
  * Parses every attribute value that takes an expression and reports what the game would reject:
  * syntax errors, `@` combined with `?`, text references that are not numeric literals, `%d` in a
- * format string (fails at run time), and, with the script properties at hand, keywords and properties
- * that do not exist.
+ * format string (fails at run time), a format given fewer arguments than it takes (a warning) or more
+ * (information: they are not shown), and, with the script properties at hand, keywords and properties
+ * that do not exist. The arguments of a format are counted only in an expression that parses.
  */
 export function validateExpressions(
   declarations: ReadonlyMap<XmlElement, XsdElement>,
@@ -57,7 +79,13 @@ export function validateExpressions(
         // A value of the attribute's own enumeration, not an expression: `position="top_right"`.
         continue;
       }
-      const report = (code: ExpressionDiagnosticCode, message: string, start: number, end: number, severity: DiagnosticSeverity): void => {
+      const report = (
+        code: ExpressionDiagnosticCode | FormatDiagnosticCode,
+        message: string,
+        start: number,
+        end: number,
+        severity: DiagnosticSeverity
+      ): void => {
         diagnostics.push({
           range: Range.create(document.positionAt(offsetInValue(attribute, start)), document.positionAt(offsetInValue(attribute, end))),
           message,
@@ -71,18 +99,43 @@ export function validateExpressions(
         report(`expression-${error.code}`, error.message, error.start, error.end, DiagnosticSeverity.Error);
       }
       walkExpression(parsed.expression, (node) => {
-        if (node.kind !== 'args' || node.object.kind !== 'string') {
+        if (node.kind !== 'args') {
           return;
         }
-        const literal = node.object.text;
-        for (let index = literal.indexOf('%d'); index >= 0; index = literal.indexOf('%d', index + 2)) {
-          const start = node.object.start + index;
+        if (node.object.kind === 'string') {
+          const literal = node.object.text;
+          for (let index = literal.indexOf('%d'); index >= 0; index = literal.indexOf('%d', index + 2)) {
+            const start = node.object.start + index;
+            report(
+              'expression-format-specifier',
+              "'%d' is not a format specifier the game knows; numbers format with '%s'",
+              start,
+              start + 2,
+              DiagnosticSeverity.Warning
+            );
+          }
+        }
+        if (options.formats === false || parsed.errors.length > 0) {
+          return;
+        }
+        const format = formatOf(node.object, options.texts);
+        const takes = format === undefined ? undefined : formatArgumentCount(formatPlaceholders(format));
+        const given = node.args.length;
+        if (takes === undefined || takes === given) {
+          return;
+        }
+        const plural = (count: number): string => `${count} argument${count === 1 ? '' : 's'}`;
+        if (given < takes) {
+          const open = text.indexOf('[', node.object.end);
+          report('format-arguments-missing', `The format takes ${plural(takes)} but is given ${given}`, open, node.end, DiagnosticSeverity.Warning);
+        } else {
+          const extra = given - takes;
           report(
-            'expression-format-specifier',
-            "'%d' is not a format specifier the game knows; numbers format with '%s'",
-            start,
-            start + 2,
-            DiagnosticSeverity.Warning
+            'format-arguments-unused',
+            `The format takes ${plural(takes)}: ${extra === 1 ? 'this one is' : `these ${extra} are`} not shown`,
+            node.args[takes].start,
+            node.args[given - 1].end,
+            DiagnosticSeverity.Information
           );
         }
       });

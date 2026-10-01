@@ -55,6 +55,57 @@ describe('expression diagnostics', () => {
   });
 });
 
+describe('format arguments', () => {
+  const formats = (body: string): string[] =>
+    analyzeText(actions(body), { schemas: game.schemas, texts: game.texts })
+      .diagnostics.filter((diagnostic) => String(diagnostic.code).startsWith('format-'))
+      .map(
+        (diagnostic) =>
+          `${diagnostic.range.start.character + 1}-${diagnostic.range.end.character + 1} ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`
+      );
+  const text = (value: string): string => `<debug_text text="${value}"/>`;
+  const column = (value: string, part: string): number => '        <debug_text text="'.length + value.indexOf(part) + 1;
+
+  it('warns of fewer arguments than the format takes, on the brackets', () => {
+    const value = "'%s of %s'.[$a]";
+    expect(formats(text(value))).toEqual([
+      `${column(value, '[')}-${column(value, ']') + 1} 2 format-arguments-missing: The format takes 2 arguments but is given 1`,
+    ]);
+    expect(formats(text("'%1 has nothing to pick up %3'.[$ship]"))).toEqual([expect.stringContaining('takes 3 arguments but is given 1')]);
+    // A text of the game that is the format.
+    expect(formats(text('{2000, 1}.[$ship, $buyer]'))).toEqual([expect.stringContaining('takes 3 arguments but is given 2')]);
+  });
+
+  it('tells of more arguments than the format takes, on those', () => {
+    const value = "'%s'.[$a, $b, $c]";
+    expect(formats(text(value))).toEqual([
+      `${column(value, '$b')}-${column(value, '$c') + 2} 3 format-arguments-unused: The format takes 1 argument: these 2 are not shown`,
+    ]);
+    expect(formats(text("'none'.[$a]"))).toEqual([expect.stringContaining('takes 0 arguments: this one is not shown')]);
+  });
+
+  it('counts what the game counts, and leaves alone what is not known', () => {
+    for (const value of ["'%s of %s'.[$a, $b]", "'%2 and %1'.[$a, $b]", "'%4s left'.[$a, $b, $c, $d]", "'100%% of %,s'.[$a]", "'%s'.['%s and %s'.[$x, $y]]"]) {
+      expect(formats(text(value))).toEqual([]);
+    }
+    // Mixing `%s` and numbered placeholders, a text no file has, a value that does not parse, a list lookup.
+    for (const value of ["'%1 and %s'.[$a]", '{2000, 99}.[$a]', "'%s of %s'.[$a", '$list.[1]']) {
+      expect(formats(text(value))).toEqual([]);
+    }
+    // Without the texts, a text's format is not known.
+    expect(
+      analyzeText(actions(text('{2000, 1}.[$a]')), { schemas: game.schemas }).diagnostics.filter((diagnostic) => String(diagnostic.code).startsWith('format-'))
+    ).toEqual([]);
+  });
+
+  it('keeps counting while a value is being typed', () => {
+    const value = "'%s: %s'.['%s and %s'.[$x, $y], {2000, 1}.[$a, $b, $c]]";
+    for (let cut = 0; cut <= value.length; cut++) {
+      expect(() => formats(`<debug_text text="${value.slice(0, cut)}`)).not.toThrow();
+    }
+  });
+});
+
 describe('unknown keywords and properties', () => {
   const ai = (body: string): string =>
     `<aiscript name="a">\n  <attention min="1">\n    <actions>\n      ${body}\n    </actions>\n  </attention>\n</aiscript>\n`;

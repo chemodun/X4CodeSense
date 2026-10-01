@@ -81,6 +81,11 @@ export interface AnalysisContext {
    */
   validateScriptNames?: boolean;
   /**
+   * Count the arguments of formats (`'%s of %s'.[$a, $b]`, `{page, id}.[…]` with `texts`): fewer than
+   * the placeholders take is a warning, more is information. Defaults to true.
+   */
+  validateFormats?: boolean;
+  /**
    * Check only the elements for which this holds: their attributes, expressions, text and `md.`
    * references, and their children. The declarations, variables and names of the whole document are
    * still worked out, and their findings reported everywhere. A patch document checks its target so,
@@ -180,6 +185,8 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
       analysis.diagnostics.push(
         ...validateExpressions(validation.declarations, document, diagnosticSource, {
           properties: context.properties,
+          ...(context.texts ? { texts: context.texts } : {}),
+          formats: context.validateFormats ?? true,
           schema: detection.script.schema,
           knownHeads: cueNames(structure),
           ...(checkElement ? { checkElement } : {}),

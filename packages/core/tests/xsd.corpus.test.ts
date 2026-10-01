@@ -38,8 +38,8 @@ describe.skipIf(!extracted)('schema validation on the vanilla corpus', { timeout
       const files = xmlFilesIn(path.join(root, schemaFolderName[schema]));
       expect(files.length).toBeGreaterThan(0);
       for (const file of files) {
-        // The schema checks only: the name checks have their own gate with the known vanilla findings.
-        const analysis = analyzeText(readFileSync(file, 'utf8'), { schemas, validateNames: false });
+        // The schema checks only: the name checks and the arguments of formats have their own gates with the known vanilla findings.
+        const analysis = analyzeText(readFileSync(file, 'utf8'), { schemas, validateNames: false, validateFormats: false });
         for (const diagnostic of analysis.diagnostics) {
           failures.push(
             `${path.basename(file)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}: ${diagnostic.message} [${diagnostic.code}]`

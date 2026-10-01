@@ -1,45 +1,17 @@
 /**
  * Signature help for the arguments of a format: `'%s of %s'.[$a, $b]`, and `{page, id}.[…]` whose text is
- * the format. The label is the format, its placeholders the parameters, so the editor marks the one of
- * the argument at the caret. As the game's scripts write them (9.00 and the mods): `%s` takes the next
- * argument, with flags before the `s` (`%,s`, `%!s`); `%1`, `%2`, … take the argument of that number,
- * and letters after the digits are text (`%4s` is the fourth argument and an `s` of seconds, `%3Cr` the
- * third and `Cr`); `%%` is a percent sign. Where a format mixes both, `%s` counts its own arguments.
+ * the format. The label is the format, its placeholders (see `expressions/formats.ts`) the parameters,
+ * so the editor marks the one of the argument at the caret.
  */
 import { MarkupKind, type ParameterInformation, type SignatureHelp } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { positionContext, schemaOf } from '../analysis/positionContext';
+import { formatPlaceholders } from '../expressions/formats';
 import { parseExpression, walkExpression, type Expression } from '../expressions/parser';
 import type { GameData } from '../gameData';
 import { isExpressionAttribute } from '../xsd/schema';
 import { patchedViewAt } from './patchContent';
 import type { TextDisplayOptions } from './texts';
-
-/** A placeholder of a format: the argument it takes, counted from 0, and where it is written. */
-export interface FormatPlaceholder {
-  argument: number;
-  start: number;
-  end: number;
-}
-
-/** `%%`, `%<digits>`, or `%` with flags and an `s`; other letters after `%` take no argument. */
-const placeholderPattern = /%(?:%|(\d+)|[^\sa-zA-Z\d%'"]*s)/g;
-
-/** The placeholders of a format text, in order. */
-export function formatPlaceholders(format: string): FormatPlaceholder[] {
-  const placeholders: FormatPlaceholder[] = [];
-  let sequential = 0;
-  for (const match of format.matchAll(placeholderPattern)) {
-    if (match[0] === '%%') {
-      continue;
-    }
-    const argument = match[1] !== undefined ? Number(match[1]) - 1 : sequential++;
-    if (argument >= 0) {
-      placeholders.push({ argument, start: match.index, end: match.index + match[0].length });
-    }
-  }
-  return placeholders;
-}
 
 type ArgsNode = Extract<Expression, { kind: 'args' }>;
 
