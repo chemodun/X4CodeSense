@@ -1,6 +1,6 @@
 {
-  "packages/core": "0.4.1",
-  "packages/server": "0.4.1",
-  "packages/cli": "0.1.6",
-  "client": "0.4.1"
+  "packages/core": "0.5.0",
+  "packages/server": "0.5.0",
+  "packages/cli": "0.1.7",
+  "client": "0.5.0"
 }
