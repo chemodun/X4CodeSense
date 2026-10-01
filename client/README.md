@@ -59,7 +59,11 @@ In a patch, what an `add` or `replace` brings in is coloured as where it lands. 
 
 ### Quick fixes
 
-The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable, parameter of a call, AI script name or order id is changed to the known names closest in spelling.
+The light bulb (`Ctrl+.`) offers a fix where the fix is obvious:
+
+- Tags: an unquoted value is put in quotes, a value left open is closed, a start tag cut off is closed with `/>`, a missing end tag is added after the element's content, and an end tag that matches nothing is changed to the element left open when their names are close (`</set_valeu>`), or removed.
+- Attributes and children: an attribute without a value gets an empty one, a repeated attribute is removed, the required attributes an element lacks are added, a required child is added when only a few may stand there, and a child where the schema does not allow it is moved before the sibling it must precede, such as `<conditions>` after `<actions>`.
+- Names: a misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable, parameter of a call, AI script name or order id is changed to the known names closest in spelling, and so is a name or value in a patch's `sel` where that step selects nothing.
 
 When nothing defines a name and no known name is clearly the one meant, the light bulb also offers to create it:
 
@@ -211,6 +215,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Added
   - The command-line checker applies the preferred fixes with `--fix`, and writes SARIF for GitHub code scanning with `--format sarif`.
   - Quick fixes that create what nothing defines: a cue or library, also in the script `md.Script.Cue` names, a label, and a parameter a call passes in the script, order or library it calls.
+  - Quick fixes for tags and children: a value or start tag left open is closed, a missing end tag added, an end tag that matches nothing renamed or removed, a required child added, a child moved where the schema allows it; and for the step of a patch's `sel` that selects nothing, the names the file has there.
   - The README tells where X4CodeSense takes its knowledge from, and what is built in.
 - Fixed
   - A value whose text ends in `name=`, such as `comment="… instead of otherobject="` in `gs_pirate1.xml` of the Tides of Avarice DLC, is no longer taken for an unclosed value followed by another attribute.

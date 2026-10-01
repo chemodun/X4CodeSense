@@ -146,6 +146,72 @@ describe('quick fixes for the schema', () => {
   });
 });
 
+describe('quick fixes for tags and children', () => {
+  const script = (cues: string): string => `<mdscript name="S">\n  <cues>\n${cues}\n  </cues>\n</mdscript>\n`;
+  const problems = (text: string): string[] => analyze(text).diagnostics.map((diagnostic) => String(diagnostic.code));
+
+  it('closes a value where the scanner took it to end, preferred', () => {
+    const analysis = analyze(md('<set_value name="$x exact="1"/>'));
+    expect(fixes(analysis, 'unclosed-attribute')).toEqual(["Close the value of 'name' *"]);
+    const after = fixed(analysis, 'unclosed-attribute', "Close the value of 'name'");
+    expect(lineWith(after, '$x')).toBe('<set_value name="$x" exact="1"/>');
+    expect(problems(after)).toEqual([]);
+  });
+
+  it('closes a start tag cut off as the empty element it is taken for, its value too', () => {
+    const text = script('    <cue name="A"\n    <cue name="B"/>');
+    expect(fixes(analyze(text), 'unclosed-start-tag')).toEqual(["Close the start tag with '/>'"]);
+    expect(lineWith(fixed(analyze(text), 'unclosed-start-tag', "Close the start tag with '/>'"), '"A"')).toBe('<cue name="A"/>');
+    const cut = script('    <cue name="A\n    <cue name="B"/>');
+    const after = fixed(analyze(cut), 'unclosed-start-tag', "Close the start tag with '/>'");
+    expect(lineWith(after, '"A')).toBe('<cue name="A"/>');
+    expect(problems(after)).toEqual([]);
+  });
+
+  it('adds an end tag where the element was taken to end, after its content', () => {
+    const text = script('    <cue name="A">\n      <actions/>');
+    expect(fixes(analyze(text), 'missing-end-tag')).toEqual(['Add the end tag </cue>']);
+    const after = fixed(analyze(text), 'missing-end-tag', 'Add the end tag </cue>');
+    expect(after).toBe(script('    <cue name="A">\n      <actions/>\n    </cue>'));
+    expect(problems(after)).toEqual([]);
+  });
+
+  it('changes an end tag to the element left open when the names are close, else removes it', () => {
+    const typo = analyze(script('    <cue name="A">\n      <actions/>\n    </cuee>'));
+    expect(fixes(typo, 'unexpected-end-tag')).toEqual(['Change the end tag to </cue> *', 'Remove the end tag </cuee>']);
+    expect(problems(fixed(typo, 'unexpected-end-tag', 'Change the end tag to </cue>'))).toEqual([]);
+    const stray = analyze(script('    <cue name="A"/>\n    </stray>'));
+    expect(fixes(stray, 'unexpected-end-tag')).toEqual(['Remove the end tag </stray>']);
+    expect(fixed(stray, 'unexpected-end-tag', 'Remove the end tag </stray>')).toBe(script('    <cue name="A"/>'));
+  });
+
+  it('adds a required child, to be filled in, when few may stand there', () => {
+    const analysis = analyze('<mdscript name="S"/>\n');
+    expect(fixes(analysis, 'missing-child-element')).toEqual(['Add the required child <cues> *']);
+    const after = fixed(analysis, 'missing-child-element', 'Add the required child <cues>');
+    expect(after).toBe('<mdscript name="S">\n  <cues/>\n</mdscript>\n');
+    expect(problems(after)).toEqual([]);
+    // It only moves the problem into what it adds: fix all leaves it to the author.
+    expect(fixAll(analysis, game)).toBeUndefined();
+  });
+
+  it('moves a child before the sibling it must precede', () => {
+    const text = script(
+      '    <cue name="A">\n      <actions>\n        <debug_text text="1"/>\n      </actions>\n      <conditions>\n        <check_value value="true"/>\n      </conditions>\n    </cue>'
+    );
+    expect(fixes(analyze(text), 'invalid-child-element')).toEqual(['Move <conditions> before <actions>']);
+    const after = fixed(analyze(text), 'invalid-child-element', 'Move <conditions> before <actions>');
+    expect(after).toBe(
+      script(
+        '    <cue name="A">\n      <conditions>\n        <check_value value="true"/>\n      </conditions>\n      <actions>\n        <debug_text text="1"/>\n      </actions>\n    </cue>'
+      )
+    );
+    expect(problems(after)).toEqual([]);
+    // Not on a line of its own: left where it is.
+    expect(fixes(analyze(script('    <cue name="A"><actions/><conditions/></cue>')), 'invalid-child-element')).toEqual([]);
+  });
+});
+
 describe('quick fixes for names', () => {
   it('changes keywords, properties and variables in expressions', () => {
     const analysis = analyze(md('<set_value name="$count" exact="1" />\n        <debug_text text="plyer.ship.name + player.shp + $cuont" />'));
@@ -305,6 +371,19 @@ describe('quick fixes in patch documents', () => {
     const again = analyze(after, uri, patchContext);
     expect(again.diagnostics.filter((diagnostic) => diagnostic.code === 'unknown-element')).toEqual([]);
   });
+
+  it('changes a step of a path that selects nothing to a name the file has there', () => {
+    const value = analyze(text.replace(`<add sel="//cue[@name='Later']"`, `<add sel="//cue[@name='Ltaer']"`), uri, patchContext);
+    expect(fixes(value, 'patch-no-match', data)).toEqual(["Change to 'Later' *"]);
+    const after = fixed(value, 'patch-no-match', "Change to 'Later'", data);
+    expect(lineWith(after, 'instantiate')).toBe(`<add sel="//cue[@name='Later']" type="@instantiate">true</add>`);
+    expect(analyze(after, uri, patchContext).diagnostics.filter((diagnostic) => diagnostic.message.includes("'Later'"))).toEqual([]);
+    // A misspelt element name: the names of the file close to it, a letter too many closer than one changed.
+    const name = analyze(text.replace(`<add sel="//cue[@name='Later']"`, `<add sel="//cuee[@name='Later']"`), uri, patchContext);
+    expect(fixes(name, 'patch-no-match', data)).toEqual(["Change to 'cue' *", "Change to 'cues'"]);
+    // An element name the schema knows is meant: `//cue[@name='Missing']` gets nothing.
+    expect(fixes(analyze(text, uri, patchContext), 'patch-no-match', data)).toEqual([]);
+  });
 });
 
 describe('fix all', () => {
@@ -405,6 +484,7 @@ describe('while typing', () => {
       ),
     ];
     let offered = 0;
+    let closing = 0;
     for (const text of documents) {
       for (let cut = 0; cut <= text.length; cut += 7) {
         const analysis = analyze(text.slice(0, cut));
@@ -420,6 +500,11 @@ describe('while typing', () => {
           }
           // The edits of one action never overlap.
           expect(() => apply(analysis, action)).not.toThrow();
+          // What closes a value or a tag, or adds or changes an end tag, leaves the text with fewer problems.
+          if (/^(Close the|Add the end tag|Change the end tag)/.test(action.title)) {
+            closing++;
+            expect(analyze(apply(analysis, action)).structure?.problems.length ?? 0).toBeLessThan(analysis.structure?.problems.length ?? 0);
+          }
           // A changed name replaces exactly what a diagnostic of the action covers.
           if (action.title.startsWith('Change to')) {
             const covered = action.diagnostics?.map((diagnostic) => analysis.document.getText(diagnostic.range)) ?? [];
@@ -429,5 +514,6 @@ describe('while typing', () => {
       }
     }
     expect(offered).toBeGreaterThan(100);
+    expect(closing).toBeGreaterThan(20);
   });
 });

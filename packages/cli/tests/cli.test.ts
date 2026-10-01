@@ -179,7 +179,9 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
       expect(result.code).toBe(1);
       expect(lines(result)).toEqual([
         `${broken}:3:5: error: Element 'cue' has no end tag [missing-end-tag]`,
+        '  fix: Add the end tag </cue>',
         `${broken}:3:15: error: Value of attribute 'name' is not closed [unclosed-attribute]`,
+        "  fix: Close the value of 'name'",
         '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 2 finding(s) (2 error(s); no schema validation: pass --unpacked)',
       ]);
     });
@@ -475,6 +477,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
         `${invalid}:4:17: error: Missing required attribute 'name' in 'set_value' [missing-required-attribute]`,
         "  fix: Add the required attribute 'name'",
         `${invalid}:5:8: error: Element 'conditions' is not allowed after 'actions' in 'cue'. Expected 'cues', 'patch' [invalid-child-element]`,
+        '  fix: Move <conditions> before <actions>',
         '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 3 finding(s) (3 error(s))',
       ]);
 
