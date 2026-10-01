@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
 import {
   DocumentInfoRequestMethod,
+  EditorTabsNotificationMethod,
   patchBeforeScheme,
   PatchComparisonRequestMethod,
   PatchWriteRequestMethod,
@@ -11,6 +12,7 @@ import {
   StatusNotificationMethod,
   type DocumentInfoParams,
   type DocumentInfoResult,
+  type EditorTabsParams,
   type PatchComparisonParams,
   type PatchComparisonResult,
   type PatchTargetInfo,
@@ -118,8 +120,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       sides.refreshAll();
     }
   });
+  // The editor loads a restored tab only when it is shown: the server checks the others from the disk.
+  let sentTabs: string | undefined;
+  const sendTabs = (): void => {
+    const params: EditorTabsParams = { uris: tabUris() };
+    const sent = JSON.stringify(params.uris);
+    if (sent !== sentTabs && languageClient.isRunning()) {
+      sentTabs = sent;
+      languageClient.sendNotification(EditorTabsNotificationMethod, params).catch(() => {
+        // The server is stopping: it is sent again once it runs.
+        sentTabs = undefined;
+      });
+    }
+  };
   let changeTimer: NodeJS.Timeout | undefined;
   context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabs(sendTabs),
+    vscode.window.tabGroups.onDidChangeTabGroups(sendTabs),
     vscode.workspace.registerTextDocumentContentProvider(comparisonScheme, comparisons),
     vscode.workspace.registerFileSystemProvider(patchedScheme, sides, { isCaseSensitive: true }),
     sides,
@@ -142,6 +159,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       serverStatus = undefined;
       await updateStatusBar();
       await client?.restart();
+      sentTabs = undefined;
+      sendTabs();
     }),
     vscode.commands.registerCommand('x4CodeSense.showOutput', () => client?.outputChannel.show(true)),
     vscode.commands.registerCommand('x4CodeSense.openSettings', () =>
@@ -158,7 +177,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.globalState.setKeysForSync([neverOfferKey]);
   void offerOldSettings(context, languageClient.outputChannel);
   await languageClient.start();
+  sendTabs();
   await updateStatusBar();
+}
+
+/** The `file:` uris of the XML files in the tabs of every editor group, both sides of a diff included. */
+function tabUris(): string[] {
+  const uris = new Set<string>();
+  for (const tab of vscode.window.tabGroups.all.flatMap((group) => group.tabs)) {
+    const input = tab.input;
+    const shown = input instanceof vscode.TabInputText ? [input.uri] : input instanceof vscode.TabInputTextDiff ? [input.original, input.modified] : [];
+    for (const uri of shown) {
+      if (uri.scheme === 'file' && uri.path.toLowerCase().endsWith('.xml')) {
+        uris.add(uri.toString());
+      }
+    }
+  }
+  return [...uris].sort();
 }
 
 export async function deactivate(): Promise<void> {

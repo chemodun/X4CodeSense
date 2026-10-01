@@ -46,6 +46,8 @@
   "activationEvents": [
     "onLanguage:xml",
     "onLanguage:lua",
+    "workspaceContains:**/md/*.xml",
+    "workspaceContains:**/aiscripts/*.xml",
     "onFileSystem:x4codesense-patch",
     "onFileSystem:x4codesense-patched"
   ],
@@ -170,6 +172,19 @@
           "type": "boolean",
           "default": true,
           "description": "Check the order and completeness of child elements against the game's XSD schemas. Unknown elements and attributes and invalid attribute values are always reported when the unpacked game files are configured."
+        },
+        "x4CodeSense.diagnosticMode": {
+          "type": "string",
+          "enum": [
+            "openFilesOnly",
+            "workspace"
+          ],
+          "enumDescriptions": [
+            "The problems of the scripts open in the editor, checked as you type.",
+            "Also the problems of every other script and patch in the workspace folders, as they are on disk. They are checked once the scripts are indexed, which needs the extracted game files, and again when something they refer to changes."
+          ],
+          "default": "openFilesOnly",
+          "description": "Which scripts the Problems panel shows problems of: only the open ones, or every script in the workspace folders."
         },
         "x4CodeSense.debug": {
           "type": "boolean",
