@@ -492,6 +492,11 @@ export interface XPathNode<N extends XPathNode<N>> {
   attribute(name: string): string | undefined;
   /** The text an element holds, a comment's text. */
   stringValue(): string;
+  /**
+   * The child elements of a name whose attribute has a value, in document order: a node that keeps an
+   * index answers a step such as `ware[@id='energycells']` without looking at every `ware`.
+   */
+  childrenWith?(name: string, attribute: string, value: string): readonly N[];
 }
 
 /** What a path selects: a node, an attribute of an element, or the text of an element. */
@@ -572,6 +577,16 @@ function matchesTest<N extends XPathNode<N>>(test: XPathTest, node: N): boolean 
   }
 }
 
+/** For a step to the children whose first predicate is `@attr='value'`: what a node's index is asked for. */
+function indexedLookup(step: XPathStep): { name: string; attribute: string; value: string } | undefined {
+  const test = step.test;
+  const first = step.predicates[0];
+  if (step.descendants || test.kind !== 'element' || first?.kind !== 'compare' || first.operator !== '=' || first.subject.kind !== 'attribute') {
+    return undefined;
+  }
+  return { name: test.name, attribute: first.subject.name, value: first.value.value };
+}
+
 /**
  * The selection of the first `stepCount` steps of a path (all by default) from the document, in document
  * order without repeats. A path with a problem selects nothing.
@@ -593,6 +608,7 @@ export function evaluateXPath<N extends XPathNode<N>>(path: XPath, document: N, 
       }
     };
     const test = step.test;
+    const lookup = indexedLookup(step);
     const visit = (node: N): void => {
       if (test.kind === 'attribute') {
         if (node.kind === 'element' && node.attribute(test.name) !== undefined) {
@@ -601,6 +617,15 @@ export function evaluateXPath<N extends XPathNode<N>>(path: XPath, document: N, 
       } else if (test.kind === 'text') {
         if (node.kind === 'element' && node.stringValue() !== '') {
           filtered<N>([{ kind: 'text', owner: node }], step.predicates).forEach(add);
+        }
+      } else if (lookup && node.childrenWith) {
+        // The index answers the first predicate; positions in the others count over what it found, as they would after it.
+        const found = node.childrenWith(lookup.name, lookup.attribute, lookup.value);
+        if (found.length > 0) {
+          filtered(
+            found.map((child): XPathSelection<N> => ({ kind: 'node', node: child })),
+            step.predicates.slice(1)
+          ).forEach(add);
         }
       } else {
         // Positions count per parent, so the candidates are the matching children of one node at a time.

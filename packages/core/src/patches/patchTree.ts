@@ -38,6 +38,14 @@ export interface PatchNodeAttribute {
   setBy?: { operation: XmlElement; source: PatchSource };
 }
 
+/** The child elements of one name by the value of one attribute, and the value each had when it was built. */
+interface ChildIndex {
+  name: string;
+  attribute: string;
+  byValue: Map<string, PatchNode[]>;
+  valueOf: Map<PatchNode, string | undefined>;
+}
+
 export class PatchNode implements XPathNode<PatchNode> {
   parent: PatchNode | undefined;
   children: PatchNode[] = [];
@@ -50,6 +58,8 @@ export class PatchNode implements XPathNode<PatchNode> {
    */
   placed?: { anchor: PatchNode; deeper: boolean };
   private text: string | undefined;
+  /** Indexes of the children, built when a path first asks, until a change makes them wrong (`markChanged`). */
+  private indexes: Map<string, ChildIndex> | undefined;
 
   constructor(
     readonly kind: 'document' | 'element' | 'comment',
@@ -86,10 +96,51 @@ export class PatchNode implements XPathNode<PatchNode> {
     return this.text;
   }
 
-  /** Marks the node and its ancestors as changed. */
+  childrenWith(name: string, attribute: string, value: string): readonly PatchNode[] {
+    const key = `${name}@${attribute}`;
+    this.indexes ??= new Map();
+    let index = this.indexes.get(key);
+    if (!index) {
+      index = { name, attribute, byValue: new Map(), valueOf: new Map() };
+      for (const child of this.children) {
+        if (child.kind === 'element' && child.name === name) {
+          const childValue = child.attribute(attribute);
+          index.valueOf.set(child, childValue);
+          if (childValue !== undefined) {
+            const list = index.byValue.get(childValue);
+            if (list) {
+              list.push(child);
+            } else {
+              index.byValue.set(childValue, [child]);
+            }
+          }
+        }
+      }
+      this.indexes.set(key, index);
+    }
+    return index.byValue.get(value) ?? [];
+  }
+
+  /**
+   * Marks the node and its ancestors as changed. Every change of a tree ends here, on the node whose children or
+   * attributes changed: its indexes go, and those of its parent that hold another value of it than it has now.
+   * The ancestors' indexes stay, so changes deep in one `ware` do not rebuild the index of every `ware`.
+   */
   markChanged(): void {
+    this.indexes = undefined;
+    this.parent?.forgetValueOf(this);
     this.changed = true;
-    this.parent?.markChanged();
+    for (let node = this.parent; node; node = node.parent) {
+      node.changed = true;
+    }
+  }
+
+  private forgetValueOf(child: PatchNode): void {
+    for (const [key, index] of this.indexes ?? []) {
+      if (index.name === child.name && index.valueOf.get(child) !== child.attribute(index.attribute)) {
+        this.indexes?.delete(key);
+      }
+    }
   }
 }
 

@@ -1,5 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { conditionHolds, documentTree, evaluateXPath, parseXml, parseXPath, parseXPathCondition, type PatchNode, type XPathSelection } from '../src';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  applyPatch,
+  conditionHolds,
+  documentTree,
+  evaluateXPath,
+  parseXml,
+  parseXPath,
+  parseXPathCondition,
+  PatchNode,
+  type PatchSource,
+  type XPathNode,
+  type XPathSelection,
+} from '../src';
 
 const text = [
   '<mdscript name="Setup">',
@@ -133,6 +145,139 @@ describe('evaluateXPath', () => {
     const parsed = parseXPath("/mdscript/cues/cue[@name='Start']/actions/nothing");
     expect(evaluateXPath(parsed, document)).toEqual([]);
     expect(evaluateXPath(parsed, document, 4).map(describeSelection)).toEqual(['actions']);
+  });
+});
+
+/** A patch tree's node without the index: every step looks at every child. */
+class PlainNode implements XPathNode<PlainNode> {
+  private static readonly made = new WeakMap<PatchNode, PlainNode>();
+
+  static of(node: PatchNode): PlainNode {
+    let plain = PlainNode.made.get(node);
+    if (!plain) {
+      plain = new PlainNode(node);
+      PlainNode.made.set(node, plain);
+    }
+    return plain;
+  }
+
+  private constructor(readonly node: PatchNode) {}
+
+  get kind(): PatchNode['kind'] {
+    return this.node.kind;
+  }
+
+  get name(): string {
+    return this.node.name;
+  }
+
+  get children(): PlainNode[] {
+    return this.node.children.map((child) => PlainNode.of(child));
+  }
+
+  attribute(name: string): string | undefined {
+    return this.node.attribute(name);
+  }
+
+  stringValue(): string {
+    return this.node.stringValue();
+  }
+}
+
+function sourceOf(file: string, text: string): PatchSource {
+  return { file, text, structure: parseXml(text) };
+}
+
+const waresText = [
+  '<wares>',
+  '  <ware id="a" n="1"/>',
+  '  <ware id="b"/>',
+  '  <!-- c -->',
+  '  <ware id="a" n="2"><price min="1"/></ware>',
+  '  <item id="a"/>',
+  '  <ware n="3"/>',
+  '</wares>',
+].join('\n');
+
+function describeWare(selection: XPathSelection<PatchNode>): string {
+  const node = selection.kind === 'node' ? selection.node : selection.owner;
+  const shown = `${node.name}#${node.attribute('id') ?? ''}/${node.attribute('n') ?? ''}`;
+  return selection.kind === 'attribute' ? `@${selection.name}=${node.attribute(selection.name) ?? ''} of ${shown}` : shown;
+}
+
+/** What a path selects in a tree, with the index and looking at every child. */
+function withAndWithout(tree: PatchNode, path: string): { indexed: string[]; plain: string[] } {
+  const parsed = parseXPath(path);
+  expect(parsed.problem, path).toBeUndefined();
+  const plain = evaluateXPath(parsed, PlainNode.of(tree)).map((selection) =>
+    describeWare(selection.kind === 'node' ? { kind: 'node', node: selection.node.node } : { ...selection, owner: selection.owner.node })
+  );
+  return { indexed: evaluateXPath(parsed, tree).map(describeWare), plain };
+}
+
+const waresPaths = [
+  "/wares/ware[@id='a']",
+  "/wares/ware[@id='a'][2]",
+  "/wares/ware[@id='a'][last()]/price/@min",
+  "/wares/ware[@id='a'][@n='2']",
+  "/wares/ware[@id='z']",
+  "/wares/*[@id='a']",
+  "/wares/ware[@n='3']",
+  "//ware[@id='a']",
+  "/wares/ware[@id!='a']",
+  "wares/ware[@id='b']",
+  "/wares/ware[@id='b' or @n='3']",
+];
+
+describe("children found by an attribute's value", () => {
+  it('selects what looking at every child selects, positions counted among the matching ones', () => {
+    const tree = documentTree(sourceOf('wares.xml', waresText));
+    const lookups = vi.spyOn(PatchNode.prototype, 'childrenWith');
+    try {
+      for (const path of waresPaths) {
+        const { indexed, plain } = withAndWithout(tree, path);
+        expect(indexed, path).toEqual(plain);
+      }
+      // Only steps to the children whose first predicate is `@attr='value'` ask the index.
+      expect(lookups).toHaveBeenCalledTimes(7);
+      expect(withAndWithout(tree, "/wares/ware[@id='a'][2]").indexed).toEqual(['ware#a/2']);
+      expect(withAndWithout(tree, "/wares/ware[@id='a'][last()]/price/@min").indexed).toEqual(['@min=1 of price#/']);
+    } finally {
+      lookups.mockRestore();
+    }
+  });
+
+  it('follows the changes patches make to the tree', () => {
+    const tree = documentTree(sourceOf('wares.xml', waresText));
+    expect(withAndWithout(tree, "/wares/ware[@id='b']").indexed).toEqual(['ware#b/']);
+    const patch = sourceOf(
+      'patch.xml',
+      [
+        '<diff>',
+        // An attribute changed from the value the index has, one added with it.
+        `  <replace sel="/wares/ware[@id='b']/@id">c</replace>`,
+        `  <add sel="/wares/ware[@n='3']" type="@id">b</add>`,
+        // A node replaced, an attribute removed.
+        `  <replace sel="/wares/ware[@id='a'][1]"><ware id="d"/></replace>`,
+        `  <remove sel="/wares/ware[@id='a']/@id"/>`,
+        // A node added, another removed, and a change deeper down.
+        `  <add sel="/wares"><ware id="e"/></add>`,
+        `  <remove sel="/wares/ware[@id='d']"/>`,
+        `  <replace sel="/wares/ware[@n='2']/price/@min">5</replace>`,
+        '</diff>',
+      ].join('\n')
+    );
+    expect(applyPatch(tree, patch).map((operation) => operation.status)).toEqual(Array(7).fill('applied'));
+    for (const path of [...waresPaths.filter((path) => !path.includes('[2]')), "/wares/ware[@id='c']", "/wares/ware[@id='d']", "/wares/ware[@id='e']"]) {
+      const { indexed, plain } = withAndWithout(tree, path);
+      expect(indexed, path).toEqual(plain);
+    }
+    expect(withAndWithout(tree, "/wares/ware[@id='b']").indexed).toEqual(['ware#b/3']);
+    expect(withAndWithout(tree, "/wares/ware[@id='c']").indexed).toEqual(['ware#c/']);
+    expect(withAndWithout(tree, "/wares/ware[@id='a']").indexed).toEqual([]);
+    expect(withAndWithout(tree, "/wares/ware[@id='d']").indexed).toEqual([]);
+    expect(withAndWithout(tree, "/wares/ware[@id='e']").indexed).toEqual(['ware#e/']);
+    expect(withAndWithout(tree, "/wares/ware[@n='2']/price/@min").indexed).toEqual(['@min=5 of price#/']);
   });
 });
 

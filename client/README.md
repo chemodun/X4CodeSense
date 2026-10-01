@@ -223,6 +223,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
+### [0.9.0] - unreleased
+
+- Changed
+  - Patches are applied faster where a step of a path picks a node by an attribute's value, such as `cue[@name='Start']`: the node is found without looking at each of its siblings.
+
 ### [0.8.0] - 2026-10-01
 
 - Added

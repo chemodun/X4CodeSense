@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   analyzeComparisonSide,
   analyzeText,
@@ -22,6 +22,7 @@ import {
   newProblems,
   offsetInValue,
   parseXml,
+  PatchNode,
   pathNamesOf,
   referencesAt,
   scriptSchemaOf,
@@ -95,6 +96,33 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
       )
     );
     expect(findings.sort()).toEqual(knownModFindings);
+  });
+
+  // The index of a node's children is dropped where a patch changes the tree; any answer it gives that a look at
+  // every child would not give, at any moment of applying the earlier patches and each patch, is a wrong one.
+  it("finds through the patch trees' index what a look at every child finds", () => {
+    const childrenWith = PatchNode.prototype.childrenWith;
+    let lookups = 0;
+    const wrong: string[] = [];
+    const spy = vi.spyOn(PatchNode.prototype, 'childrenWith').mockImplementation(function (this: PatchNode, name, attribute, value) {
+      const found = childrenWith.call(this, name, attribute, value);
+      const all = this.children.filter((child) => child.kind === 'element' && child.name === name && child.attribute(attribute) === value);
+      lookups++;
+      if (found.length !== all.length || found.some((node, at) => node !== all[at])) {
+        wrong.push(`${path.basename(this.source.file)}: ${name}[@${attribute}='${value}'] gives ${found.length}, every child ${all.length}`);
+      }
+      return found;
+    });
+    try {
+      for (const { file } of analyses) {
+        analyzeText(readFileSync(file, 'utf8'), context, pathToFileURL(file).toString());
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    console.log(`${analyses.length} patches analysed again, ${lookups} lookups in the index checked`);
+    expect(lookups).toBeGreaterThan(1000);
+    expect(wrong).toEqual([]);
   });
 
   it('answers the editor features in every patch as its operations find the target', () => {
