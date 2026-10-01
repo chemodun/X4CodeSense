@@ -59,8 +59,12 @@ In a patch, what an [b]add[/b] or [b]replace[/b] brings in is coloured as where 
 
 [h2]Quick fixes[/h2]
 
-The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable, parameter of a call, AI script name or order id is changed to the known names closest in spelling.
-
+The light bulb (`Ctrl+.`) offers a fix where the fix is obvious:
+[list]
+[*] Tags: an unquoted value is put in quotes, a value left open is closed, a start tag cut off is closed with `/>`, a missing end tag is added after the element's content, and an end tag that matches nothing is changed to the element left open when their names are close (`</set_valeu>`), or removed.
+[*] Attributes and children: an attribute without a value gets an empty one, a repeated attribute is removed, the required attributes an element lacks are added, a required child is added when only a few may stand there, and a child where the schema does not allow it is moved before the sibling it must precede, such as [b]<conditions>[/b] after `<actions>`.
+[*] Names: a misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable, parameter of a call, AI script name or order id is changed to the known names closest in spelling, and so is a name or value in a patch's [b]sel[/b] where that step selects nothing.
+[/list]
 When nothing defines a name and no known name is clearly the one meant, the light bulb also offers to create it:
 [list]
 [*] [b]Create cue[/b] or [b]Create library[/b], after the cue that names it, or last in the other script [b]md.Script.Cue[/b] names. A cue that [b]signal_cue[/b] or [b]signal_cue_instantly[/b] names waits for the signal (`event_cue_signalled`); what `include_actions`, [b]run_actions[/b] or [b]<cue ref>[/b] names is a library with actions and the parameters the call passes.
@@ -230,6 +234,7 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [list]
 [*] The command-line checker applies the preferred fixes with `--fix`, and writes SARIF for GitHub code scanning with `--format sarif`.
 [*] Quick fixes that create what nothing defines: a cue or library, also in the script [b]md.Script.Cue[/b] names, a label, and a parameter a call passes in the script, order or library it calls.
+[*] Quick fixes for tags and children: a value or start tag left open is closed, a missing end tag added, an end tag that matches nothing renamed or removed, a required child added, a child moved where the schema allows it; and for the step of a patch's [b]sel[/b] that selects nothing, the names the file has there.
 [*] The README tells where X4CodeSense takes its knowledge from, and what is built in.
 [/list]
 [*] Fixed
