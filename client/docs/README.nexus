@@ -61,6 +61,14 @@ In a patch, what an [b]add[/b] or [b]replace[/b] brings in is coloured as where 
 
 The light bulb (`Ctrl+.`) offers a fix where the fix is obvious: an unquoted value is put in quotes, an attribute without a value gets an empty one, a repeated attribute is removed, and the required attributes an element lacks are added. A misspelled element, attribute, value, keyword, property, cue, script, label, interrupt library item, variable, parameter of a call, AI script name or order id is changed to the known names closest in spelling.
 
+When nothing defines a name and no known name is clearly the one meant, the light bulb also offers to create it:
+[list]
+[*] [b]Create cue[/b] or [b]Create library[/b], after the cue that names it, or last in the other script [b]md.Script.Cue[/b] names. A cue that [b]signal_cue[/b] or [b]signal_cue_instantly[/b] names waits for the signal (`event_cue_signalled`); what `include_actions`, [b]run_actions[/b] or [b]<cue ref>[/b] names is a library with actions and the parameters the call passes.
+[*] [b]Create label[/b], first in the actions of the attention block that resumes at it.
+[*] [b]Add the parameter[/b] a call passes to the script, order or library it calls, after its other parameters, or in a new [b]<params>[/b] where the schema allows one. An order's parameter gets the [b]type[/b] it requires, empty, to be filled in.
+[/list]
+These open the other file when what is created belongs there; the game's own scripts are never changed.
+
 [b]Apply all preferred fixes in this file[/b] applies at once the fix that is clearly the best for each problem of the file: in the light bulb when there are two or more, and as the source action `source.fixAll`, for example on save with `"[xml]": { "editor.codeActionsOnSave": { "source.fixAll": "explicit" } }`. Fixes that only add an empty value, a required attribute or the value of an attribute, are left out: the value is still to be written.
 
 [size=3][u][i]Patches[/i][/u][/size]
@@ -92,6 +100,22 @@ npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
 npx x4-script-check --fix --unpacked C:\X4\extracted path\to\your\extension
 [/code]
 
+[size=3][u][b]📚 Where its knowledge comes from[/b][/u][/size]
+
+X4CodeSense has no list of its own of what the game holds: no elements, properties, wares, factions, ships or macros. It reads them from the game files you extracted and from the extensions, so it follows the game version and the DLCs you have:
+[list]
+[*] The schemas in [b]libraries[/b] (`md.xsd`, `aiscripts.xsd`, `common.xsd`, `diff.xsd`): every element, attribute and value with its documentation, where each may stand, and what an attribute holds: an expression, a cue, a label, a variable that receives a result.
+[*] `libraries/scriptproperties.xml`: the keywords, datatypes and properties of expressions, and the lookups it imports from other game files.
+[*] The texts in `t`; the scripts in [b]md[/b] and [b]aiscripts[/b] of the game, its DLCs, the extensions and your workspace; each extension's [b]content.xml[/b] for the order the game loads them in.
+[/list]
+A few things the game's files do not say are built in:
+[list]
+[*] The expression language itself: its operators, `if … then … else`, `typeof`, and the cue keywords `this`, `static`, `staticbase`, [b]parent[/b] and `namespace`.
+[*] Thirteen keywords the game evaluates but [b]scriptproperties.xml[/b] does not list, written in the format of that file. Ten take their values from the game's own files (`common.xsd`, `factions.xsd`, `parameters.xsd`, `inputmap.xml`), such as [b]licencetype[/b] and `moodtype`; `component`, [b]datatype.macroslot[/b] and [b]chairtype[/b] are written out, as the game's scripts use them.
+[*] Which attribute of a call names what it calls (`run_script name`, `create_order id`, `run_actions ref`, `<cue ref>`, `start_script name`, `run_interrupt_script name`), and that the [b]ref[/b] of `cue`, [b]include_actions[/b] and [b]run_actions[/b] names a cue or a library: the schemas say so only in their descriptions.
+[*] The patch operations `add`, [b]replace[/b] and `remove`, and the names of text files (`0001-l044.xml`), as the game reads them.
+[*] What a quick fix creates: a cue that [b]signal_cue[/b] names waits for the signal, as nine in ten such cues of the game do; a library that [b]include_actions[/b] or [b]run_actions[/b] names has actions.
+[/list]
 [size=3][u][b]⚠️ Known limitations[/b][/u][/size]
 [list]
 [*] Without the extracted game files, scripts are only checked for well-formedness: the schemas, the script properties, the texts and the game's scripts all come from them.
@@ -205,6 +229,12 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [*] Added
 [list]
 [*] The command-line checker applies the preferred fixes with `--fix`, and writes SARIF for GitHub code scanning with `--format sarif`.
+[*] Quick fixes that create what nothing defines: a cue or library, also in the script [b]md.Script.Cue[/b] names, a label, and a parameter a call passes in the script, order or library it calls.
+[*] The README tells where X4CodeSense takes its knowledge from, and what is built in.
+[/list]
+[*] Fixed
+[list]
+[*] A value whose text ends in `name=`, such as [b]comment="… instead of otherobject="[/b] in [b]gs_pirate1.xml[/b] of the Tides of Avarice DLC, is no longer taken for an unclosed value followed by another attribute.
 [/list]
 [/list]
 [size=3][u][i][0.6.0] - 2026-10-01[/i][/u][/size]
