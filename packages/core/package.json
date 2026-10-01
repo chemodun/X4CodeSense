@@ -1,6 +1,6 @@
 {
   "name": "x4-script-core",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Editor-independent analysis of X4: Foundations scripts (AI scripts and Mission Director scripts).",
   "main": "out/index.js",
   "types": "out/index.d.ts",
