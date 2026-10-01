@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.6.0...x4-script-language-server@v0.7.0) (2026-10-01)
+
+
+### Features
+
+* quick fixes that create what nothing defines ([ae8a7d1](https://github.com/chemodun/X4CodeSense/commit/ae8a7d1c7647764cc88687cbff360b29cb0b8387))
+* signature help for the arguments of a format ([f2bb4fb](https://github.com/chemodun/X4CodeSense/commit/f2bb4fb8ca76a08a1683682e23ab16919f7688ac))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.6.0 to 0.7.0
+
 ## [0.6.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.5.0...x4-script-language-server@v0.6.0) (2026-10-01)
 
 

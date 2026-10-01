@@ -1,6 +1,6 @@
 {
   "name": "x4-script-check",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "description": "Command line checker for X4: Foundations scripts (AI scripts and Mission Director scripts).",
   "main": "out/cli.js",
   "bin": {
@@ -45,6 +45,6 @@
   },
   "dependencies": {
     "vscode-languageserver-textdocument": "^1.0.15",
-    "x4-script-core": "0.6.0"
+    "x4-script-core": "0.7.0"
   }
 }
