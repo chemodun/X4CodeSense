@@ -26,9 +26,9 @@
  * and library item has its name, that is what find references and rename need across files. What a script refers to without naming the script (a cue's bare name, a variable in its cue) is
  * worked out for a file when first asked for, like the variables of a cue.
  */
-import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { findExtensions } from '../extensions/extensions';
+import { diskFiles, fileNames, subfolderNames, type FileSource } from '../files/fileSource';
 import { collectNames, referenceKindOf, type DocumentNames } from '../names/namedItems';
 import { detectDocument } from '../scripts/scriptMetadata';
 import type { ScriptSchema } from '../types';
@@ -186,6 +186,8 @@ export interface ScriptFolder {
   source: string;
   /** For an extension's folders: where the patches in it apply. */
   patches?: PatchedFolder;
+  /** For the folders of an extension that is part of the game, a DLC. */
+  bundled?: boolean;
 }
 
 /** The file a patch changes, or why there is none. */
@@ -614,8 +616,11 @@ export class ScriptIndex {
   /** Answers of `cueVariables` by `Script.Cue`, until any file changes. */
   private readonly cueVariableLists = new Map<string, IndexedVariable[]>();
 
-  /** With the schemas, variables are indexed as well. */
-  constructor(private readonly schemas?: SchemaSet) {}
+  /** With the schemas, variables are indexed as well; files that are not open are read from `files`. */
+  constructor(
+    private readonly schemas?: SchemaSet,
+    private readonly source: FileSource = diskFiles
+  ) {}
 
   /** Indexes a file from its text; returns true when what other scripts see of it changed. */
   setText(file: string, text: string, source: string): boolean {
@@ -666,14 +671,17 @@ export class ScriptIndex {
     return removed;
   }
 
-  /** The text of a file as it is now: the editor's for an open file, else read from the disk; undefined when it cannot be read. */
+  /**
+   * The text of a file as it is now: the editor's for an open file, else read from the disk or the game's
+   * catalogs; undefined when it cannot be read.
+   */
   currentText(file: string): string | undefined {
     const text = this.texts.get(keyOf(file));
     if (text !== undefined) {
       return text;
     }
     try {
-      return readFileSync(file, 'utf8');
+      return this.source.readText(file);
     } catch {
       return undefined;
     }
@@ -1073,26 +1081,15 @@ export class ScriptIndex {
   }
 }
 
-function xmlFiles(folder: string): string[] {
-  try {
-    return readdirSync(folder)
-      .filter((name) => name.toLowerCase().endsWith('.xml'))
-      .sort((a, b) => a.localeCompare(b))
-      .map((name) => path.join(folder, name));
-  } catch {
-    return [];
-  }
+function xmlFiles(files: FileSource, folder: string): string[] {
+  return fileNames(files, folder)
+    .filter((name) => name.toLowerCase().endsWith('.xml'))
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => path.join(folder, name));
 }
 
-function subfolderNames(folder: string): string[] {
-  try {
-    return readdirSync(folder, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((a, b) => a.localeCompare(b));
-  } catch {
-    return [];
-  }
+function sortedSubfolderNames(files: FileSource, folder: string): string[] {
+  return subfolderNames(files, folder).sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -1101,10 +1098,10 @@ function subfolderNames(folder: string): string[] {
  * of the same name); its `extensions/<folder>/md` and `.../aiscripts` hold patches of the extension in
  * that folder, named by its folder or else its id, and are listed when they exist.
  */
-export function scriptFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = []): ScriptFolder[] {
+export function scriptFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = [], files: FileSource = diskFiles): ScriptFolder[] {
   const kinds = ['md', 'aiscripts'];
   const folders: ScriptFolder[] = gameFolder ? kinds.map((kind) => ({ folder: path.join(gameFolder, kind), source: 'game' })) : [];
-  const extensions = findExtensions(gameFolder, extensionFolders);
+  const extensions = findExtensions(gameFolder, extensionFolders, files);
   const byName = new Map<string, string>();
   for (const extension of extensions) {
     byName.set(path.basename(extension.folder).toLowerCase(), extension.folder);
@@ -1115,22 +1112,24 @@ export function scriptFolders(gameFolder: string | undefined, extensionFolders: 
     }
   }
   for (const extension of extensions) {
+    const bundled = extension.bundled ? { bundled: true } : {};
     for (const kind of kinds) {
-      const folder: ScriptFolder = { folder: path.join(extension.folder, kind), source: extension.id };
+      const folder: ScriptFolder = { folder: path.join(extension.folder, kind), source: extension.id, ...bundled };
       if (gameFolder) {
         folder.patches = { name: kind, folder: path.join(gameFolder, kind) };
       }
       folders.push(folder);
     }
-    for (const nested of subfolderNames(path.join(extension.folder, 'extensions'))) {
+    for (const nested of sortedSubfolderNames(files, path.join(extension.folder, 'extensions'))) {
       const target = byName.get(nested.toLowerCase());
       for (const kind of kinds) {
         const folder = path.join(extension.folder, 'extensions', nested, kind);
-        if (subfolderNames(path.dirname(folder)).includes(kind)) {
+        if (sortedSubfolderNames(files, path.dirname(folder)).includes(kind)) {
           folders.push({
             folder,
             source: extension.id,
             patches: { name: `extensions/${nested}/${kind}`, extension: nested, ...(target ? { folder: path.join(target, kind) } : {}) },
+            ...bundled,
           });
         }
       }
@@ -1139,38 +1138,39 @@ export function scriptFolders(gameFolder: string | undefined, extensionFolders: 
   return folders;
 }
 
-/**
- * The extensions whose script folders are read, by id in load order: those that lie in the game folder's
- * `extensions` (its DLCs), and the others.
- */
-export function sourcesOf(folders: readonly ScriptFolder[], gameFolder: string | undefined): { dlcs: string[]; extensions: string[] } {
-  const inGame = gameFolder === undefined ? undefined : `${keyOf(path.join(gameFolder, 'extensions'))}${path.sep}`;
+/** The extensions whose script folders are read, by id in load order: those that are part of the game (its DLCs), and the others. */
+export function sourcesOf(folders: readonly ScriptFolder[]): { dlcs: string[]; extensions: string[] } {
   const dlcs: string[] = [];
   const extensions: string[] = [];
   for (const folder of folders) {
     if (folder.source === 'game' || dlcs.includes(folder.source) || extensions.includes(folder.source)) {
       continue;
     }
-    (inGame !== undefined && keyOf(folder.folder).startsWith(inGame) ? dlcs : extensions).push(folder.source);
+    (folder.bundled ? dlcs : extensions).push(folder.source);
   }
   return { dlcs, extensions };
 }
 
 /** Every script file of the given script folders, in order. */
-export function scriptFiles(folders: readonly ScriptFolder[]): ScriptSource[] {
-  return folders.flatMap((folder) => xmlFiles(folder.folder).map((file) => ({ file, source: folder.source })));
+export function scriptFiles(folders: readonly ScriptFolder[], files: FileSource = diskFiles): ScriptSource[] {
+  return folders.flatMap((folder) => xmlFiles(files, folder.folder).map((file) => ({ file, source: folder.source })));
 }
 
 /** Indexes the scripts of the game and of extension folders at once. Unreadable files are left out. */
-export function loadScriptIndex(gameFolder: string | undefined, extensionFolders: readonly string[] = [], schemas?: SchemaSet): ScriptIndex {
-  const index = new ScriptIndex(schemas);
-  const folders = scriptFolders(gameFolder, extensionFolders);
+export function loadScriptIndex(
+  gameFolder: string | undefined,
+  extensionFolders: readonly string[] = [],
+  schemas?: SchemaSet,
+  files: FileSource = diskFiles
+): ScriptIndex {
+  const index = new ScriptIndex(schemas, files);
+  const folders = scriptFolders(gameFolder, extensionFolders, files);
   for (const folder of folders) {
     index.addFolder(folder);
   }
-  for (const source of scriptFiles(folders)) {
+  for (const source of scriptFiles(folders, files)) {
     try {
-      index.setText(source.file, readFileSync(source.file, 'utf8'), source.source);
+      index.setText(source.file, files.readText(source.file), source.source);
     } catch {
       // A file that cannot be read is left out.
     }

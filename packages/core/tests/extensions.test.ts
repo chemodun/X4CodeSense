@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +58,10 @@ describe('workspace layouts', () => {
     // A game installation opened as a workspace.
     make('game', 't', '0001-l044.xml');
     make('game', 'extensions', 'ego_dlc_test', 'md', 'Dlc.xml');
+    // A mod linked into a folder of mods, as modders and mod managers do (a junction needs no rights on Windows).
+    make('elsewhere', 'linked_mod', 'content.xml');
+    mkdirSync(at('links'));
+    symlinkSync(at('elsewhere', 'linked_mod'), at('links', 'linked_mod'), 'junction');
   });
 
   afterAll(() => {
@@ -66,6 +70,10 @@ describe('workspace layouts', () => {
 
   it('finds the mods of a folder of mods, not the folder itself', () => {
     expect(relative(extensionsIn(at('mods')))).toEqual(['mods/first', 'mods/second']);
+  });
+
+  it('finds a mod linked into a folder of mods', () => {
+    expect(relative(extensionsIn(at('links')))).toEqual(['links/linked_mod']);
   });
 
   it('finds one mod opened on its own, and a mod deeper in a repository', () => {

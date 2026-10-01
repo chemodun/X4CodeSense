@@ -353,7 +353,7 @@ function refreshTexts(): void {
     return;
   }
   const started = performance.now();
-  game.texts = loadTexts(game.folder, options);
+  game.texts = loadTexts(game.folder, { ...options, files: game.files });
   textSources = sources;
   overlayOpenTextFiles();
   log(`loaded ${game.texts.textCount} texts from ${game.texts.fileCount} files in ${(performance.now() - started).toFixed(0)} ms`);
@@ -373,7 +373,7 @@ async function refreshIndex(): Promise<void> {
   if (!game) {
     return;
   }
-  const folders = scriptFolders(game.folder, extensionFolders());
+  const folders = scriptFolders(game.folder, extensionFolders(), game.files);
   const sources = JSON.stringify(folders);
   if (sources === indexSources) {
     return;
@@ -397,11 +397,11 @@ async function refreshIndex(): Promise<void> {
   });
   try {
     const started = performance.now();
-    const index = new ScriptIndex(target.schemas);
+    const index = new ScriptIndex(target.schemas, target.files);
     for (const folder of folders) {
       index.addFolder(folder);
     }
-    const files = scriptFiles(folders);
+    const files = scriptFiles(folders, target.files);
     let slice = performance.now();
     let reported = slice;
     for (const [done, source] of files.entries()) {
@@ -409,7 +409,7 @@ async function refreshIndex(): Promise<void> {
         return;
       }
       try {
-        index.setText(source.file, readFileSync(source.file, 'utf8'), source.source);
+        index.setText(source.file, target.files.readText(source.file), source.source);
       } catch {
         // A file that cannot be read is left out.
       }
@@ -429,7 +429,7 @@ async function refreshIndex(): Promise<void> {
       indexOpenDocument(document, index);
     }
     target.index = index;
-    const { dlcs, extensions } = sourcesOf(folders, target.folder);
+    const { dlcs, extensions } = sourcesOf(folders);
     indexed = { scripts: files.length, dlcs, extensions };
     log(
       `indexed ${files.length} script files of the game, ${dlcs.length} DLC(s) and ${extensions.length} extension(s) in ${(performance.now() - started).toFixed(0)} ms`

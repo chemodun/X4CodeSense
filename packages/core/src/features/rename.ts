@@ -15,7 +15,7 @@
  * patch's paths select cues and library items by (`cue[@name='X']`) are places of those names too.
  *
  * A rename always may edit the current document; other files only inside the editable folders (the
- * workspace) and outside the game folder, or it is refused. It is refused too when the script is
+ * workspace) and outside the game's files and its DLCs', or it is refused. It is refused too when the script is
  * defined more than once, when a file changed since it was indexed, and when a variable is tied to
  * another file in a way no name in the text shows: set or read by a library of another file, or in a
  * table other scripts fill. Renaming only this file would break that tie without a word.
@@ -24,7 +24,7 @@ import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Location, Range, type TextEdit, type WorkspaceEdit } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
-import type { GameData } from '../gameData';
+import { isGameFile, type GameData } from '../gameData';
 import { relatedOccurrences, type NamedOccurrence } from '../names/namedItems';
 import { scriptNamesIn } from '../project/calls';
 import { mdReferenceAt, mdReferencesOf } from '../project/mdReferences';
@@ -364,7 +364,7 @@ function placesRefusal(what: string, places: readonly Elsewhere[], game: GameDat
   }
   for (const file of byFile.keys()) {
     const name = path.basename(file);
-    if (isInside(file, game.folder)) {
+    if (isGameFile(file, game)) {
       return `${what} is also written in ${name} of the game, which cannot be renamed`;
     }
     if (!(options.editableFolders ?? []).some((folder) => isInside(file, folder))) {

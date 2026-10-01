@@ -22,6 +22,8 @@ export * from './variables/variables';
 export * from './variables/validateVariables';
 export * from './names/namedItems';
 export * from './names/validateNames';
+export * from './files/fileSource';
+export * from './files/installedGame';
 export * from './extensions/extensions';
 export * from './project/scriptIndex';
 export * from './project/mdReferences';

@@ -14,9 +14,12 @@
  * Where nothing orders two extensions, they keep the order they were found in: the game's bundled
  * extensions (the DLCs) first, then each folder's extensions by path. That is the order to keep for
  * such ties; it only matters when two unrelated extensions change the same thing.
+ *
+ * The bundled extensions are the folders in the game folder's `extensions`; for an installed game, whose
+ * `extensions` holds the player's mods as well, its file source names them (its DLCs).
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
+import { diskFiles, subfolderNames, type FileSource } from '../files/fileSource';
 import { attributeNamed, parseXml } from '../xml/xmlStructure';
 
 export interface ExtensionFolder {
@@ -35,37 +38,24 @@ const searchDepth = 3;
 /** Folders that never hold an extension a script refers to. */
 const skippedFolders: ReadonlySet<string> = new Set(['node_modules', 'out', 'dist']);
 
-function isDirectory(folder: string): boolean {
-  try {
-    return statSync(folder).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function subfolders(folder: string): string[] {
-  try {
-    return readdirSync(folder, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !skippedFolders.has(entry.name.toLowerCase()))
-      .map((entry) => entry.name)
-      .sort((a, b) => a.localeCompare(b))
-      .map((name) => path.join(folder, name));
-  } catch {
-    return [];
-  }
+function subfolders(files: FileSource, folder: string): string[] {
+  return subfolderNames(files, folder)
+    .filter((name) => !name.startsWith('.') && !skippedFolders.has(name.toLowerCase()))
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => path.join(folder, name));
 }
 
 /** True for a folder that is an extension: it has a `content.xml`, or a `t`, `md` or `aiscripts` folder. */
-export function isExtensionFolder(folder: string): boolean {
-  return existsSync(path.join(folder, 'content.xml')) || ['t', 'md', 'aiscripts'].some((sub) => isDirectory(path.join(folder, sub)));
+export function isExtensionFolder(folder: string, files: FileSource = diskFiles): boolean {
+  return files.exists(path.join(folder, 'content.xml')) || ['t', 'md', 'aiscripts'].some((sub) => files.isDirectory(path.join(folder, sub)));
 }
 
 /** Reads the id and the dependencies of an extension folder from its `content.xml`, if it has one. */
-export function readExtension(folder: string, bundled = false): ExtensionFolder {
+export function readExtension(folder: string, bundled = false, files: FileSource = diskFiles): ExtensionFolder {
   const extension: ExtensionFolder = { folder: path.resolve(folder), id: path.basename(folder), dependencies: [], bundled };
   let text: string;
   try {
-    text = readFileSync(path.join(folder, 'content.xml'), 'utf8');
+    text = files.readText(path.join(folder, 'content.xml'));
   } catch {
     return extension;
   }
@@ -119,31 +109,36 @@ export function inLoadOrder(extensions: readonly ExtensionFolder[]): ExtensionFo
 }
 
 /** The folder itself when it is an extension, else the extensions it holds, not looking inside an extension. */
-export function extensionsIn(folder: string): string[] {
+export function extensionsIn(folder: string, files: FileSource = diskFiles): string[] {
   const found: string[] = [];
   const search = (current: string, depth: number): void => {
-    if (isExtensionFolder(current)) {
+    if (isExtensionFolder(current, files)) {
       found.push(current);
       return;
     }
     if (depth > 0) {
-      for (const sub of subfolders(current)) {
+      for (const sub of subfolders(files, current)) {
         search(sub, depth - 1);
       }
     }
   };
-  if (!isDirectory(folder)) {
+  if (!files.isDirectory(folder)) {
     return found;
   }
   search(folder, searchDepth);
   return found;
 }
 
+/** The extensions that are part of the game: those its file source names, else every folder in its `extensions`. */
+export function bundledExtensionsOf(gameFolder: string, files: FileSource = diskFiles): readonly string[] {
+  return files.bundledExtensions ?? subfolders(files, path.join(gameFolder, 'extensions'));
+}
+
 /**
  * The extensions of a game installation and of other folders, each once, in load order. The game's own
  * folder is never one of them, even when a workspace is opened on it.
  */
-export function findExtensions(gameFolder: string | undefined, extensionFolders: readonly string[] = []): ExtensionFolder[] {
+export function findExtensions(gameFolder: string | undefined, extensionFolders: readonly string[] = [], files: FileSource = diskFiles): ExtensionFolder[] {
   const found: ExtensionFolder[] = [];
   const seen = new Set<string>();
   if (gameFolder) {
@@ -153,16 +148,16 @@ export function findExtensions(gameFolder: string | undefined, extensionFolders:
     const key = path.resolve(folder).toLowerCase();
     if (!seen.has(key)) {
       seen.add(key);
-      found.push(readExtension(folder, bundled));
+      found.push(readExtension(folder, bundled, files));
     }
   };
   if (gameFolder) {
-    for (const folder of subfolders(path.join(gameFolder, 'extensions'))) {
+    for (const folder of bundledExtensionsOf(gameFolder, files)) {
       add(folder, true);
     }
   }
   for (const folder of extensionFolders) {
-    for (const extension of extensionsIn(folder)) {
+    for (const extension of extensionsIn(folder, files)) {
       add(extension, false);
     }
   }

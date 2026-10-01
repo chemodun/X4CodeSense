@@ -4,12 +4,13 @@
  */
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { writeCatalog, type CatalogFile } from 'x4-catalog';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cliEntry = path.resolve(here, '../src/cli.ts');
@@ -28,10 +29,13 @@ interface Run {
   stderr: string;
 }
 
-/** Runs the checker in a folder, which matters to the paths of the GitHub format. */
-async function runIn(cwd: string | undefined, ...args: string[]): Promise<Run> {
+/** Runs the checker in a folder, which matters to the paths of the GitHub format; the game comes from the arguments or `env` only. */
+async function execute(cwd: string | undefined, args: readonly string[], env: Record<string, string> = {}): Promise<Run> {
   try {
-    const { stdout, stderr } = await promisify(execFile)(process.execPath, [bundle, ...args], { cwd, env: { ...process.env, X4_UNPACKED: '' } });
+    const { stdout, stderr } = await promisify(execFile)(process.execPath, [bundle, ...args], {
+      cwd,
+      env: { ...process.env, X4_UNPACKED: '', X4_GAME: '', ...env },
+    });
     return { code: 0, stdout, stderr };
   } catch (error) {
     const failed = error as { code?: number; stdout?: string; stderr?: string };
@@ -39,8 +43,12 @@ async function runIn(cwd: string | undefined, ...args: string[]): Promise<Run> {
   }
 }
 
+function runIn(cwd: string | undefined, ...args: string[]): Promise<Run> {
+  return execute(cwd, args);
+}
+
 function run(...args: string[]): Promise<Run> {
-  return runIn(undefined, ...args);
+  return execute(undefined, args);
 }
 
 interface JsonRange {
@@ -169,7 +177,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
   it('passes a clean extension and says that schemas were not used', async () => {
     const result = await run(extension);
     expect(result.code).toBe(0);
-    expect(lines(result)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s) (no schema validation: pass --unpacked)']);
+    expect(lines(result)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s) (no schema validation: pass --unpacked or --game)']);
   });
 
   it('reports well-formedness problems with severity, line and column, in the order of the file', async () => {
@@ -182,7 +190,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
         '  fix: Add the end tag </cue>',
         `${broken}:3:15: error: Value of attribute 'name' is not closed [unclosed-attribute]`,
         "  fix: Close the value of 'name'",
-        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 2 finding(s) (2 error(s); no schema validation: pass --unpacked)',
+        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 2 finding(s) (2 error(s); no schema validation: pass --unpacked or --game)',
       ]);
     });
   });
@@ -208,7 +216,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
         "  fix: Give 'checkinterval' an empty value",
         `${typing}:4:32: error: Value of attribute 'name' is not quoted [unquoted-attribute-value]`,
         '  fix: Put the value in quotes',
-        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 2 finding(s) (2 error(s); no schema validation: pass --unpacked)',
+        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 2 finding(s) (2 error(s); no schema validation: pass --unpacked or --game)',
       ]);
     });
   });
@@ -303,7 +311,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
         expect(lines(result)).toEqual([
           '::error file=my_extension/aiscripts/Misplaced.xml,title=script-in-wrong-folder::is a md script but lies in the aiscripts folder',
           "::error file=my_extension/md/Typing%2C 100%25.xml,line=3,endLine=3,col=19,endColumn=32,title=missing-attribute-value::Attribute 'checkinterval' has no value%0AFix: Give 'checkinterval' an empty value",
-          '5 file(s) in 2 folder(s): 4 script(s), 1 patch(es), 2 finding(s) (2 error(s); no schema validation: pass --unpacked)',
+          '5 file(s) in 2 folder(s): 4 script(s), 1 patch(es), 2 finding(s) (2 error(s); no schema validation: pass --unpacked or --game)',
         ]);
         // Outside the current folder, the path stays as it is.
         const elsewhere = await runIn(path.dirname(unpacked), '--format', 'github', extension);
@@ -412,7 +420,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
         `${typing}:4:32: fixed: Put the value in quotes [unquoted-attribute-value]`,
         `${typing}:3:19: error: Attribute 'checkinterval' has no value [missing-attribute-value]`,
         "  fix: Give 'checkinterval' an empty value",
-        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 1 finding(s) (1 error(s); no schema validation: pass --unpacked); 1 fix(es) applied to 1 file(s)',
+        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 1 finding(s) (1 error(s); no schema validation: pass --unpacked or --game); 1 fix(es) applied to 1 file(s)',
       ]);
       expect(readFileSync(typing, 'utf8')).toBe(text.replace('name=$x', 'name="$x"'));
       expect(readFileSync(good, 'utf8')).toBe(goodText);
@@ -574,7 +582,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
   it('finds extensions one level below the given folder', async () => {
     const result = await run(workDir);
     expect(result.code).toBe(0);
-    expect(lines(result)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s) (no schema validation: pass --unpacked)']);
+    expect(lines(result)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s) (no schema validation: pass --unpacked or --game)']);
   });
 
   it('fails on a path that is not a folder and on unknown options', async () => {
@@ -683,5 +691,78 @@ describe('x4-script-check while typing', { timeout: 30_000 }, () => {
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }
+  });
+});
+
+describe('x4-script-check on an installed game', { timeout: 30_000 }, () => {
+  /** The fixture game packed into catalogs: the game's files in 01.cat, a DLC's in its ext_01.cat, a mod of the player loose beside it. */
+  let install: string;
+  let dlcScript: string;
+  let modScript: string;
+
+  beforeAll(() => {
+    install = path.join(path.dirname(unpacked), 'X4 Foundations');
+    mkdirSync(install);
+    const filesOf = (folder: string): CatalogFile[] =>
+      readdirSync(folder).map((name) => ({ path: `${path.basename(folder)}/${name}`, data: readFileSync(path.join(folder, name)) }));
+    writeCatalog(path.join(install, '01.cat'), [
+      ...filesOf(path.join(unpacked, 'libraries')),
+      ...filesOf(path.join(unpacked, 't')),
+      ...filesOf(path.join(unpacked, 'md')),
+    ]);
+    const dlc = path.join(install, 'extensions', 'ego_dlc_test');
+    mkdirSync(dlc, { recursive: true });
+    writeFileSync(path.join(dlc, 'content.xml'), '<content id="ego_dlc_test"/>\n');
+    // A problem with a preferred fix, which --fix cannot write: the file is in a catalog.
+    writeCatalog(path.join(dlc, 'ext_01.cat'), [
+      { path: 'md/dlc.xml', data: '<mdscript name="Dlc">\n  <cues>\n    <cuee name="A"/>\n  </cues>\n</mdscript>\n' },
+    ]);
+    dlcScript = path.join(dlc, 'md', 'dlc.xml');
+    modScript = path.join(install, 'extensions', 'player_mod', 'md', 'Mod.xml');
+    mkdirSync(path.dirname(modScript), { recursive: true });
+    writeFileSync(modScript, '<mdscript name="Mod">\n  <cues>\n    <bogus/>\n  </cues>\n</mdscript>\n');
+  });
+
+  it('validates against the installed game as against the extracted files', async () => {
+    const invalid = path.join(extension, 'md', 'Invalid.xml');
+    const text =
+      '<mdscript name="Invalid">\n  <cues>\n    <cue name="A" bogus="{1001,1}">\n      <actions><set_value exact="{1001,99}"/></actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    await withFile(invalid, text, async () => {
+      const extracted = await run('--unpacked', unpacked, extension);
+      const installed = await run('--game', install, extension);
+      // The fixture's script properties name imports it lacks: the same problems either way.
+      expect(installed.stderr).toBe(extracted.stderr);
+      expect(installed.code).toBe(1);
+      expect(lines(installed)).toEqual(lines(extracted));
+      expect(lines(installed).pop()).toBe('4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 3 finding(s) (2 error(s), 1 warning(s))');
+      // The variable as well.
+      expect(lines(await execute(undefined, [extension], { X4_GAME: install }))).toEqual(lines(extracted));
+    });
+  });
+
+  it('checks the game and its DLCs when given the game folder, not the mods in its extensions folder, and writes none of their files', async () => {
+    const result = await run('--game', install, '--fix', '--format', 'json', install);
+    expect(result.code).toBe(1);
+    const report = JSON.parse(result.stdout) as JsonReport;
+    expect(report.fixed).toEqual([]);
+    expect(report.findings.map((finding) => `${finding.file} ${finding.code} ${finding.fixes.map((fix) => fix.title).join(', ')}`)).toEqual([
+      `${dlcScript} unknown-element Change to 'cue'`,
+    ]);
+    expect(report.summary).toMatchObject({ files: 2, folders: 2, scripts: 2, patches: 0, schemaValidation: true, fixes: 0, fixedFiles: 0 });
+    expect(existsSync(path.dirname(dlcScript))).toBe(false);
+    expect(existsSync(path.join(install, 'md'))).toBe(false);
+
+    // The mods there are checked as any folder of extensions is.
+    const mods = JSON.parse((await run('--game', install, '--format', 'json', path.join(install, 'extensions'))).stdout) as JsonReport;
+    expect(mods.findings.map((finding) => `${finding.file} ${finding.code}`)).toEqual([`${dlcScript} unknown-element`, `${modScript} unknown-element`]);
+  });
+
+  it('takes the extracted files first, and refuses a folder that is no installed game', async () => {
+    const both = await run('--unpacked', unpacked, '--game', workDir, extension);
+    expect(both.code).toBe(0);
+    expect(lines(both)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s)']);
+    const notGame = await run('--game', workDir, extension);
+    expect(notGame.code).toBe(2);
+    expect(notGame.stderr).toContain(`Not an installed game, it has no 01.cat: ${workDir}`);
   });
 });

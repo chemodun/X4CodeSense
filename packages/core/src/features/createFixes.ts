@@ -10,11 +10,10 @@
  * label goes first in the actions of its attention block: where it belongs is the author's choice. A file
  * of the game or a DLC is never changed, since an extension patches those instead.
  */
-import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
-import type { GameData } from '../gameData';
+import { isGameFile, type GameData } from '../gameData';
 import { callTarget, callTargetLabel } from '../project/callTargets';
 import { mdReferenceAt } from '../project/mdReferences';
 import { attributeNamed, elementWithStartTagAt, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
@@ -27,15 +26,6 @@ export interface CreationFix {
   edits: TextChange[];
   /** Edits of another file. */
   elsewhere?: { document: TextDocument; edits: TextChange[] };
-}
-
-/** True when the file lies in the extracted game files, its DLCs included. */
-function isGameFile(file: string, game: GameData | undefined): boolean {
-  if (!game || file === '') {
-    return false;
-  }
-  const relative = path.relative(game.folder, file);
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 /** The declaration of an element of a file without an analysis: down from the root, else any of its name. */

@@ -84,18 +84,18 @@ describe('patch targets', () => {
     ]);
   });
 
-  it('tells the DLCs in the game folder from the other extensions', () => {
+  it('tells the DLCs from the other extensions', () => {
     const folders = [
       { folder: path.join(gameFolder, 'md'), source: 'game' },
-      { folder: path.join(gameFolder, 'extensions', 'ego_dlc_a', 'md'), source: 'ego_dlc_a' },
-      { folder: path.join(gameFolder, 'Extensions', 'ego_dlc_a', 'aiscripts'), source: 'ego_dlc_a' },
+      { folder: path.join(gameFolder, 'extensions', 'ego_dlc_a', 'md'), source: 'ego_dlc_a', bundled: true },
+      { folder: path.join(gameFolder, 'extensions', 'ego_dlc_a', 'aiscripts'), source: 'ego_dlc_a', bundled: true },
       { folder: path.join(modsFolder, 'base_mod', 'md'), source: 'ws_12345' },
       { folder: path.join(modsFolder, 'late_mod', 'extensions', 'base_mod', 'md'), source: 'late_mod' },
-      { folder: path.join(`${gameFolder}_other`, 'extensions', 'near', 'md'), source: 'near' },
+      // An installed game's extensions folder holds mods as well.
+      { folder: path.join(gameFolder, 'extensions', 'near', 'md'), source: 'near' },
     ];
-    expect(sourcesOf(folders, gameFolder)).toEqual({ dlcs: ['ego_dlc_a'], extensions: ['ws_12345', 'late_mod', 'near'] });
-    expect(sourcesOf(folders, undefined)).toEqual({ dlcs: [], extensions: ['ego_dlc_a', 'ws_12345', 'late_mod', 'near'] });
-    expect(sourcesOf(scriptFolders(gameFolder, [modsFolder]), gameFolder)).toEqual({ dlcs: [], extensions: ['ws_12345', 'early_mod', 'late_mod'] });
+    expect(sourcesOf(folders)).toEqual({ dlcs: ['ego_dlc_a'], extensions: ['ws_12345', 'late_mod', 'near'] });
+    expect(sourcesOf(scriptFolders(gameFolder, [modsFolder]))).toEqual({ dlcs: [], extensions: ['ws_12345', 'early_mod', 'late_mod'] });
   });
 
   it('ties a patch to the file it changes, or tells why there is none', () => {

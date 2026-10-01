@@ -212,6 +212,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
+### [0.8.0] - unreleased
+
+- Added
+  - The command-line checker reads an installed game with `--game`: its files and its DLCs' straight from their catalogs, without extracting them.
+- Fixed
+  - An extension linked into a folder of extensions, as modders and mod managers do with a junction or a symbolic link, is found.
+
 ### [0.7.0] - 2026-10-01
 
 - Added

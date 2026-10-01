@@ -3,17 +3,20 @@
 Command line checker for X4: Foundations scripts (AI scripts and Mission Director scripts), built on `x4-script-core`. Meant for CI and for tools that want the same diagnostics the X4CodeSense VS Code extension shows.
 
 ```powershell
+npx x4-script-check --game "C:\Games\X4 Foundations" path\to\extension
 npx x4-script-check --unpacked C:\X4\extracted path\to\extension
 npx x4-script-check --unpacked C:\X4\extracted path\to\folder\with\many\extensions
 npx x4-script-check path\to\extension        # well-formedness only, no schemas
 npx x4-script-check --format json --unpacked C:\X4\extracted path\to\extension
 npx x4-script-check --fix --unpacked C:\X4\extracted path\to\extension
+npx x4-script-check --game "C:\Games\X4 Foundations" "C:\Games\X4 Foundations"   # the game and its DLCs
 ```
 
-It looks for `md` and `aiscripts` folders directly under each given path and one level deeper, and for the patches of other extensions in `extensions/<folder>/md` and `.../aiscripts`. It checks every `*.xml` file in them, in the order of their names, and exits with 1 when there are findings (2 on a usage error).
+It looks for `md` and `aiscripts` folders directly under each given path and one level deeper, and for the patches of other extensions in `extensions/<folder>/md` and `.../aiscripts`. It checks every `*.xml` file in them, in the order of their names, and exits with 1 when there are findings (2 on a usage error). The game folder itself, given as a path to check, stands for the game and its DLCs.
 
 Options:
 
+- `--game <folder>` - the installed game, the folder of `X4.exe`. Its files and those of its DLCs (the folders of its `extensions` whose names start with `ego_dlc_`) are read from their catalogs (`01.cat`, …, a DLC's `ext_01.cat`, …) where they lie: nothing is extracted, and the X Catalog Tool is not needed. The other folders in its `extensions`, the player's mods, are not part of the game: give them as paths to check or with `--extensions`. Used when `--unpacked` is not given. Also read from the `X4_GAME` environment variable.
 - `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd` and `common.xsd`, and scripts are validated against them. Also read from the `X4_UNPACKED` environment variable.
 - `--extensions <folder>` - other extensions the checked ones refer to: their texts and scripts are read, they are not checked. May be given several times.
 - `--no-structure` - report unknown elements, attributes and values only, not the order and completeness of child elements.
@@ -96,6 +99,8 @@ C:\mods\my_extension\md\Texts.xml:5:50: warning: Text 2 does not exist on page 9
 
 Without the game files on the runner, only well-formedness is checked.
 
+The text, JSON and GitHub formats name the files of an installed game by the paths they would have if extracted, such as `C:\Games\X4 Foundations\md\setup.xml`.
+
 ## SARIF
 
 `--format sarif` prints a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) log, which GitHub code scanning and other tools read. Each code found is a rule with a description of what it reports; files are named relative to the current folder, as for `github`; the quick fixes are SARIF fixes. A finding about a whole file is placed on its first line, since code scanning shows results at lines. Code scanning has to be available for the repository (it is for public ones).
@@ -125,6 +130,6 @@ C:\mods\my_extension\aiscripts\order.mine.xml:7:8: fixed: Change to 'set_value' 
 3 file(s) in 1 folder(s): 3 script(s), 0 patch(es), 0 finding(s); 2 fix(es) applied to 1 file(s)
 ```
 
-With `--format json` the fixes are listed under `fixed` (file, place, code, message and the fix's title) and counted as `fixes` and `fixedFiles` in the summary; with `--format github` each is a notice. Most fixes need the game files: without `--unpacked`, only quotes are put in.
+With `--format json` the fixes are listed under `fixed` (file, place, code, message and the fix's title) and counted as `fixes` and `fixedFiles` in the summary; with `--format github` each is a notice. Most fixes need the game files: without `--unpacked` or `--game`, only quotes are put in. The files of an installed game, read from its catalogs, are never written.
 
 Part of [X4CodeSense](https://github.com/chemodun/X4CodeSense). Apache License 2.0.

@@ -13,9 +13,9 @@
  * A text may contain references to other texts, resolved when the game shows it; text in round
  * brackets is a comment the game hides, `\(` and `\)` are literal brackets and `\n` is a line break.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { findExtensions } from '../extensions/extensions';
+import { diskFiles, fileNames, type FileSource } from '../files/fileSource';
 import { attributeNamed, decodeAttributeValue, parseXml, type XmlElement } from '../xml/xmlStructure';
 
 /** One text in one language. */
@@ -308,21 +308,15 @@ export interface TextLoadOptions {
   extensionFolders?: readonly string[];
   /** Only these languages, besides `0001.xml`; all when absent. */
   languages?: ReadonlySet<string>;
-}
-
-function isDirectory(folder: string): boolean {
-  try {
-    return statSync(folder).isDirectory();
-  } catch {
-    return false;
-  }
+  /** Where the files are read from; the disk when absent. */
+  files?: FileSource;
 }
 
 /** The `t` folders of the game and of its and the given extensions, in the order the game loads them. */
-export function textFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = []): string[] {
+export function textFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = [], files: FileSource = diskFiles): string[] {
   const candidates = gameFolder ? [path.join(gameFolder, 't')] : [];
-  candidates.push(...findExtensions(gameFolder, extensionFolders).map((extension) => path.join(extension.folder, 't')));
-  return candidates.filter(isDirectory);
+  candidates.push(...findExtensions(gameFolder, extensionFolders, files).map((extension) => path.join(extension.folder, 't')));
+  return candidates.filter((folder) => files.isDirectory(folder));
 }
 
 /** Texts of every language, with lookups by page and id, built by applying the files in reading order. */
@@ -520,12 +514,14 @@ function removeTexts(byPage: Map<number, Map<number, GameText[]>>, page: number,
   }
 }
 
-function readLanguageNames(gameFolder: string, into: Map<string, string>): void {
-  const file = path.join(gameFolder, 'libraries', 'languages.xml');
-  if (!existsSync(file)) {
+function readLanguageNames(gameFolder: string, files: FileSource, into: Map<string, string>): void {
+  let text: string;
+  try {
+    text = files.readText(path.join(gameFolder, 'libraries', 'languages.xml'));
+  } catch {
     return;
   }
-  for (const element of parseXml(readFileSync(file, 'utf8')).elements) {
+  for (const element of parseXml(text).elements) {
     const id = attributeNamed(element, 'id')?.value;
     const name = attributeNamed(element, 'name')?.value;
     if (element.name === 'language' && id && name) {
@@ -537,24 +533,19 @@ function readLanguageNames(gameFolder: string, into: Map<string, string>): void 
 /** Reads the text files of the game and of extension folders, in load order. Never throws; unreadable files are skipped. */
 export function loadTexts(gameFolder: string | undefined, options: TextLoadOptions = {}): TextDatabase {
   const database = new TextDatabase();
+  const files = options.files ?? diskFiles;
   if (gameFolder) {
-    readLanguageNames(gameFolder, database.languageNames);
+    readLanguageNames(gameFolder, files, database.languageNames);
   }
-  for (const folder of textFolders(gameFolder, options.extensionFolders)) {
-    let names: string[];
-    try {
-      names = readdirSync(folder).sort();
-    } catch {
-      continue;
-    }
+  for (const folder of textFolders(gameFolder, options.extensionFolders, files)) {
     database.folders.push(folder);
-    for (const name of names) {
+    for (const name of fileNames(files, folder).sort()) {
       const language = languageOfTextFile(name);
       if (language === undefined || (options.languages && language !== '*' && !options.languages.has(language))) {
         continue;
       }
       try {
-        database.setFile(path.join(folder, name), readFileSync(path.join(folder, name), 'utf8'), language);
+        database.setFile(path.join(folder, name), files.readText(path.join(folder, name)), language);
       } catch {
         // A file that cannot be read is left out.
       }

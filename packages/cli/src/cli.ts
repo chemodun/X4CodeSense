@@ -1,19 +1,26 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   analyzeDocument,
+  bundledExtensionsOf,
   diagnosticDescriptions,
+  diskFiles,
+  fileNames,
   fixAll,
+  isInstalledGame,
   loadGameData,
+  openInstalledGame,
   quickFixes,
   scriptSchemas,
   schemaFolderName,
+  subfolderNames,
   type AnalysisContext,
   type DocumentAnalysis,
+  type FileSource,
   type GameData,
   type ScriptSchema,
 } from 'x4-script-core';
@@ -75,6 +82,8 @@ interface Options {
   roots: string[];
   /** The extracted game files, whose `libraries` folder holds the schemas. */
   unpacked?: string;
+  /** The installed game, read from its catalogs when no extracted files are given. */
+  game?: string;
   /** Folders of other extensions the checked ones depend on: read for texts and scripts, not checked. */
   extensions: string[];
   /** Check the order and completeness of child elements. */
@@ -91,12 +100,16 @@ const usage = `Usage: x4-script-check [options] [folder...]
 
 Checks every *.xml file in the md and aiscripts folders found directly under each given folder
 (default: the current folder) and one level deeper, and in the extensions/<folder>/md and
-.../aiscripts folders there, which hold patches of other extensions. With --unpacked, a patch is
-applied to the file it changes: the game's, or the named extension's.
+.../aiscripts folders there, which hold patches of other extensions; the game folder itself
+stands for the game and its DLCs. With --unpacked or --game, a patch is applied to the file it
+changes: the game's, or the named extension's.
 
 Options:
   --unpacked <folder>   extracted vanilla game files; enables validation against the game schemas
                         (also read from the X4_UNPACKED environment variable)
+  --game <folder>       the installed game, the folder of X4.exe: its files and its DLCs' are read
+                        from their catalogs, nothing is extracted; used when --unpacked is not given
+                        (also read from the X4_GAME environment variable)
   --extensions <folder> other extensions the checked ones refer to: their texts and scripts are
                         read, they are not checked; may be given several times
   --no-structure        do not check the order and completeness of child elements
@@ -116,6 +129,7 @@ Exit code 1 when there are findings as severe as --fail-on or more, 2 on a usage
 /** The options that take a value, with what the value is. */
 const valueOptions = new Map([
   ['--unpacked', 'a folder'],
+  ['--game', 'a folder'],
   ['--extensions', 'a folder'],
   ['--format', `one of ${formats.join(', ')}`],
   ['--fail-on', `one of ${severities.join(', ')}`],
@@ -135,6 +149,10 @@ function parseOptions(argv: string[]): Options {
   if (unpacked !== undefined && unpacked !== '') {
     options.unpacked = unpacked;
   }
+  const installed = process.env.X4_GAME;
+  if (installed !== undefined && installed !== '') {
+    options.game = installed;
+  }
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const equals = argument.startsWith('--') ? argument.indexOf('=') : -1;
@@ -147,6 +165,8 @@ function parseOptions(argv: string[]): Options {
       }
       if (name === '--unpacked') {
         options.unpacked = value;
+      } else if (name === '--game') {
+        options.game = value;
       } else if (name === '--extensions') {
         options.extensions.push(value);
       } else if (name === '--format') {
@@ -172,45 +192,36 @@ function parseOptions(argv: string[]): Options {
   return options;
 }
 
-async function isDirectory(candidate: string): Promise<boolean> {
-  try {
-    return (await stat(candidate)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /** Orders names the same way on every system, so the output does too. */
-function byName(a: { name: string }, b: { name: string }): number {
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+function inOrder(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
-async function subfolders(folder: string): Promise<string[]> {
-  try {
-    return (await readdir(folder, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .sort(byName)
-      .map((entry) => path.join(folder, entry.name));
-  } catch {
-    return [];
-  }
+function subfolders(files: FileSource, folder: string): string[] {
+  return subfolderNames(files, folder)
+    .sort(inOrder)
+    .map((name) => path.join(folder, name));
 }
 
 /**
  * Finds script folders under a root: `<root>/md`, `<root>/aiscripts` and the same one level deeper,
  * so a single extension and a folder full of extensions both work; also the patches of other
- * extensions an extension keeps in `extensions/<folder>/md` and `.../aiscripts`.
+ * extensions an extension keeps in `extensions/<folder>/md` and `.../aiscripts`. The game folder
+ * stands for the game and its DLCs: an installed game's `extensions` holds the player's mods as well.
  */
-async function collectScriptFolders(root: string): Promise<ScriptFolder[]> {
+function collectScriptFolders(root: string, files: FileSource, game: GameData | undefined): ScriptFolder[] {
   const result: ScriptFolder[] = [];
-  const candidates: string[] = [root, ...(await subfolders(root))];
+  const isGame = game !== undefined && path.relative(root, path.resolve(game.folder)) === '';
+  const candidates: string[] = isGame ? [root, ...[...bundledExtensionsOf(game.folder, files)].sort(inOrder)] : [root, ...subfolders(files, root)];
   for (const candidate of [...candidates]) {
-    candidates.push(...(await subfolders(path.join(candidate, 'extensions'))));
+    if (!isGame || candidate !== root) {
+      candidates.push(...subfolders(files, path.join(candidate, 'extensions')));
+    }
   }
   for (const candidate of candidates) {
     for (const schema of scriptSchemas) {
       const folder = path.join(candidate, schemaFolderName[schema]);
-      if (await isDirectory(folder)) {
+      if (files.isDirectory(folder)) {
         result.push({ folder, schema });
       }
     }
@@ -225,9 +236,9 @@ function byPosition(a: Finding, b: Finding): number {
   return first.line - second.line || first.character - second.character;
 }
 
-async function checkFile(file: string, schema: ScriptSchema, context: AnalysisContext, game: GameData | undefined, counters: Counters): Promise<Finding[]> {
+function checkFile(file: string, schema: ScriptSchema, context: AnalysisContext, game: GameData | undefined, counters: Counters): Finding[] {
   counters.files++;
-  const document = TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, await readFile(file, 'utf8'));
+  const document = TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, (game?.files ?? diskFiles).readText(file));
   const analysis = analyzeDocument(document, context);
   const detection = analysis.detection;
   const findings: Finding[] = [];
@@ -276,17 +287,17 @@ function messageOf(diagnostic: Diagnostic): string {
 }
 
 /** The XML files of a script folder, in the order of their names. */
-async function xmlFilesOf(folder: string): Promise<string[]> {
-  return (await readdir(folder, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.xml'))
-    .sort(byName)
-    .map((entry) => path.join(folder, entry.name));
+function xmlFilesOf(files: FileSource, folder: string): string[] {
+  return fileNames(files, folder)
+    .filter((name) => name.toLowerCase().endsWith('.xml'))
+    .sort(inOrder)
+    .map((name) => path.join(folder, name));
 }
 
-async function checkFolder(scriptFolder: ScriptFolder, context: AnalysisContext, game: GameData | undefined, counters: Counters): Promise<Finding[]> {
+function checkFolder(scriptFolder: ScriptFolder, context: AnalysisContext, game: GameData | undefined, counters: Counters): Finding[] {
   const findings: Finding[] = [];
-  for (const file of await xmlFilesOf(scriptFolder.folder)) {
-    findings.push(...(await checkFile(file, scriptFolder.schema, context, game, counters)));
+  for (const file of xmlFilesOf(game?.files ?? diskFiles, scriptFolder.folder)) {
+    findings.push(...checkFile(file, scriptFolder.schema, context, game, counters));
   }
   return findings;
 }
@@ -297,11 +308,16 @@ const fixRounds = 10;
 /**
  * Applies the preferred fixes of a file as the editor's fix all does, round after round until none is
  * left, and writes the file when it changed; the index learns the new text, so the files checked after
- * it see what it defines now. Returns the fixes applied, at the problems they fixed.
+ * it see what it defines now. Returns the fixes applied, at the problems they fixed. A file of an
+ * installed game, read from its catalogs, is no file to write: it is left as it is.
  */
 async function fixFile(file: string, context: AnalysisContext, game: GameData | undefined): Promise<Applied[]> {
+  const files = game?.files ?? diskFiles;
+  if (files.inCatalogs?.(file)) {
+    return [];
+  }
   const uri = pathToFileURL(file).toString();
-  const original = await readFile(file, 'utf8');
+  const original = files.readText(file);
   const applied: Applied[] = [];
   let text = original;
   for (let round = 0; round < fixRounds; round++) {
@@ -420,7 +436,7 @@ function fixedFileCount(applied: readonly Applied[]): number {
 /** The counts; with `--fix`, the fixes applied as well. */
 function summaryLine(findings: readonly Finding[], counters: Counters, validated: boolean, applied: readonly Applied[] | undefined): string {
   const notes = severities.filter((severity) => countOf(findings, severity) > 0).map((severity) => `${countOf(findings, severity)} ${counted[severity]}`);
-  const details = [...(notes.length > 0 ? [notes.join(', ')] : []), ...(validated ? [] : ['no schema validation: pass --unpacked'])];
+  const details = [...(notes.length > 0 ? [notes.join(', ')] : []), ...(validated ? [] : ['no schema validation: pass --unpacked or --game'])];
   const counts = `${counters.files} file(s) in ${counters.folders} folder(s): ${counters.scripts} script(s), ${counters.patches} patch(es), ${findings.length} finding(s)`;
   const line = details.length === 0 ? counts : `${counts} (${details.join('; ')})`;
   return applied ? `${line}; ${applied.length} fix(es) applied to ${fixedFileCount(applied)} file(s)` : line;
@@ -573,22 +589,33 @@ async function main(argv: string[]): Promise<number> {
   }
   const context: AnalysisContext = { validateStructure: options.structure };
   let game: GameData | undefined;
+  let gameFolder: string | undefined;
+  let files: FileSource = diskFiles;
   if (options.unpacked !== undefined) {
-    const unpacked = path.resolve(options.unpacked);
-    const libraries = path.join(unpacked, 'libraries');
-    if (!(await isDirectory(libraries))) {
+    gameFolder = path.resolve(options.unpacked);
+    const libraries = path.join(gameFolder, 'libraries');
+    if (!diskFiles.isDirectory(libraries)) {
       console.error(`Not a folder: ${libraries}`);
       return 2;
     }
+  } else if (options.game !== undefined) {
+    gameFolder = path.resolve(options.game);
+    if (!isInstalledGame(gameFolder)) {
+      console.error(`Not an installed game, it has no 01.cat: ${gameFolder}`);
+      return 2;
+    }
+    files = openInstalledGame(gameFolder);
+  }
+  if (gameFolder !== undefined) {
     for (const folder of options.extensions) {
-      if (!(await isDirectory(path.resolve(folder)))) {
+      if (!diskFiles.isDirectory(path.resolve(folder))) {
         console.error(`Not a folder: ${path.resolve(folder)}`);
         return 2;
       }
     }
     // The checked folders count as well: an extension refers to its own texts and scripts.
     const extensionFolders = [...options.extensions, ...options.roots].map((folder) => path.resolve(folder));
-    game = loadGameData(unpacked, { extensionFolders, index: true });
+    game = loadGameData(gameFolder, { files, extensionFolders, index: true });
     for (const problem of game.problems) {
       console.error(problem);
     }
@@ -607,18 +634,18 @@ async function main(argv: string[]): Promise<number> {
   const scriptFolders: ScriptFolder[] = [];
   for (const root of options.roots) {
     const resolved = path.resolve(root);
-    if (!(await isDirectory(resolved))) {
+    if (!files.isDirectory(resolved)) {
       console.error(`Not a folder: ${resolved}`);
       return 2;
     }
-    scriptFolders.push(...(await collectScriptFolders(resolved)));
+    scriptFolders.push(...collectScriptFolders(resolved, files, game));
   }
   // Every file fixed before any is checked: a fix in one may change what another refers to.
   let applied: Applied[] | undefined;
   if (options.fix) {
     applied = [];
     for (const scriptFolder of scriptFolders) {
-      for (const file of await xmlFilesOf(scriptFolder.folder)) {
+      for (const file of xmlFilesOf(files, scriptFolder.folder)) {
         applied.push(...(await fixFile(file, context, game)));
       }
     }
@@ -627,7 +654,7 @@ async function main(argv: string[]): Promise<number> {
   const counters: Counters = { files: 0, folders: 0, scripts: 0, patches: 0 };
   for (const scriptFolder of scriptFolders) {
     counters.folders++;
-    findings.push(...(await checkFolder(scriptFolder, context, game, counters)));
+    findings.push(...checkFolder(scriptFolder, context, game, counters));
   }
   const validated = context.schemas !== undefined;
   const problems = game?.problems ?? [];

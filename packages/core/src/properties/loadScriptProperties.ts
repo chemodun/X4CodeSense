@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { diskFiles, type FileSource } from '../files/fileSource';
 import { scriptPropertiesAdditions } from './additions';
 import { ScriptProperties, type PropertySource } from './scriptProperties';
 
@@ -10,21 +10,21 @@ export const additionsPath = 'x4codesense://scriptproperties.additions.xml';
  * Loads `scriptproperties.xml` from a `libraries` folder together with the built-in additions; `import`
  * sources are read from the same folder. Returns undefined when the file is missing.
  */
-export function loadScriptProperties(librariesFolder: string): ScriptProperties | undefined {
+export function loadScriptProperties(librariesFolder: string, files: FileSource = diskFiles): ScriptProperties | undefined {
   const mainPath = path.join(librariesFolder, 'scriptproperties.xml');
-  if (!existsSync(mainPath)) {
+  if (!files.exists(mainPath)) {
     return undefined;
   }
   const readImport = (source: string): PropertySource | undefined => {
     const file = path.join(librariesFolder, source);
     try {
-      return { path: file, text: readFileSync(file, 'utf8') };
+      return { path: file, text: files.readText(file) };
     } catch {
       return undefined;
     }
   };
   return ScriptProperties.parse({
-    main: { path: mainPath, text: readFileSync(mainPath, 'utf8') },
+    main: { path: mainPath, text: files.readText(mainPath) },
     additions: [{ path: additionsPath, text: scriptPropertiesAdditions }],
     readImport,
   });
