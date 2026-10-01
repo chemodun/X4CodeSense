@@ -13,4 +13,7 @@
   <page id="1002" title="Player Choices" descr="0" voice="no">
     <t id="10">Yes</t>
   </page>
+  <page id="2000" title="Formats" descr="0" voice="no">
+    <t id="1">%1 sold to %2 for %3Cr</t>
+  </page>
 </language>

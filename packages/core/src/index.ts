@@ -56,6 +56,7 @@ export * from './features/project';
 export * from './features/patchContent';
 export * from './features/patchPaths';
 export * from './features/callParameters';
+export * from './features/formatSignature';
 export * from './features/scriptNames';
 export * from './features/symbols';
 export * from './features/workspaceSymbols';

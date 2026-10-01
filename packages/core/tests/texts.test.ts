@@ -27,12 +27,12 @@ describe('text files', () => {
 
   it('reads pages and texts of every language, also from patches that add pages', () => {
     expect(texts.fileCount).toBe(4);
-    expect(texts.pages().map((page) => `${page.id} ${page.title ?? ''}`)).toEqual(['1001 Interface', '1002 Player Choices', '90001 My Mod']);
+    expect(texts.pages().map((page) => `${page.id} ${page.title ?? ''}`)).toEqual(['1001 Interface', '1002 Player Choices', '2000 Formats', '90001 My Mod']);
     expect(texts.page(1001)?.description).toBe('Text for interface and menus');
     expect(texts.page(1002)?.description).toBeUndefined();
     expect(texts.ids(1001)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(texts.ids(90001)).toEqual([1, 2, 3]);
-    expect(texts.textCount).toBe(11);
+    expect(texts.textCount).toBe(12);
     expect(texts.languagesOf(1001, 1, '49')).toEqual(['49', '44']);
     expect(texts.languagesOf(90001, 3)).toEqual(['*']);
     expect(texts.languageNames.get('49')).toBe('Deutsch');

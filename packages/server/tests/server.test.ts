@@ -189,7 +189,7 @@ beforeAll(async () => {
   expect(result.capabilities.textDocumentSync).toBe(TextDocumentSyncKind.Incremental);
   expect(result.capabilities.completionProvider?.triggerCharacters).toEqual(expect.arrayContaining(['<', '/', '@', "'"]));
   expect(result.capabilities.hoverProvider).toBe(true);
-  expect(result.capabilities.signatureHelpProvider).toEqual({ triggerCharacters: ['<', '"', ' '] });
+  expect(result.capabilities.signatureHelpProvider).toEqual({ triggerCharacters: ['<', '"', ' ', '[', ','] });
   expect(result.capabilities.definitionProvider).toBe(true);
   expect(result.capabilities.referencesProvider).toBe(true);
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
@@ -575,6 +575,38 @@ describe('quick fixes', () => {
     })) as CodeAction[];
     expect(source.map((action) => `${action.kind} ${action.title}`)).toEqual(['source.fixAll Apply all preferred fixes in this file (2)']);
     expect((source[0].edit?.changes?.[uri] ?? []).map((edit) => `${edit.range.start.line}: ${edit.newText}`)).toEqual(['4: set_value', '5: "general"']);
+    const closed = nextDiagnostics(uri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    await closed;
+  });
+});
+
+describe('signature help for formats', () => {
+  it('marks the placeholder of the argument at the caret, before the help of the call the value is in', async () => {
+    const uri = 'file:///mod/md/Formats.xml';
+    const lines = [
+      '<mdscript name="F">',
+      '  <cues>',
+      '    <library name="Lib"/>',
+      '    <cue name="A">',
+      '      <actions>',
+      '        <run_actions ref="Lib">',
+      `          <param name="x" value="'%s of %s'.[$a, $b]"/>`,
+      '        </run_actions>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    await open(uri, lines.join('\n'));
+    const help = await connection.sendRequest(SignatureHelpRequest.type, {
+      textDocument: { uri },
+      position: { line: 6, character: lines[6].indexOf('$b') },
+    });
+    const signature = help?.signatures[0];
+    const active = signature?.parameters?.[help?.activeParameter ?? 0]?.label as [number, number];
+    expect(`${signature?.label} [${active[0]}, ${active[1]}]`).toBe("'%s of %s' [7, 9]");
     const closed = nextDiagnostics(uri);
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
     await closed;
