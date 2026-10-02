@@ -45,6 +45,7 @@ const misspellable: ReadonlyMap<string, readonly CompletionItemKind[]> = new Map
   ['invalid-attribute-value', [CompletionItemKind.EnumMember]],
   ['expression-unknown-keyword', [CompletionItemKind.Keyword]],
   ['expression-unknown-property', [CompletionItemKind.Field, CompletionItemKind.EnumMember]],
+  ['expression-unknown-property-guessed', [CompletionItemKind.Field, CompletionItemKind.EnumMember]],
   ['label-undefined', [CompletionItemKind.Reference]],
   // A bare name may be meant as a keyword or a cue; in `md.<Script>.<Cue>` a script or a cue.
   ['cue-undefined', [CompletionItemKind.Keyword, CompletionItemKind.Event, CompletionItemKind.Module]],
@@ -58,6 +59,9 @@ const misspellable: ReadonlyMap<string, readonly CompletionItemKind[]> = new Map
 
 /** Diagnostics on a name inside quotes, whose completion inserts it with the quotes. */
 const quotedNames = new Set(['aiscript-undefined', 'order-undefined']);
+
+/** Diagnostics that rest on a guess: their fixes are offered, never applied on their own. */
+const guesses = new Set(['expression-unknown-property-guessed']);
 
 /** Identifies a diagnostic across the protocol, where it arrives as a copy. */
 function keyOf(diagnostic: Diagnostic): string {
@@ -214,8 +218,8 @@ function spellingFixes(
     if (endTag && analysis.document.getText().slice(endTag.nameStart, endTag.nameEnd) === written) {
       edits.push({ start: endTag.nameStart, end: endTag.nameEnd, text: suggestion.name });
     }
-    // The closest name is preferred when no other is as close.
-    const preferred = index === 0 && (suggestions.length === 1 || suggestions[1].distance > suggestion.distance);
+    // The closest name is preferred when no other is as close, and the problem is no guess.
+    const preferred = index === 0 && (suggestions.length === 1 || suggestions[1].distance > suggestion.distance) && !guesses.has(code);
     return { title: `Change to '${suggestion.name}'`, edits, preferred };
   });
 }

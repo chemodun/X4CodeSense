@@ -45,6 +45,19 @@ export interface AnalysisContext {
    */
   validateVariables?: boolean;
   /**
+   * Guess the type of what actions write into variables from their names and documentation where the
+   * schema's types do not tell it (`create_ship name` a ship). Defaults to true. A variable's type is
+   * used where the variables are collected anyway: with `validateVariables`, and by the features.
+   */
+  guessVariableTypes?: boolean;
+  /**
+   * With `validateVariables` and `properties`, report properties a variable's type does not have
+   * (`$ship.foo` where the script sets `$ship` to a ship), except under `@` or tested with `?`: a warning
+   * where the script or the schema states the type, information (`expression-unknown-property-guessed`)
+   * where it is guessed. Defaults to true.
+   */
+  validateTypedProperties?: boolean;
+  /**
    * Check labels, cues and interrupt library items: names defined twice where they must be unique, and
    * labels no reachable attention block defines. Defaults to true; needs the schemas.
    */
@@ -187,6 +200,13 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
     });
     analysis.declarations = validation.declarations;
     analysis.diagnostics.push(...validation.diagnostics);
+    // Collected on first use: most analyses without the index are keystrokes that never ask for variables.
+    const scriptSchema = detection.script.schema;
+    let variables: DocumentVariables | undefined;
+    const variablesOf = (): DocumentVariables =>
+      (variables ??= collectVariables(analysis, scriptSchema, schema, context.properties, context.index, { guessTypes: context.guessVariableTypes ?? true }));
+    Object.defineProperty(analysis, 'variables', { enumerable: true, get: variablesOf });
+    const checkVariables = context.validateVariables ?? context.index !== undefined;
     if (context.validateExpressions ?? true) {
       analysis.diagnostics.push(
         ...validateExpressions(validation.declarations, document, diagnosticSource, {
@@ -196,18 +216,13 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
           schema: detection.script.schema,
           knownHeads: cueNames(structure),
           ...(checkElement ? { checkElement } : {}),
+          // The types of variables where they are collected anyway, for their own check.
+          ...(checkVariables && context.properties ? { variables: variablesOf(), typedProperties: context.validateTypedProperties ?? true } : {}),
         })
       );
     }
-    // Collected on first use: most analyses are keystrokes that never ask for variables.
-    const scriptSchema = detection.script.schema;
-    let variables: DocumentVariables | undefined;
-    Object.defineProperty(analysis, 'variables', {
-      enumerable: true,
-      get: () => (variables ??= collectVariables(analysis, scriptSchema, schema, context.properties, context.index)),
-    });
-    if (context.validateVariables ?? context.index !== undefined) {
-      analysis.diagnostics.push(...validateVariables(analysis.variables as DocumentVariables, document, diagnosticSource));
+    if (checkVariables) {
+      analysis.diagnostics.push(...validateVariables(variablesOf(), document, diagnosticSource));
     }
     let names: DocumentNames | undefined;
     Object.defineProperty(analysis, 'names', {

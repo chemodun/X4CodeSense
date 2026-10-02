@@ -189,6 +189,11 @@
           "default": true,
           "description": "Check the order and completeness of child elements against the game's XSD schemas. Unknown elements and attributes, invalid attribute values and text inside elements are always reported when the game files are set."
         },
+        "x4CodeSense.guessVariableTypes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Guess what an action writes into a variable from the action's name and documentation where the game's schema does not state it: `create_ship` a ship, `find_ship` with `multiple` a list. Hover, completion and the checks of properties then know the variable's type; what rests on a guess is marked so, and a property a guessed type lacks is information, not a warning. Off: only what the scripts and the schema state types a variable (`<param type>`, the value `set_value` sets, groups)."
+        },
         "x4CodeSense.diagnosticMode": {
           "type": "string",
           "enum": [

@@ -89,6 +89,8 @@ interface Options {
   extensions: string[];
   /** Check the order and completeness of child elements. */
   structure: boolean;
+  /** Guess what actions write into variables from their names and documentation. */
+  typeGuesses: boolean;
   /** Apply the preferred fixes to the files before checking them. */
   fix: boolean;
   format: Format;
@@ -115,7 +117,9 @@ Options:
   --extensions <folder> other extensions the checked ones refer to: their texts and scripts are
                         read, they are not checked; may be given several times
   --no-structure        do not check the order and completeness of child elements
-  --fix                 apply the preferred quick fixes to the files first, as the editor's fix
+  --no-type-guesses     type variables only by what the scripts and the schemas state, not by
+                        guesses from the names and documentation of actions (create_ship: a ship)
+  --fix               apply the preferred quick fixes to the files first, as the editor's fix
                         all does, then report what is left
   --format <format>     text: a line per finding, file:line:column: severity: message [code], and
                         a line per quick fix (default)
@@ -146,7 +150,7 @@ function oneOf<T extends string>(option: string, value: string, allowed: readonl
 }
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = { roots: [], extensions: [], structure: true, fix: false, format: 'text', failOn: 'hint', help: false };
+  const options: Options = { roots: [], extensions: [], structure: true, typeGuesses: true, fix: false, format: 'text', failOn: 'hint', help: false };
   const unpacked = process.env.X4_UNPACKED;
   if (unpacked !== undefined && unpacked !== '') {
     options.unpacked = unpacked;
@@ -178,6 +182,8 @@ function parseOptions(argv: string[]): Options {
       }
     } else if (argument === '--no-structure') {
       options.structure = false;
+    } else if (argument === '--no-type-guesses') {
+      options.typeGuesses = false;
     } else if (argument === '--fix') {
       options.fix = true;
     } else if (argument === '-h' || argument === '--help') {
@@ -597,7 +603,7 @@ async function main(argv: string[]): Promise<number> {
     console.log(usage);
     return 0;
   }
-  const context: AnalysisContext = { validateStructure: options.structure };
+  const context: AnalysisContext = { validateStructure: options.structure, guessVariableTypes: options.typeGuesses };
   let game: GameData | undefined;
   let gameFolder: string | undefined;
   let files: FileSource = diskFiles;

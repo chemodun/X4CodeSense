@@ -1,8 +1,8 @@
 /** Bridges the expression tree and the chain resolver: a chain of property, dynamic and args nodes as resolver steps. */
-import type { ScriptProperties } from '../properties/scriptProperties';
+import type { ScriptDatatype, ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import type { Expression } from './parser';
-import { resolveChain, type ChainStep, type ResolvedChain } from './propertyChain';
+import { resolveChain, type ChainStep, type ResolvedChain, type StepTypes } from './propertyChain';
 
 export type ChainNode = Extract<Expression, { kind: 'property' | 'dynamic' | 'args' }>;
 
@@ -61,21 +61,51 @@ export interface ResolvedChainNode {
   resolved: ResolvedChain;
 }
 
-const resolvedByNode = new WeakMap<Expression, ResolvedChainNode & { properties: ScriptProperties; schema: ScriptSchema }>();
+interface Memo extends ResolvedChainNode {
+  properties: ScriptProperties;
+  schema: ScriptSchema;
+  /** The types of the variable steps the resolution used, by step; empty when none had one. */
+  types: (ScriptDatatype | undefined)[];
+}
+
+const resolvedByNode = new WeakMap<Expression, Memo>();
+const noTypes: (ScriptDatatype | undefined)[] = [];
 
 /**
  * `stepsOf` and `resolveChain` of an outermost chain node, or of a lone head, of a parsed value. The trees
  * of an analysis are shared (`parsedValue`), and so is this: the expression checks, the variables and the
- * semantic tokens resolve each chain once. `text` is the value the tree was parsed from. Callers must not
- * change the result.
+ * semantic tokens resolve each chain once, unless the types of its variables differ from those it was
+ * resolved with. `text` is the value the tree was parsed from. Callers must not change the result.
  */
-export function resolvedChainOf(node: Expression, text: string, properties: ScriptProperties, schema: ScriptSchema): ResolvedChainNode {
+export function resolvedChainOf(node: Expression, text: string, properties: ScriptProperties, schema: ScriptSchema, stepTypes?: StepTypes): ResolvedChainNode {
   const known = resolvedByNode.get(node);
-  if (known && known.properties === properties && known.schema === schema) {
+  const { head, steps } = known ?? stepsOf(node, text);
+  let types = noTypes;
+  if (stepTypes) {
+    for (let index = 0; index < steps.length; index++) {
+      const type = steps[index].kind === 'variable' ? stepTypes(index, steps) : undefined;
+      if (type) {
+        if (types === noTypes) {
+          types = [];
+        }
+        types[index] = type;
+      }
+    }
+  }
+  if (known && known.properties === properties && known.schema === schema && sameTypes(known.types, types, steps.length)) {
     return known;
   }
-  const { head, steps } = stepsOf(node, text);
-  const chain = { head, steps, resolved: resolveChain({ steps }, properties, schema), properties, schema };
+  const resolved = resolveChain({ steps }, properties, schema, types === noTypes ? undefined : (index) => types[index]);
+  const chain: Memo = { head, steps, resolved, properties, schema, types };
   resolvedByNode.set(node, chain);
   return chain;
+}
+
+function sameTypes(a: readonly (ScriptDatatype | undefined)[], b: readonly (ScriptDatatype | undefined)[], length: number): boolean {
+  for (let index = 0; index < length; index++) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+  return true;
 }

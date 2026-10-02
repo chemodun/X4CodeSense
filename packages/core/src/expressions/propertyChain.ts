@@ -222,7 +222,15 @@ export interface ResolvedStep {
   candidates?: ScriptProperty[];
   /** Datatype of the value after this step, when known. */
   datatype?: ScriptDatatype;
+  /** True for a variable step whose datatype is the variable's type (`StepTypes`). */
+  fromVariable?: boolean;
 }
+
+/**
+ * The type of a variable a step of a chain names (`$ship` at its head, `this.$ship`), from what the script
+ * sets it to; undefined when not known. Asked for variable steps only.
+ */
+export type StepTypes = (index: number, steps: readonly ChainStep[]) => ScriptDatatype | undefined;
 
 /** What a step is looked up on. */
 export type ChainOwner = { kind: 'keyword'; keyword: ScriptKeyword } | { kind: 'datatype'; datatype: ScriptDatatype } | { kind: 'unknown' };
@@ -505,8 +513,8 @@ function commonType(candidates: readonly ScriptProperty[], properties: ScriptPro
   return properties.datatype(type);
 }
 
-/** Resolves the steps of a chain against the script properties. */
-export function resolveChain(chain: PropertyChain, properties: ScriptProperties, schema: ScriptSchema): ResolvedChain {
+/** Resolves the steps of a chain against the script properties; with `stepTypes`, variables of known type as values of that type. */
+export function resolveChain(chain: PropertyChain, properties: ScriptProperties, schema: ScriptSchema, stepTypes?: StepTypes): ResolvedChain {
   const steps = chain.steps;
   const resolved: ResolvedStep[] = steps.map((step) => ({ step }));
   // owners[i] is what steps[i] is looked up on; the head has no owner.
@@ -517,7 +525,13 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
   const resolver = indexOf(properties);
   const head = steps[0];
   let owner: ChainOwner = unknownOwner;
-  if (head.kind === 'identifier') {
+  const variableType = (index: number): ScriptDatatype | undefined => (stepTypes && steps[index].kind === 'variable' ? stepTypes(index, steps) : undefined);
+  const headType = variableType(0);
+  if (headType) {
+    resolved[0].datatype = headType;
+    resolved[0].fromVariable = true;
+    owner = { kind: 'datatype', datatype: headType };
+  } else if (head.kind === 'identifier') {
     const keyword = resolver.keyword(head.text, schema);
     if (keyword) {
       resolved[0].keyword = keyword;
@@ -532,6 +546,16 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
 
   let index = 1;
   while (index < steps.length) {
+    // `this.$ship`: a variable of the cue's table, not a property of the cue.
+    const typed = variableType(index);
+    if (typed) {
+      resolved[index].datatype = typed;
+      resolved[index].fromVariable = true;
+      owners[index] = owner;
+      owner = { kind: 'datatype', datatype: typed };
+      index++;
+      continue;
+    }
     let best: ScriptProperty | undefined;
     let bestLength = 0;
     let candidates: ScriptProperty[] = [];
@@ -639,10 +663,10 @@ function segmentLabel(segment: PropertySegment): string {
  * written on an unknown owner that a property starts with. Bare values of a lookup are offered where a
  * shortcut takes them, `isclass.<classname>`; a placeholder such as `{$faction}` is offered as `{…}`.
  */
-export function completeChain(chain: PropertyChain, properties: ScriptProperties, schema: ScriptSchema): SegmentCompletion[] {
+export function completeChain(chain: PropertyChain, properties: ScriptProperties, schema: ScriptSchema, stepTypes?: StepTypes): SegmentCompletion[] {
   const partial = chain.partial?.text ?? '';
   const steps = chain.steps;
-  const { owners } = resolveChain(chain, properties, schema);
+  const { owners } = resolveChain(chain, properties, schema, stepTypes);
   const results = new Map<string, SegmentCompletion>();
   const offer = (label: string, property: ScriptProperty, continues: boolean, value?: ScriptProperty): void => {
     if (!label.startsWith(partial) || results.has(label)) {

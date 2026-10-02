@@ -18,6 +18,7 @@ import type { TextDatabase } from '../texts/textDatabase';
 import type { ScriptSchema } from '../types';
 import type { VariableOccurrence } from '../variables/variables';
 import { attributeNamed, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
+import { variableTypeText } from './variables';
 
 interface Outlined {
   kind: SymbolKind;
@@ -260,7 +261,8 @@ function addVariables(analysis: DocumentAnalysis, symbolOf: Map<XmlElement, Docu
       if (!parent) {
         continue;
       }
-      const facts = variable.types.size > 0 ? [[...variable.types].join(' or ')] : [];
+      const typeText = variableTypeText(variable, ' or ');
+      const facts = typeText !== undefined ? [typeText] : [];
       if (holder !== owner && (table.kind === 'cue' || table.kind === 'library')) {
         facts.push(`of ${table.kind} ${table.name}`);
       }

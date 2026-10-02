@@ -50,6 +50,8 @@ export const diagnosticDescriptions: Readonly<Record<DiagnosticCode, string>> = 
   'expression-format-specifier': "A format specifier the game does not know, such as '%d'.",
   'expression-unknown-keyword': 'An expression that starts with a name that is no keyword the game knows.',
   'expression-unknown-property': "A property its owner does not have, by the game's script properties.",
+  'expression-unknown-property-guessed':
+    "A property a variable's type does not have, where the type is guessed from the name or documentation of the action that sets it, not stated by the game's files.",
   'format-arguments-missing': 'A format given fewer arguments than its placeholders take.',
   'format-arguments-unused': 'Arguments of a format that no placeholder takes, so they are not shown.',
   'label-undefined': 'A label the AI script does not define.',

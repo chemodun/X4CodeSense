@@ -149,4 +149,43 @@ describe('unknown keywords and properties', () => {
     expect(reportWith(ai('<find_ship name="$s" class="ship"/>'))).toEqual([]);
     expect(analyzeText(ai('<set_value name="$x" exact="player.ship.frobnicate"/>'), { schemas: game.schemas }).diagnostics).toEqual([]);
   });
+
+  describe('on variables of known type', () => {
+    function reportTyped(body: string, context: { validateTypedProperties?: boolean; guessVariableTypes?: boolean } = {}): string[] {
+      return analyzeText(ai(body), { schemas: game.schemas, properties: game.properties, validateVariables: true, ...context })
+        .diagnostics.filter((diagnostic) => String(diagnostic.code).startsWith('expression-unknown'))
+        .map(
+          (diagnostic) =>
+            `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}-${diagnostic.range.end.character + 1} ${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`
+        );
+    }
+    const set = '<set_value name="$s" exact="player.ship"/>\n      ';
+
+    it('reports what the type lacks and where the type comes from, a guessed type apart', () => {
+      expect(reportTyped(`${set}<set_value name="$x" exact="$s.frobnicate"/>`)).toEqual([
+        "5:38-48 2 expression-unknown-property: 'ship' has no property 'frobnicate' ($s is a ship, set by set_value at line 4)",
+      ]);
+      expect(reportTyped(`${set}<set_value name="$x" exact="$s.pilot.frobnicate"/>`)).toEqual([
+        "5:44-54 2 expression-unknown-property: 'entity' has no property 'frobnicate' ($s is a ship, set by set_value at line 4)",
+      ]);
+      // Information of its own code, worded as the guess it rests on.
+      expect(reportTyped('<create_ship name="$c" macro="m"/>\n      <set_value name="$x" exact="$c.frobnicate"/>')).toEqual([
+        "5:38-48 3 expression-unknown-property-guessed: 'ship' has no property 'frobnicate' (if $c is a ship, as guessed from create_ship at line 4)",
+      ]);
+      expect(reportTyped(`${set}<set_value name="$x" exact="$s.speed + $s.cargo.{$w}.count + $s.isclass.ship"/>`)).toEqual([]);
+    });
+
+    it('leaves alone chains under @ or tested with ?, where the game gives null or false', () => {
+      expect(reportTyped(`${set}<set_value name="$x" exact="@$s.frobnicate"/>`)).toEqual([]);
+      expect(reportTyped(`${set}<set_value name="$x" exact="@($s.frobnicate + 1)"/>`)).toEqual([]);
+      expect(reportTyped(`${set}<do_if value="$s.frobnicate?"/>`)).toEqual([]);
+    });
+
+    it('resolves on the type without reporting unless asked, and without guesses when told so', () => {
+      expect(reportTyped(`${set}<set_value name="$x" exact="$s.frobnicate"/>`, { validateTypedProperties: false })).toEqual([]);
+      expect(reportTyped('<create_ship name="$c" macro="m"/>\n      <set_value name="$x" exact="$c.frobnicate"/>', { guessVariableTypes: false })).toEqual([]);
+      // Two types: none is used.
+      expect(reportTyped(`${set}<set_value name="$s" exact="player.money"/>\n      <set_value name="$x" exact="$s.frobnicate"/>`)).toEqual([]);
+    });
+  });
 });

@@ -23,16 +23,24 @@
  * script never uses by name, or that another script includes, reads what its users set: its table is
  * opaque. A variable written into a cue the script gets as a value (`$Cue.$x`, `event.param.$x`) may be
  * in any cue.
+ *
+ * With the script properties, a variable has a type when every definition that tells one tells the same
+ * and none is of a type not known: `<param type>`, the value of a `set_value` or `param` (`null`, and a
+ * bare `true`, `false` or number, which scripts set first and replace later, tell nothing), and what an
+ * action writes, as its schema states it or as guessed from its name and documentation (`resultTypes`).
+ * Definitions in another file, and tables that others fill (global, opaque, remote), give no type.
  */
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { IndexedPosition, ScriptIndex } from '../project/scriptIndex';
 import { isChainNode, resolvedChainOf } from '../expressions/astChain';
 import { parsedValue } from '../expressions/attributeExpression';
 import type { Expression } from '../expressions/parser';
+import type { ChainStep, StepTypes } from '../expressions/propertyChain';
 import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { attributeNamed, offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
 import { isExpressionAttribute, typeNamesOf, type XsdAttribute, type XsdElement, type XsdSchema } from '../xsd/schema';
+import { writtenTypeOf, type TypeSource } from './resultTypes';
 
 export type VariableTableKind = 'script' | 'cue' | 'library' | 'global' | 'remote';
 
@@ -82,6 +90,18 @@ export interface ElsewhereDefinition {
   via: string;
 }
 
+/** The one type every definition of a variable that tells one agrees on. */
+export interface VariableType {
+  /** Datatype name. */
+  name: string;
+  /** The definition that tells it: the first that states it, else the first. */
+  definition: VariableOccurrence;
+  /** How that definition tells it. */
+  source: TypeSource;
+  /** True when every definition that tells it guesses it from the names and documentation of the game's actions. */
+  guessed: boolean;
+}
+
 export interface ScriptVariable {
   name: string;
   table: VariableTable;
@@ -90,8 +110,10 @@ export interface ScriptVariable {
   removals: VariableOccurrence[];
   /** Definitions in other files, known from the script index. */
   elsewhere: ElsewhereDefinition[];
-  /** Datatype names the definitions give the variable, when they could be told. */
+  /** Datatype names the definitions name, also those that tell nothing (`default="false"`) and guesses: for display. */
   types: Set<string>;
+  /** The type the expressions use; absent when the definitions do not agree on one, or one is of a type not known. */
+  type?: VariableType;
 }
 
 /** What the collector needs of an analysis: the scanned structure and the resolved declarations, which may be empty. */
@@ -117,7 +139,34 @@ export interface DocumentVariables {
    * `event.param.$x`): the cue may have it without setting it itself.
    */
   mayBeWrittenThroughValues(variable: ScriptVariable): boolean;
+  /**
+   * The type of the variable a chain step names, for a chain written in the element: `$x` at its head, or
+   * after names of a cue or a cue keyword (`this.$x`, `parent.$x`, `Cue.$x`). Undefined for other steps,
+   * keys of values (`$ship.$x`), and inside an interrupt library item, which runs in the scripts that use it.
+   */
+  typeAt(element: XmlElement, steps: readonly ChainStep[], index: number): VariableType | undefined;
 }
+
+/** The types of the variable steps of chains written in the element, for the chain resolver. */
+export function stepTypesIn(variables: DocumentVariables, element: XmlElement, properties: ScriptProperties): StepTypes {
+  return (index, steps) => {
+    const type = variables.typeAt(element, steps, index);
+    return type && properties.datatype(type.name);
+  };
+}
+
+/** What a definition tells of its variable's type. */
+interface DefinitionType {
+  /** Datatype name, when the definition names one. */
+  name?: string;
+  source?: TypeSource;
+  guessed?: boolean;
+  /** Tells nothing of the type: `null`, or a placeholder such as `false` or `0` set before the real value. */
+  nothing?: boolean;
+}
+
+const unknownType: DefinitionType = {};
+const placeholderValue = /^\s*(true|false|-?\d+(\.\d+)?[a-zA-Z]*)\s*$/;
 
 /** Cue keywords that name a table relative to the current cue. */
 const cueKeywords: ReadonlySet<string> = new Set(['this', 'static', 'staticbase', 'parent', 'namespace']);
@@ -177,12 +226,14 @@ class Collector {
   private readonly cuesByName = new Map<string, XmlElement>();
   private readonly scriptTable: VariableTable;
   private readonly scriptName: string | undefined;
+  private readonly definitionTypes = new Map<VariableOccurrence, DefinitionType>();
 
   constructor(
     private readonly analysis: VariableSource,
     private readonly schema: ScriptSchema,
     private readonly xsd: XsdSchema | undefined,
-    private readonly properties: ScriptProperties | undefined
+    private readonly properties: ScriptProperties | undefined,
+    private readonly guessTypes: boolean
   ) {
     const root = analysis.structure?.roots[0];
     this.scriptTable = this.table('script', 'script', root);
@@ -523,11 +574,7 @@ class Collector {
       return;
     }
     const occurrence = this.add(table, name.value.replace(/^\$/, ''), name.valueStart, name.valueEnd, 'definition', false, element, name);
-    const type = attributeNamed(element, 'type')?.value;
-    if (type !== undefined && type !== '') {
-      this.variableOf(occurrence).types.add(type);
-    }
-    this.inferType(occurrence, element);
+    this.noteType(occurrence, element);
   }
 
   private add(
@@ -656,7 +703,7 @@ class Collector {
         case 'variable': {
           const occurrence = record(this.tableOf(element), node.name.slice(1), node.start, node.end, node, guarded);
           if (occurrence.kind === 'definition') {
-            this.inferType(occurrence, element);
+            this.noteType(occurrence, element);
           }
           return;
         }
@@ -669,7 +716,7 @@ class Collector {
             if (table) {
               const occurrence = record(table, node.name.slice(1), node.nameStart, node.nameEnd, node, guarded);
               if (occurrence.kind === 'definition') {
-                this.inferType(occurrence, element);
+                this.noteType(occurrence, element);
               }
             }
           }
@@ -740,24 +787,141 @@ class Collector {
     visit(whole, false);
   }
 
-  /** Types a definition gives its variable: `<param type="...">`, or the datatype of the value in `exact` or `default`. */
-  private inferType(occurrence: VariableOccurrence, element: XmlElement): void {
+  /** Notes what a definition tells of its variable's type, and the type it names for display. */
+  private noteType(occurrence: VariableOccurrence, element: XmlElement): void {
+    const type = this.definitionType(occurrence, element);
+    this.definitionTypes.set(occurrence, type);
+    if (type.name !== undefined) {
+      this.variableOf(occurrence).types.add(type.name);
+    }
+  }
+
+  /**
+   * `<param type="...">`; the datatype of the value in `exact` or `default` of a `set_value` or `param`
+   * (elsewhere they are counts, defaults or wanted values, not what is stored); what an action writes.
+   */
+  private definitionType(occurrence: VariableOccurrence, element: XmlElement): DefinitionType {
+    const valueSetter = element.name === 'set_value' || element.name === 'param';
+    if (element.name === 'param' && occurrence.attribute.name === 'name') {
+      const declared = attributeNamed(element, 'type')?.value.trim();
+      if (declared) {
+        return { name: declared, source: 'param type', guessed: false };
+      }
+    }
+    if (!this.properties) {
+      return unknownType;
+    }
+    const declaration = this.declarationOf(element);
+    if (valueSetter) {
+      for (const source of ['exact', 'default']) {
+        const attribute = attributeNamed(element, source);
+        if (!attribute || attribute.value.trim() === '' || !isExpressionAttribute(declaration?.attributes.get(source))) {
+          continue;
+        }
+        if (attribute.value.trim() === 'null') {
+          return { nothing: true };
+        }
+        const datatype = this.datatypeOf(parsedValue(attribute).expression, attribute.value);
+        if (placeholderValue.test(attribute.value)) {
+          return datatype === undefined ? { nothing: true } : { name: datatype, nothing: true };
+        }
+        return datatype === undefined ? unknownType : { name: datatype, source: 'value', guessed: false };
+      }
+      return unknownType;
+    }
+    const written = declaration && writtenTypeOf(element, occurrence.attribute.name, declaration, this.properties, this.guessTypes);
+    return written ? { name: written.name, source: written.source, guessed: written.guessed } : unknownType;
+  }
+
+  /** Gives each variable the type all its definitions, and those of the tables linked to its own, agree on. */
+  settleTypes(): void {
     if (!this.properties) {
       return;
     }
-    const declaration = this.declarationOf(element);
-    for (const source of ['exact', 'default']) {
-      const attribute = attributeNamed(element, source);
-      if (!attribute || attribute.value.trim() === '' || !isExpressionAttribute(declaration?.attributes.get(source))) {
+    for (const table of this.tables) {
+      if (table.kind === 'global' || table.kind === 'remote' || table.opaque) {
         continue;
       }
-      const node = parsedValue(attribute).expression;
-      const datatype = this.datatypeOf(node, attribute.value);
-      if (datatype !== undefined) {
-        this.variableOf(occurrence).types.add(datatype);
+      for (const variable of table.variables.values()) {
+        const type = this.agreedType(variable);
+        if (type) {
+          variable.type = type;
+        }
       }
-      return;
     }
+  }
+
+  private agreedType(variable: ScriptVariable): VariableType | undefined {
+    const properties = this.properties;
+    if (!properties) {
+      return undefined;
+    }
+    // A library spliced into a cue shares its variables: the definitions of both count.
+    const shared = [variable];
+    const seen = new Set<VariableTable>([variable.table]);
+    const pending = [...variable.table.links];
+    while (pending.length > 0) {
+      const table = pending.pop() as VariableTable;
+      if (seen.has(table)) {
+        continue;
+      }
+      seen.add(table);
+      if (table.opaque) {
+        return undefined;
+      }
+      const linked = table.variables.get(variable.name);
+      if (linked) {
+        shared.push(linked);
+      }
+      pending.push(...table.links);
+    }
+    let agreed: VariableType | undefined;
+    for (const each of shared) {
+      if (each.elsewhere.length > 0) {
+        return undefined;
+      }
+      for (const definition of each.definitions) {
+        const told = this.definitionTypes.get(definition) ?? unknownType;
+        if (told.nothing) {
+          continue;
+        }
+        if (told.name === undefined || !properties.datatype(told.name) || (agreed && agreed.name !== told.name)) {
+          return undefined;
+        }
+        const guessed = told.guessed ?? false;
+        if (!agreed) {
+          agreed = { name: told.name, definition, source: told.source ?? 'value', guessed };
+        } else if (agreed.guessed && !guessed) {
+          agreed = { name: told.name, definition, source: told.source ?? 'value', guessed: false };
+        }
+      }
+    }
+    return agreed;
+  }
+
+  typeAt(element: XmlElement, steps: readonly ChainStep[], index: number): VariableType | undefined {
+    const step = steps[index];
+    if (step?.kind !== 'variable' || (this.schema === 'aiscripts' && this.inInterruptLibrary(element))) {
+      return undefined;
+    }
+    let table: VariableTable | undefined;
+    if (index === 0) {
+      table = this.tableOf(element);
+    } else {
+      if (this.schema !== 'md' || !steps.slice(0, index).every((before) => before.kind === 'identifier')) {
+        return undefined;
+      }
+      const object = steps
+        .slice(0, index)
+        .map((before) => before.text)
+        .join('.');
+      // Cue tables only: the global table and values of other scripts' cues hold no types, and looking them up would make them.
+      if (!this.cueOf(element) || (!cueKeywords.has(object) && !this.cuesByName.has(this.localName(object) as string))) {
+        return undefined;
+      }
+      table = this.tableForObjectText(object, element);
+    }
+    return table?.variables.get(step.text.slice(1))?.type;
   }
 
   /** Datatype name of a value expression when it is a resolvable chain or a literal. */
@@ -796,20 +960,34 @@ class Collector {
   }
 }
 
-/** Collects the variables of an analysed script document; with the script index, those that library items of other files set as well. */
+export interface VariableOptions {
+  /**
+   * Guess what actions write from their names and documentation where the schema's types do not tell it
+   * (`create_ship name` a ship). Defaults to true; without, only `<param type>`, the values `set_value` and
+   * `param` set, and the schema's `groupname` and `countresult` type variables.
+   */
+  guessTypes?: boolean;
+}
+
+/**
+ * Collects the variables of an analysed script document; with the script index, those that library items
+ * of other files set as well. With the script properties, their types.
+ */
 export function collectVariables(
   analysis: VariableSource,
   schema: ScriptSchema,
   xsd: XsdSchema | undefined,
   properties: ScriptProperties | undefined,
-  index?: ScriptIndex
+  index?: ScriptIndex,
+  options: VariableOptions = {}
 ): DocumentVariables {
-  const collector = new Collector(analysis, schema, xsd, properties);
+  const collector = new Collector(analysis, schema, xsd, properties, options.guessTypes ?? true);
   collector.collect();
   if (index) {
     collector.addLibraryDefinitions(index);
   }
   collector.settleLibraries(index);
+  collector.settleTypes();
   return {
     tables: collector.tables,
     occurrences: collector.occurrences,
@@ -821,5 +999,6 @@ export function collectVariables(
     mayBeWrittenThroughValues: (variable) =>
       (variable.table.kind === 'cue' || variable.table.kind === 'library') &&
       (collector.writesThroughValues.has(variable.name) || (index?.isWrittenThroughValues(variable.name) ?? false)),
+    typeAt: (element, steps, at) => collector.typeAt(element, steps, at),
   };
 }

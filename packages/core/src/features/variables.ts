@@ -4,7 +4,7 @@ import { CompletionItemKind, Location, Range, type CompletionItem, type TextEdit
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import type { ScriptIndex } from '../project/scriptIndex';
 import type { XmlElement } from '../xml/xmlStructure';
-import type { DocumentVariables, ElsewhereDefinition, ScriptVariable, VariableOccurrence, VariableTable } from '../variables/variables';
+import type { DocumentVariables, ElsewhereDefinition, ScriptVariable, VariableOccurrence, VariableTable, VariableType } from '../variables/variables';
 import { describeLines, escapeMarkdown, inlineCode, type DocumentOrigin } from './markdown';
 import { indexedLocation } from './project';
 
@@ -41,6 +41,37 @@ function definitionsElsewhere(variable: ScriptVariable, index: ScriptIndex | und
   return found;
 }
 
+/** How a variable's type is told, after the element that tells it. */
+function typeOrigin(type: VariableType): string {
+  switch (type.source) {
+    case 'param type':
+      return 'declared';
+    case 'value':
+      return 'the value it sets';
+    case 'schema':
+      return "as the game's schema states";
+    case 'multiple':
+      return type.guessed ? "a list, as 'multiple' holds (guessed)" : "a list, as 'multiple' holds";
+    case 'element name':
+      return "guessed from the action's name";
+    case 'attribute name':
+      return "guessed from the attribute's name";
+    case 'attribute documentation':
+      return "guessed from the attribute's documentation";
+    case 'element documentation':
+      return "guessed from the action's documentation";
+  }
+}
+
+/** The type of a variable as shown: its one type, marked when guessed, else every type its definitions name. */
+export function variableTypeText(variable: ScriptVariable, separator: string): string | undefined {
+  const type = variable.type;
+  if (type) {
+    return type.guessed ? `${type.name} (guessed)` : type.name;
+  }
+  return variable.types.size > 0 ? [...variable.types].join(separator) : undefined;
+}
+
 /**
  * Hover text for a variable; with the script index, also where other files set it. `origin` tells where
  * the document's text was written when that is elsewhere.
@@ -48,8 +79,11 @@ function definitionsElsewhere(variable: ScriptVariable, index: ScriptIndex | und
 export function describeVariable(variable: ScriptVariable, document: TextDocument, index?: ScriptIndex, origin?: DocumentOrigin): string {
   const lines = [`**$${escapeMarkdown(variable.name)}** *(variable of ${describeTable(variable.table)})*`];
   const facts: string[] = [];
-  if (variable.types.size > 0) {
-    facts.push(`Type: ${[...variable.types].map(inlineCode).join(', ')}`);
+  const type = variable.type;
+  if (type) {
+    facts.push(`Type: ${inlineCode(type.name)}${type.guessed ? ' (guessed)' : ''}`);
+  } else if (variable.types.size > 0) {
+    facts.push(`Set to: ${[...variable.types].map(inlineCode).join(', ')}`);
   }
   const elsewhere = definitionsElsewhere(variable, index);
   const definitions = variable.definitions.length;
@@ -57,6 +91,12 @@ export function describeVariable(variable: ScriptVariable, document: TextDocumen
   facts.push(definitions > 0 ? `Set ${definitions} time${definitions === 1 ? '' : 's'}` : elsewhere.length > 0 ? 'Set in another file' : 'Never set here');
   facts.push(`Read ${references} time${references === 1 ? '' : 's'}`);
   lines.push('', facts.join(' · '));
+  if (type) {
+    lines.push(
+      '',
+      `Type from \\<${escapeMarkdown(type.definition.element.name)}\\> at ${describeLines(document, [type.definition.start], origin)}: ${typeOrigin(type)}`
+    );
+  }
   if (definitions > 0) {
     const first = variable.definitions[0];
     lines.push('', `First set in \\<${escapeMarkdown(first.element.name)}\\> at ${describeLines(document, [first.start], origin)}`);
@@ -143,8 +183,9 @@ export function variableCompletionItems(
         documentation: { kind: 'markdown', value: describeVariable(variable, document, index, origin) },
         textEdit: { range, newText: label },
       };
-      if (variable.types.size > 0) {
-        item.detail = [...variable.types].join(' | ');
+      const typeText = variableTypeText(variable, ' | ');
+      if (typeText !== undefined) {
+        item.detail = typeText;
       }
       items.push(item);
     }

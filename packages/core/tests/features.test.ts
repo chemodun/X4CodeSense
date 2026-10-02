@@ -210,7 +210,7 @@ describe('hover', () => {
     expect(property).toContain('**player.ship**');
     expect(property).toContain('The player ship');
     expect(hoverText(actions('<set_value name="$x" exact="player.ship.cargo.{ware.o|re}.count"/>'))).toContain('**ware.ore**');
-    expect(hoverText(actions('<set_value name="$x" exact="$x.na|me"/>'))).toContain('matches a property of 2 datatypes');
+    expect(hoverText(actions('<set_value name="$y" exact="$x.na|me"/>'))).toContain('matches a property of 2 datatypes');
     // The steps after the hovered one count, and every property that fits as well is shown.
     for (const owner of ['$x', 'player.ship']) {
       const both = hoverText(actions(`<set_value name="$y" exact="${owner}.iscla|ss.{$z}"/>`));
@@ -233,7 +233,7 @@ describe('definition', () => {
     expect(definitionFiles(actions('<set_value name="$x" exact="pla|yer.ship"/>'))).toEqual(['scriptproperties.xml']);
     expect(definitionFiles(actions('<set_value name="$x" exact="player.sh|ip"/>'))).toEqual(['scriptproperties.xml']);
     expect(definitionFiles(actions('<set_value name="$x" exact="player.ship.cargo.{ware.o|re}.count"/>'))).toEqual(['wares.xml']);
-    expect(definitionFiles(actions('<set_value name="$x" exact="$x.na|me"/>'))).toEqual(['scriptproperties.xml', 'scriptproperties.xml']);
+    expect(definitionFiles(actions('<set_value name="$y" exact="$x.na|me"/>'))).toEqual(['scriptproperties.xml', 'scriptproperties.xml']);
     expect(definitionFiles(actions('<set_value name="$x" exact="player.ship.frob|nicate"/>'))).toEqual([]);
     const { analysis, offset } = at(actions('<set_value name="$x" exact="pla|yer"/>'));
     expect(definitionAt(analysis, offset, undefined)).toEqual([]);
@@ -317,8 +317,35 @@ describe('variables', () => {
     expect(text).toContain('Set 1 time · Read 1 time');
     expect(text).toContain('First set in \\<set\\_value\\> at line 5');
     expect(hoverText(script('<set_value name="$bar" exact="$nowh|ere"/>'))).toContain('Never set here');
-    expect(hoverText(script('<set_value name="$bar" exact="$foo.$ke|y"/>') ?? '')).not.toContain('(variable of');
+    expect(hoverText(script('<set_value name="$bar" exact="$foo.$ke|y"/>')) ?? '').not.toContain('(variable of');
     expect(hoverText(script('<set_value name="$bar" exact="$foo.sp|eed"/>'))).toContain('**ship.speed**');
+  });
+
+  it('resolves chains on a variable of known type, and tells where the type comes from', () => {
+    expect(labels(script('<set_value name="$bar" exact="$foo.|"/>')).sort()).toEqual([
+      'cargo',
+      'distanceto',
+      'dock',
+      'exists',
+      'isclass',
+      'name',
+      'owner',
+      'pilot',
+      'sector',
+      'speed',
+    ]);
+    expect(labels(script('<set_value name="$bar" exact="$nowhere.|"/>'))).toContain('len');
+    // One property, not every datatype's `name`.
+    expect(hoverText(script('<set_value name="$bar" exact="$foo.na|me"/>'))).toContain('**component.name**');
+    expect(definitionFiles(script('<set_value name="$bar" exact="$foo.na|me"/>'))).toEqual(['scriptproperties.xml']);
+    expect(hoverText(script('<set_value name="$bar" exact="$fo|o"/>'))).toContain('Type from \\<set\\_value\\> at line 5: the value it sets');
+    const made = hoverText(actions('<create_ship name="$made" macro="m"/>\n        <set_value name="$x" exact="$ma|de.speed"/>'));
+    expect(made).toContain('Type: `ship` (guessed)');
+    expect(made).toContain("Type from \\<create\\_ship\\> at line 5: guessed from the action's name");
+    // Two types: both shown, none used.
+    const both = hoverText(script('<set_value name="$foo" exact="player.money"/>\n        <set_value name="$bar" exact="$fo|o.speed"/>'));
+    expect(both).toContain('Set to: `ship`, `integer`');
+    expect(both).not.toContain('Type from');
   });
 
   it('goes to the definitions of the variable under the caret', () => {

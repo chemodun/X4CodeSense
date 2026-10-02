@@ -16,9 +16,11 @@ import {
   ScriptProperties,
   selectElements,
   selectValue,
+  type PropertyChain,
   type PropertySource,
   type ResolvedChain,
   type ScriptSchema,
+  type StepTypes,
 } from '../src';
 
 const libraries = fileURLToPath(new URL('./fixtures/unpacked/libraries', import.meta.url));
@@ -368,5 +370,43 @@ describe('property chains', () => {
     expect(summary(aiscript.resolved)).toEqual(summary(resolve('player.ship.pilot', 'aiscript')));
     // A lone head is a chain of one step.
     expect(summary(resolvedChainOf(tree.left, text, properties, 'md').resolved)).toEqual(['?']);
+  });
+
+  it('resolves a variable of known type as a value of that type', () => {
+    const ship = properties.datatype('ship');
+    const typed: StepTypes = (index, steps) => (steps[index].text === '$s' ? ship : undefined);
+    const chain = (expression: string): PropertyChain => {
+      const found = chainAtCaret(`${expression}.`, expression.length + 1);
+      if (!found) {
+        throw new Error(`no chain in ${expression}`);
+      }
+      return found;
+    };
+    const head = resolveChain(chain('$s.name'), properties, 'md', typed);
+    expect(summary(head)).toEqual(['?', 'component.name']);
+    expect([head.steps[0].fromVariable, head.steps[0].datatype?.name, head.owners[1]]).toEqual([true, 'ship', { kind: 'datatype', datatype: ship }]);
+    // Without the type, `name` is any datatype's.
+    expect(summary(resolveChain(chain('$s.name'), properties, 'md'))).toEqual(['?', 'candidates 2']);
+    // `this.$s`: a variable of the cue, not a property of it.
+    expect(summary(resolveChain(chain('this.$s.pilot'), properties, 'md', typed))).toEqual(['keyword this', '?', 'ship.pilot']);
+    expect(summary(resolveChain(chain('$t.name'), properties, 'md', typed))).toEqual(['?', 'candidates 2']);
+    const completions = completeChain(chain('$s'), properties, 'md', typed).map((completion) => completion.label);
+    expect(completions).toContain('pilot');
+    expect(completions).not.toContain('len');
+  });
+
+  it('resolves a chain again when the types of its variables differ from those it was resolved with', () => {
+    const text = '$s.name';
+    const tree = parseExpression(text).expression;
+    const ship = properties.datatype('ship');
+    const entity = properties.datatype('entity');
+    const untyped = resolvedChainOf(tree, text, properties, 'md');
+    expect(resolvedChainOf(tree, text, properties, 'md', () => undefined)).toBe(untyped);
+    const asShip = resolvedChainOf(tree, text, properties, 'md', () => ship);
+    expect(asShip).not.toBe(untyped);
+    expect(summary(asShip.resolved)).toEqual(['?', 'component.name']);
+    expect(resolvedChainOf(tree, text, properties, 'md', () => ship)).toBe(asShip);
+    expect(resolvedChainOf(tree, text, properties, 'md', () => entity).resolved.steps[0].datatype?.name).toBe('entity');
+    expect(summary(resolvedChainOf(tree, text, properties, 'md').resolved)).toEqual(['?', 'candidates 2']);
   });
 });

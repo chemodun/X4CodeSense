@@ -15,6 +15,7 @@ import { hoverInPatch, patchedViewAt } from './patchContent';
 import { pathHoverAt } from './patchPaths';
 import { describeText, type TextDisplayOptions } from './texts';
 import { describeVariable, variableAt } from './variables';
+import { stepTypesIn } from '../variables/variables';
 import { callParameterHover } from './callParameters';
 import { scriptNameHover } from './scriptNames';
 
@@ -80,7 +81,8 @@ function hoverInValue(
   if (!found) {
     return undefined;
   }
-  const resolved = resolveChain(found.chain, properties, schema);
+  const variables = analysis.variables;
+  const resolved = resolveChain(found.chain, properties, schema, variables && stepTypesIn(variables, attribute.element, properties));
   const step = resolved.steps[found.stepIndex];
   const text = describeStep(step);
   if (text === undefined) {

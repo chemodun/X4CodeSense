@@ -225,6 +225,15 @@ describe('quick fixes for names', () => {
     expect(fixes(aiScript, 'expression-unknown-keyword')).toEqual(["Change to 'this' *"]);
   });
 
+  it('changes a property a variable of known type lacks, on its own only where the type is not guessed', () => {
+    const analysis = analyze(
+      md('<set_value name="$s" exact="player.ship" />\n        <create_ship name="$c" macro="m" />\n        <debug_text text="$s.pilto + $c.pilto" />')
+    );
+    expect(fixes(analysis, 'expression-unknown-property')).toEqual(["Change to 'pilot' *"]);
+    expect(fixes(analysis, 'expression-unknown-property-guessed')).toEqual(["Change to 'pilot'"]);
+    expect(fixAll(analysis, game)?.title).toBe('Apply all preferred fixes in this file (1)');
+  });
+
   it('offers only variables that are set', () => {
     const read = analyze(md('<debug_text text="$count" />\n        <debug_text text="$count + $cuont" />'));
     expect(read.diagnostics.filter((diagnostic) => diagnostic.code === 'variable-undefined')).toHaveLength(3);

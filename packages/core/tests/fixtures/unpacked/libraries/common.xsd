@@ -186,12 +186,16 @@
         </xs:complexType>
       </xs:element>
       <xs:element name="create_ship">
+        <xs:annotation>
+          <xs:documentation>Create a ship</xs:documentation>
+        </xs:annotation>
         <xs:complexType>
           <xs:sequence>
             <xs:group ref="createship" />
             <xs:element name="position" type="position" minOccurs="0" maxOccurs="1" />
             <xs:element name="rotation" type="rotation" minOccurs="0" maxOccurs="1" />
           </xs:sequence>
+          <xs:attribute name="name" type="lvaluename" />
           <xs:attribute name="macro" type="expression" use="required" />
         </xs:complexType>
       </xs:element>

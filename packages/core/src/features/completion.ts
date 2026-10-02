@@ -8,7 +8,7 @@ import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
 import { enumerationsOf, isExpressionAttribute, typeNamesOf, type XsdAttribute, type XsdElement } from '../xsd/schema';
-import type { VariableTable } from '../variables/variables';
+import { stepTypesIn, type VariableTable } from '../variables/variables';
 import { referenceKindOf } from '../names/namedItems';
 import { callParameterCompletions } from './callParameters';
 import { describeAttribute, describeElement, describeKeyword, describeProperty, escapeMarkdown } from './markdown';
@@ -243,7 +243,8 @@ class Completer {
           }
         }
       }
-      for (const completion of completeChain(chain, properties, schema)) {
+      const variables = this.analysis.variables;
+      for (const completion of completeChain(chain, properties, schema, variables && stepTypesIn(variables, element, properties))) {
         const item: CompletionItem = {
           label: completion.label,
           kind: completion.value ? CompletionItemKind.EnumMember : CompletionItemKind.Field,

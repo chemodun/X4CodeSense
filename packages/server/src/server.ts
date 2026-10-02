@@ -101,6 +101,8 @@ interface X4CodeSenseSettings {
   languageNumber: string;
   limitLanguageOutput: boolean;
   validateXmlStructure: boolean;
+  /** Guess what actions write into variables from their names and documentation (`create_ship` a ship). */
+  guessVariableTypes: boolean;
   /** Problems of the open documents only, or also of every other script in the workspace folders. */
   diagnosticMode: 'openFilesOnly' | 'workspace';
   debug: boolean;
@@ -113,6 +115,7 @@ const defaultSettings: X4CodeSenseSettings = {
   languageNumber: '44',
   limitLanguageOutput: false,
   validateXmlStructure: true,
+  guessVariableTypes: true,
   diagnosticMode: 'openFilesOnly',
   debug: false,
 };
@@ -575,7 +578,7 @@ async function refreshSettings(): Promise<void> {
   const received = (await connection.workspace.getConfiguration('x4CodeSense')) as Partial<X4CodeSenseSettings> | null;
   settings = { ...defaultSettings, ...(received ?? {}) };
   log(
-    `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
+    `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
   );
   await refreshGameData();
   refreshTexts();
@@ -676,7 +679,7 @@ function refreshSemanticTokens(): void {
 }
 
 function analysisContext(): AnalysisContext {
-  const context: AnalysisContext = { validateStructure: settings.validateXmlStructure };
+  const context: AnalysisContext = { validateStructure: settings.validateXmlStructure, guessVariableTypes: settings.guessVariableTypes };
   if (game) {
     context.schemas = game.schemas;
     context.texts = game.texts;

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { analyzeText, loadGameData, type DocumentAnalysis, type ScriptVariable, type VariableTable } from '../src';
+import { analyzeText, attributeNamed, loadGameData, type ChainStep, type DocumentAnalysis, type ScriptVariable, type VariableTable } from '../src';
 
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
 const game = loadGameData(unpacked);
@@ -373,5 +373,122 @@ describe('variable table of an AI script', () => {
     expect(element && variables?.tableForObjectText('this', element)?.kind).toBe('remote');
     expect(element && variables?.tableForObjectText('global', element)?.kind).toBe('global');
     expect(element && variables?.tableForObjectText('$obj', element)).toBeUndefined();
+  });
+});
+
+describe('variable types', () => {
+  const ai = (body: string[]): string => `<aiscript name="a">\n${body.join('\n')}\n</aiscript>\n`;
+  /** `type by element (source)`, or `- [the types named]` without one. */
+  const typeOf = (analysis: DocumentAnalysis, kind: string, tableName: string, name: string): string => {
+    const found = variable(analysis, kind, tableName, name);
+    const type = found.type;
+    return type ? `${type.name} by ${type.definition.element.name} (${type.source}${type.guessed ? ', guessed' : ''})` : `- [${[...found.types].join(', ')}]`;
+  };
+  const script = ai([
+    '  <params>',
+    '    <param name="target" type="ship"/>',
+    '    <param name="flag" default="0"/>',
+    '  </params>',
+    '  <attention min="1">',
+    '    <actions>',
+    '      <create_ship name="$made" macro="m"/>',
+    '      <find_ship name="$found"/>',
+    '      <find_ship name="$many" multiple="true"/>',
+    '      <find_ship name="$maybe" multiple="$flag"/>',
+    '      <set_value name="$list" exact="false"/>',
+    '      <find_ship name="$list" multiple="true"/>',
+    '      <set_value name="$cleared" exact="player.ship"/>',
+    '      <set_value name="$cleared" exact="null"/>',
+    '      <set_value name="$both" exact="player.ship"/>',
+    '      <set_value name="$both" exact="player.money"/>',
+    '      <set_value name="$unknown" exact="player.ship"/>',
+    '      <set_value name="$unknown" exact="$nowhere.frobnicate"/>',
+    '      <append_to_list name="$appended" create="true" exact="1"/>',
+    '    </actions>',
+    '  </attention>',
+  ]);
+
+  it('gives a variable the type every definition that tells one agrees on', () => {
+    const analysis = analyze(script);
+    const types = (names: string[]): string[] => names.map((name) => `$${name}: ${typeOf(analysis, 'script', 'script', name)}`);
+    expect(types(['target', 'flag', 'made', 'found', 'many', 'maybe', 'list', 'cleared', 'both', 'unknown', 'appended'])).toEqual([
+      '$target: ship by param (param type)',
+      // `false` and `0` are set first and replaced later: they tell nothing, and are shown.
+      '$flag: - [integer]',
+      '$made: ship by create_ship (element name, guessed)',
+      '$found: ship by find_ship (element name, guessed)',
+      '$many: list by find_ship (multiple, guessed)',
+      '$maybe: - []',
+      '$list: list by find_ship (multiple, guessed)',
+      '$cleared: ship by set_value (value)',
+      '$both: - [ship, integer]',
+      '$unknown: - [ship]',
+      // Its `exact` is the element appended, not the list.
+      '$appended: list by append_to_list (element name, guessed)',
+    ]);
+  });
+
+  it('types only by what the script and the schema state when told not to guess', () => {
+    const analysis = analyzeText(script, { schemas: game.schemas, properties: game.properties, validateVariables: true, guessVariableTypes: false });
+    expect(['target', 'made', 'many', 'cleared'].map((name) => `$${name}: ${typeOf(analysis, 'script', 'script', name)}`)).toEqual([
+      '$target: ship by param (param type)',
+      '$made: - []',
+      '$many: - []',
+      '$cleared: ship by set_value (value)',
+    ]);
+  });
+
+  it('counts the definitions of a library spliced in, and tells the type of a variable a chain names', () => {
+    const text = md([
+      '    <cue name="Start">',
+      '      <actions>',
+      '        <set_value name="$ship" exact="player.ship"/>',
+      '        <include_actions ref="Lib"/>',
+      '        <set_value name="this.$own" exact="player.ship"/>',
+      '        <set_value name="$read" exact="$ship.speed + this.$own.speed + $other.speed + global.$g.speed"/>',
+      '      </actions>',
+      '    </cue>',
+      '    <library name="Lib">',
+      '      <actions>',
+      '        <set_value name="$ship" exact="player.entity"/>',
+      '        <set_value name="$other" exact="player.ship"/>',
+      '      </actions>',
+      '    </library>',
+    ]);
+    const analysis = analyze(text);
+    expect(['ship', 'own', 'other'].map((name) => `$${name}: ${typeOf(analysis, 'cue', 'Start', name)}`)).toEqual([
+      '$ship: - [ship]',
+      '$own: ship by set_value (value)',
+      '$other: ship by set_value (value)',
+    ]);
+    const element = analysis.structure?.elements.find((candidate) => attributeNamed(candidate, 'name')?.value === '$read');
+    const value = element && attributeNamed(element, 'exact');
+    const steps = (written: string): ChainStep[] =>
+      written.split('.').map((part) => ({ kind: part.startsWith('$') ? 'variable' : 'identifier', start: 0, end: 0, text: part, suffix: '' }));
+    const typeAt = (written: string, index: number): string | undefined =>
+      element ? analysis.variables?.typeAt(element, steps(written), index)?.name : undefined;
+    expect(value).toBeDefined();
+    // In a root cue, `$own` and `this.$own` are one variable.
+    expect([typeAt('$own', 0), typeAt('this.$own', 1), typeAt('$other', 0), typeAt('$ship', 0), typeAt('global.$g', 1), typeAt('$own.$x', 1)]).toEqual([
+      'ship',
+      'ship',
+      'ship',
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('gives no type while what tells it is being typed', () => {
+    const typedIn = (body: string): string[] => {
+      const analysis = analyze(ai(['  <attention min="1">', '    <actions>', `      ${body}`]));
+      const typed = (analysis.variables?.tables ?? []).flatMap((table) => [...table.variables.values()]).filter((each) => each.type !== undefined);
+      return typed.map((each) => `$${each.name} ${each.type?.name}`);
+    };
+    expect(typedIn('<find_ship name="$f" multiple="tr')).toEqual([]);
+    expect(typedIn('<set_value name="$f" exact="player.sh')).toEqual([]);
+    // The name being typed is the variable's, whatever it becomes; so is a start tag not closed yet.
+    expect(typedIn('<create_ship name="$f')).toEqual(['$f ship']);
+    expect(typedIn('<create_ship name="$f" macro="m"')).toEqual(['$f ship']);
   });
 });

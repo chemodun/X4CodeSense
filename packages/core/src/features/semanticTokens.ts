@@ -35,13 +35,13 @@ import { isChainNode, resolvedChainOf, stepsOf } from '../expressions/astChain';
 import { parsedValue } from '../expressions/attributeExpression';
 import type { Token } from '../expressions/lexer';
 import { walkExpression, type Expression } from '../expressions/parser';
-import { keywordForPlaceholder, type ChainOwner } from '../expressions/propertyChain';
+import { keywordForPlaceholder, type ChainOwner, type StepTypes } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
 import type { NamedItemKind, NamedOccurrence } from '../names/namedItems';
 import { overlapsPieceOf, sourceRange } from '../patches/patchedDocument';
 import type { PropertySegment, ScriptProperties, ScriptProperty } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
-import type { VariableOccurrence } from '../variables/variables';
+import { stepTypesIn, type VariableOccurrence } from '../variables/variables';
 import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
 import { isExpressionAttribute, type XsdAttribute, type XsdSchema } from '../xsd/schema';
 import { patchedViewOf } from './patchContent';
@@ -228,7 +228,12 @@ class Classifier {
       return;
     }
     const parsed = parsedValue(attribute);
-    const roles = this.roles(parsed.expression, text);
+    const documentVariables = this.analysis.variables;
+    const roles = this.roles(
+      parsed.expression,
+      text,
+      documentVariables && this.properties ? stepTypesIn(documentVariables, attribute.element, this.properties) : undefined
+    );
     const whole = parsed.expression;
     // The tree is the first expression of the value: with errors, more may follow it.
     if (whole.kind === 'name' && parsed.errors.length === 0 && !roles.has(whole.start)) {
@@ -282,7 +287,7 @@ class Classifier {
   }
 
   /** What the identifiers of an expression are, by their start in the value: keywords, chain steps, calls, units. */
-  private roles(expression: Expression, text: string): Map<number, Classification> {
+  private roles(expression: Expression, text: string, stepTypes: StepTypes | undefined): Map<number, Classification> {
     const roles = new Map<number, Classification>();
     const inner = new Set<Expression>();
     walkExpression(expression, (node) => {
@@ -306,7 +311,7 @@ class Classifier {
         case 'args':
           // Parents come first: a chain's object is marked before it is visited, so each chain is resolved once, whole.
           if (!inner.has(node)) {
-            this.chainRoles(node, text, roles);
+            this.chainRoles(node, text, roles, stepTypes);
           }
           if (isChainNode(node.object)) {
             inner.add(node.object);
@@ -320,9 +325,11 @@ class Classifier {
   }
 
   /** The steps of a chain after its head: each property covers as many steps as it has segments. */
-  private chainRoles(outer: Expression, text: string, roles: Map<number, Classification>): void {
-    // Resolved by the expression checks already, in an analysis that ran them.
-    const { steps, resolved } = this.properties ? resolvedChainOf(outer, text, this.properties, this.schema) : { ...stepsOf(outer, text), resolved: undefined };
+  private chainRoles(outer: Expression, text: string, roles: Map<number, Classification>, stepTypes: StepTypes | undefined): void {
+    // Resolved by the expression checks already, in an analysis that ran them with the same types.
+    const { steps, resolved } = this.properties
+      ? resolvedChainOf(outer, text, this.properties, this.schema, stepTypes)
+      : { ...stepsOf(outer, text), resolved: undefined };
     let index = 1;
     while (index < steps.length) {
       // On a value of unknown type several properties may fit; they cover the same steps.

@@ -19,6 +19,7 @@ export * from './expressions/propertyChain';
 export * from './expressions/formats';
 export * from './expressions/validateExpressions';
 export * from './variables/variables';
+export * from './variables/resultTypes';
 export * from './variables/validateVariables';
 export * from './names/namedItems';
 export * from './names/validateNames';

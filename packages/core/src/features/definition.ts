@@ -15,6 +15,7 @@ import { pathDefinitionsAt } from './patchPaths';
 import { mdReferenceDefinitions } from './project';
 import { textDefinitions, type TextDisplayOptions } from './texts';
 import { variableAt, variableDefinitions } from './variables';
+import { stepTypesIn } from '../variables/variables';
 import { callParameterDefinitions } from './callParameters';
 import { scriptNameDefinitionLocations } from './scriptNames';
 
@@ -51,7 +52,8 @@ function definitionInValue(analysis: DocumentAnalysis, attribute: XmlAttribute, 
   if (!found) {
     return [];
   }
-  const step = resolveChain(found.chain, properties, schema).steps[found.stepIndex];
+  const variables = analysis.variables;
+  const step = resolveChain(found.chain, properties, schema, variables && stepTypesIn(variables, attribute.element, properties)).steps[found.stepIndex];
   if (step.keyword) {
     return locations(game, [step.keyword.location]);
   }

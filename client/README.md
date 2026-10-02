@@ -14,7 +14,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 - Validation against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes, invalid attribute values. Text inside an element, which the schemas allow nowhere in scripts, is a warning: a stray `>`, an attribute typed after its tag was closed.
 - Expressions, parsed as the game parses them: syntax errors, `@` combined with `?`, text references that are not `{page, id}` literals, `%d` in format strings.
 - Formats, `'%s of %s'.[$a, $b]` and `{page, id}.[…]`: fewer arguments than the placeholders take is a warning; arguments no placeholder takes, which are not shown, are reported as information.
-- Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword.
+- Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword. Also on a variable whose type the script tells, `$ship.frobnicate` after `<set_value name="$ship" exact="player.ship"/>`, unless under `@` or tested with `?`, where the game gives null or false. Where the type is only guessed from the action that sets the variable (`<create_ship name="$ship">`), the finding is information of its own code, `expression-unknown-property-guessed`, and says so: "(if $ship is a ship, as guessed from create_ship at line 12)". Its quick fix is offered, never applied on its own.
 - Names, checked across the game, its DLCs and your extensions: labels, cues and libraries, interrupt library items, `md.Script.Cue`, and text references that no file defines; names defined twice.
 - Variables that are read but never set, following the cue namespace rules of the Mission Director.
 - Parameters a call passes that the script, order or library it names does not declare: a `<param name="…">` of `run_script`, `create_order`, `run_actions`, a `cue` with `ref` and the like. Parameters a call leaves out are not reported; the game takes them as null.
@@ -27,14 +27,14 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 ### Completion and hover
 
 - Child elements allowed at the caret, attribute names, and attribute values from the schemas.
-- Property chains in expressions (`player.ship.cargo.{$ware}.count`), keywords, and the values of lookups such as `class` or `ware`.
+- Property chains in expressions (`player.ship.cargo.{$ware}.count`), keywords, and the values of lookups such as `class` or `ware`. After a variable whose type the script tells, the properties of that type: `$ship.` after `<create_ship name="$ship">` offers a ship's, and hover and go to definition of `$ship.name` name the ship's property rather than every datatype's `name`.
 - Variables visible at the caret, also after `this.`, `parent.` or a cue name, and the variables other scripts set for this one: interrupt library items, libraries spliced in with `include_actions`, `md.Script.Cue.$x`.
 - Labels, cues, libraries and interrupt library items; script names after `md.` and cue names after `md.Script.`, cues that an extension's patch adds included.
 - Texts: pages after `{` and text ids after `{page,`, and in `page="…" line="…"` the page and the line. Hover over `{page, id}` or `page="…" line="…"` shows the text as the game shows it. Both work in any XML file, wares, macros, the text files and their patches included.
 - The parameters of calls: in `run_script`, `run_interrupt_script`, `start_script`, `create_order`, `run_actions` and a `cue` with `ref`, signature help lists what the script, order or library declares, the parameter at the caret highlighted. `<param name="…">` completes the parameters not passed yet, those without a default first. Hover shows a parameter's description, default and type; go to definition leads to its declaration. The target must be written as is: `'order.trade.routine'`, `'Attack'`, `Lib` or `md.Script.Lib`.
 - The arguments of a format: in `'%s of %s'.[$a, $b]` and `{page, id}.[…]`, signature help shows the format, for a text as the game shows it, with the placeholder of the argument at the caret highlighted. `%s` takes the next argument, also with flags such as `%,s`; `%1`, `%2` take the numbered one, and letters after the digits are text, as in `%4s` for seconds; `%%` is a percent sign.
 - AI script names and order ids: in `run_script name`, `run_interrupt_script name`, `start_script name` and `create_order id`, completion offers the AI scripts and orders of the game, its DLCs, the extensions and your workspace, inserted with their quotes. Hover over one, or over `<aiscript name>` and `<order id>`, shows what it is: an order's name and description as the game shows them, the parameters, where it is defined, and how often other scripts name it.
-- Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, its type when it can be told, and how often it is read.
+- Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, how often it is read, and its type when every `set_value`, `param` and action that sets it agrees on one, with what tells it: a `<param type>`, the value set, or a guess from the action's name or documentation, marked "(guessed)" there, in completion and in the outline.
 
 ### Texts in Lua files
 
@@ -121,6 +121,7 @@ A few things the game's files do not say are built in:
 - Thirteen keywords the game evaluates but `scriptproperties.xml` does not list, written in the format of that file. Ten take their values from the game's own files (`common.xsd`, `factions.xsd`, `parameters.xsd`, `inputmap.xml`), such as `licencetype` and `moodtype`; `component`, `datatype.macroslot` and `chairtype` are written out, as the game's scripts use them.
 - Which attribute of a call names what it calls (`run_script name`, `create_order id`, `run_actions ref`, `<cue ref>`, `start_script name`, `run_interrupt_script name`), and that the `ref` of `cue`, `include_actions` and `run_actions` names a cue or a library: the schemas say so only in their descriptions.
 - The patch operations `add`, `replace` and `remove`, and the names of text files (`0001-l044.xml`), as the game reads them.
+- What an action writes into a variable: the schemas type `create_ship name` and most such attributes only as "a variable that receives the result". X4CodeSense guesses the type from the words of the schema, never from a list of its own: the action's name (`create_ship` a ship, `find_object_component` a component, `get_factions_by_tag` a list), the attribute's name (`sector`) or documentation ("a list of all …"), the action's documentation ("Create an orientation(rotation) value"), and `multiple`, which makes a list. Where the schema states it, as for `groupname`, it is taken as stated. `x4CodeSense.guessVariableTypes` turns the guessing off.
 - What a quick fix creates: a cue that `signal_cue` names waits for the signal, as nine in ten such cues of the game do; a library that `include_actions` or `run_actions` names has actions.
 
 ## ⚠️ Known limitations
@@ -134,6 +135,7 @@ A few things the game's files do not say are built in:
 - AI scripts, Mission Director scripts and their patches are checked. The patches of library files are applied and their paths checked, but what they bring in is not, since the game has no schemas for those files. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
 - Writing the changes of the side of a large library file, such as `wares.xml` after the DLCs' patches, into its patch takes up to about a second.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
+- A variable has a type only when everything that sets it in the script agrees on one: one set from another variable's property, by `do_for_each`, by a library's `return` or by other scripts has none, and neither has a variable of the global table or of a library other scripts fill. The elements of a list have no type.
 - Semantic highlighting needs the game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
 
 ## 🚀 Getting started
@@ -192,6 +194,8 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
   - _default_: `false`
 - `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes, invalid values and text inside elements are always reported.
   - _default_: `true`
+- `x4CodeSense.guessVariableTypes` - guess what an action writes into a variable from the action's name and documentation where the schema does not state it: `create_ship` a ship, `find_ship` with `multiple` a list. What rests on a guess says so: hover and completion mark the type "(guessed)", and a property such a type lacks is information (`expression-unknown-property-guessed`), not a warning. Off, only what the scripts and the schema state types a variable: `<param type>`, the value `set_value` sets, groups.
+  - _default_: `true`
 - `x4CodeSense.diagnosticMode` - which scripts the Problems panel lists problems of: `openFilesOnly`, the scripts open in the editor, or `workspace`, also every other script and patch in the workspace folders, as they are on disk. Checking them all takes a few seconds for a hundred scripts, once after the scripts are indexed and again in the background when something they refer to changes.
   - _default_: `openFilesOnly`
 - `x4CodeSense.debug` - verbose logging in the X4CodeSense output channel.
@@ -234,7 +238,10 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - The files of `libraries` are in the workspace's problems and in the checks of x4-script-check.
   - Rename and find all references of a variable, a label or another name also cover the paths of patches that pick an element by a value holding it, such as `set_value[@name='$count']` or `do_if[@value='$count gt 0']`: a rename no longer leaves such a path selecting nothing, and is refused when the path is outside the workspace.
   - Text inside an element that the schema allows to hold only elements, or nothing, is reported as a warning (`text-not-allowed`): a stray `>` after a start tag, an attribute typed after its tag was closed. In a patch, also text in `<diff>` and `remove`, and text an `add` or `replace` puts into a script's element.
+  - Variables have a type when everything that sets them agrees on one: completion after `$ship.` offers that type's properties, hover and go to definition of `$ship.name` name its property, and hover over `$ship` tells the type and what tells it. What actions write is guessed from their names and documentation where the schema does not state it (`create_ship` a ship), and marked "(guessed)"; `x4CodeSense.guessVariableTypes` turns the guessing off, `--no-type-guesses` in x4-script-check.
+  - A property a variable's type does not have is reported, as for `player.ship`: a warning where the script states the type, information (`expression-unknown-property-guessed`) where it is guessed, worded as the guess it rests on. On the game's own scripts, six, in four files; none in the DLCs.
 - Changed
+  - A variable's type comes from the `exact` or `default` of `set_value` and `param` only, no longer from that of `create_list`, `append_to_list`, `do_all` and the like, where it is a count or the element added; `null`, and a bare `true`, `false` or number set before the real value, tell none.
   - Patches are applied faster where a step of a path picks a node by an attribute's value, such as `cue[@name='Start']`: the node is found without looking at each of its siblings.
   - Hover over a step of a patch's path names an element without `name` by its `id`.
 - Fixed
