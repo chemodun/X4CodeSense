@@ -106,6 +106,11 @@ export function textReferenceAt(text: string, offset: number): TextReference | u
   return undefined;
 }
 
+/** A file as the database keeps it, as the script index does: an editor's `c:\…` is the `C:\…` read at the start. */
+function fileKey(file: string): string {
+  return path.resolve(file).toLowerCase();
+}
+
 /** Zero-based line and character of offsets; fastest when they are asked for in increasing order. */
 function positionCounter(text: string): (offset: number) => { line: number; character: number } {
   let line = 0;
@@ -337,14 +342,14 @@ export class TextDatabase {
     if (language === undefined) {
       return false;
     }
-    this.files.set(path.resolve(file), new TextFileReader(file, text, language).read());
+    this.files.set(fileKey(file), new TextFileReader(file, text, language).read());
     this.byPage = undefined;
     this.pagesById = undefined;
     return true;
   }
 
   removeFile(file: string): void {
-    if (this.files.delete(path.resolve(file))) {
+    if (this.files.delete(fileKey(file))) {
       this.byPage = undefined;
       this.pagesById = undefined;
     }
@@ -352,7 +357,7 @@ export class TextDatabase {
 
   /** True when the file was read into the database. */
   hasFile(file: string): boolean {
-    return this.files.has(path.resolve(file));
+    return this.files.has(fileKey(file));
   }
 
   get fileCount(): number {

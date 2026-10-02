@@ -703,8 +703,9 @@ export class ScriptIndex {
   }
 
   /**
-   * The model of an indexed script file, from the editor's text or the disk, with declarations found as
-   * validation finds them; undefined without the schemas, for a patch, or when the file cannot be read.
+   * The model of an indexed script file or patch, from the editor's text or the disk, with declarations
+   * found as validation finds them (in a patch, those of what it brings in, by name); undefined without
+   * the schemas, or when the file cannot be read.
    */
   fileModel(file: string): IndexedFileModel | undefined {
     const key = keyOf(file);
@@ -716,7 +717,7 @@ export class ScriptIndex {
 
   private makeModel(key: string): IndexedFileModel | undefined {
     const entry = this.files.get(key);
-    const xsd = entry?.kind === 'script' ? this.schemas?.schemas[entry.schema] : undefined;
+    const xsd = entry ? this.schemas?.schemas[entry.schema] : undefined;
     const text = entry && xsd ? this.currentText(entry.file) : undefined;
     if (!entry || !xsd || text === undefined) {
       return undefined;
@@ -740,11 +741,22 @@ export class ScriptIndex {
     };
   }
 
-  /** Names of the variables read or set in the table of a Mission Director cue or library, in every script of that name. */
+  /** The files a cue or library of a Mission Director script is written in: the scripts of the name, and the patches that add it. */
+  private cueFiles(scriptName: string, cueName: string): string[] {
+    const files = this.scripts('md', scriptName).map((script) => script.file);
+    for (const cue of this.cues(scriptName, cueName)) {
+      if (cue.patch !== undefined && !files.includes(cue.patch)) {
+        files.push(cue.patch);
+      }
+    }
+    return files;
+  }
+
+  /** Names of the variables read or set in the table of a Mission Director cue or library, in every script of that name and the patches that add it. */
   cueVariableUses(scriptName: string, cueName: string): Set<string> {
     const uses = new Set<string>();
-    for (const script of this.scripts('md', scriptName)) {
-      const table = this.fileModel(script.file)?.variables.tables.find(
+    for (const file of this.cueFiles(scriptName, cueName)) {
+      const table = this.fileModel(file)?.variables.tables.find(
         (candidate) => (candidate.kind === 'cue' || candidate.kind === 'library') && candidate.name === cueName
       );
       for (const name of table?.variables.keys() ?? []) {
@@ -776,8 +788,8 @@ export class ScriptIndex {
 
   /**
    * The variables a cue of a Mission Director script has in its own table (`md.<Script>.<Cue>.$x`),
-   * each with where it is set first; for every script of that name. The libraries of the script that the
-   * cue includes, and those they include, set variables in its table too.
+   * each with where it is set first; for every script of that name, and in the patch that adds the cue.
+   * The libraries of the script that the cue includes, and those they include, set variables in its table too.
    */
   cueVariables(scriptName: string, cueName: string): IndexedVariable[] {
     const key = `${scriptName}.${cueName}`;
@@ -791,8 +803,8 @@ export class ScriptIndex {
 
   private findCueVariables(scriptName: string, cueName: string): IndexedVariable[] {
     const found: IndexedVariable[] = [];
-    for (const script of this.scripts('md', scriptName)) {
-      const model = this.fileModel(script.file);
+    for (const file of this.cueFiles(scriptName, cueName)) {
+      const model = this.fileModel(file);
       const table = model?.variables.tables.find((candidate) => (candidate.kind === 'cue' || candidate.kind === 'library') && candidate.name === cueName);
       if (!model || !table) {
         continue;
@@ -803,7 +815,7 @@ export class ScriptIndex {
         for (const variable of current.variables.values()) {
           const first = variable.definitions[0];
           if (first && !found.some((known) => known.name === variable.name)) {
-            found.push({ name: variable.name, position: { file: script.file, ...position(first.start) } });
+            found.push({ name: variable.name, position: { file, ...position(first.start) } });
           }
         }
         for (const included of current.includes) {
@@ -1024,6 +1036,17 @@ export class ScriptIndex {
   isUsedByOtherScripts(scriptName: string, libraryName: string): boolean {
     const scripts = this.lookup().instantiators.get(`md.${scriptName}.${libraryName}`);
     return scripts !== undefined && [...scripts].some((name) => name !== scriptName);
+  }
+
+  /**
+   * The files that splice in, instantiate or run a library of a Mission Director script
+   * (`md.<Script>.<Library>` in `include_actions`, `<cue ref>` or `run_actions`). What the libraries set
+   * counts in them, which the script's signature does not tell: they are checked again when it changes.
+   */
+  libraryUsersOf(scriptName: string): string[] {
+    const prefix = `md.${scriptName}.`;
+    const uses = (refs: readonly string[]): boolean => refs.some((ref) => ref.startsWith(prefix));
+    return [...this.files.values()].filter((entry) => uses(entry.includes) || uses(entry.instantiates)).map((entry) => entry.file);
   }
 
   /**

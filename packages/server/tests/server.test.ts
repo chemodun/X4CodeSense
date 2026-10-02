@@ -924,6 +924,46 @@ describe('script index', () => {
     await closed;
   });
 
+  it('follows what a library of another script sets while it is edited, in the scripts that include it', async () => {
+    const mod = path.join(workDir, 'mdlib');
+    const libraryFile = path.join(mod, 'md', 'libscript.xml');
+    const userFile = path.join(mod, 'md', 'user.xml');
+    const libraryText = (sets: string): string =>
+      `<mdscript name="LibScript">\n  <cues>\n    <library name="Lib">\n      <actions>\n        ${sets}\n      </actions>\n    </library>\n  </cues>\n</mdscript>\n`;
+    const userText =
+      '<mdscript name="User">\n  <cues>\n    <cue name="Use">\n      <actions>\n        <include_actions ref="md.LibScript.Lib"/>\n        <debug_text text="$first + $second"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n';
+    mkdirSync(path.dirname(libraryFile), { recursive: true });
+    writeFileSync(libraryFile, libraryText('<set_value name="$first" exact="1"/>'));
+    writeFileSync(userFile, userText);
+    const workspace = { uri: pathToFileURL(mod).toString(), name: 'mdlib' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+
+    const userUri = pathToFileURL(userFile).toString();
+    const libraryUri = pathToFileURL(libraryFile).toString();
+    // Read but never set, once the index of the new folder is built (one waiter at a time: `open` would replace it).
+    const unset = diagnosticsCount(userUri, 1);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri: userUri, languageId: 'xml', version: 1, text: userText } });
+    expect(summarize(await unset)).toEqual(['6:36 variable-undefined']);
+
+    // The library sets the variable in the editor: what it sets is no part of its signature, yet the including script follows.
+    const set = diagnosticsCount(userUri, 0);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: libraryUri, languageId: 'xml', version: 1, text: libraryText('<set_value name="$first" exact="1"/>') },
+    });
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri: libraryUri, version: 2 },
+      contentChanges: [{ text: libraryText('<set_value name="$first" exact="1"/>\n        <set_value name="$second" exact="2"/>') }],
+    });
+    await set;
+
+    for (const uri of [libraryUri, userUri]) {
+      const closed = diagnosticsCount(uri, 0);
+      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+      await closed;
+    }
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  }, 20_000);
+
   it('renames a cue across the scripts of the workspace, and refuses when a script outside it names the cue', async () => {
     const mods = path.join(workDir, 'renamemods');
     const write = (file: string, lines: string[]): string => {
@@ -1032,6 +1072,27 @@ describe('script index', () => {
     await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
     await closed;
     expect(await symbols('hubtyp')).toEqual([]);
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
+  }, 30_000);
+
+  it('indexes an extension created in the workspace while the server runs', async () => {
+    const mods = path.join(workDir, 'growingmods');
+    const write = (file: string, text: string): string => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      return pathToFileURL(file).toString();
+    };
+    write(path.join(mods, 'first', 'md', 'first.xml'), '<mdscript name="GrowFirst">\n  <cues/>\n</mdscript>\n');
+    const names = async (query: string): Promise<string[]> =>
+      ((await connection.sendRequest(WorkspaceSymbolRequest.type, { query })) ?? []).map((symbol) => symbol.name);
+    const workspace = { uri: pathToFileURL(mods).toString(), name: 'growingmods' };
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [workspace], removed: [] } });
+    await vi.waitFor(async () => expect(await names('growfirst')).toEqual(['GrowFirst']), { timeout: 10_000 });
+
+    // A mod copied in: its file in no folder the index reads yet.
+    const fresh = write(path.join(mods, 'second', 'md', 'second.xml'), '<mdscript name="GrowSecond">\n  <cues/>\n</mdscript>\n');
+    await connection.sendNotification(DidChangeWatchedFilesNotification.type, { changes: [{ uri: fresh, type: FileChangeType.Created }] });
+    await vi.waitFor(async () => expect(await names('growsecond')).toEqual(['GrowSecond']), { timeout: 10_000 });
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   }, 30_000);
 

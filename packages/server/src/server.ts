@@ -168,6 +168,17 @@ const staleSides = new Set<string>();
 const sideTimers = new Map<string, NodeJS.Timeout>();
 /** How long a side of a patch comparison waits after its last change: a side is a whole script, which typing in the patch changes too. */
 const sideDelay = 250;
+/**
+ * The open documents to analyse again for what a change in another file means to them, when typing
+ * pauses: every one, or those of these files by key; `from` is the uri of the document typed in, which was
+ * just analysed (null when several were).
+ */
+let othersPending: { all: boolean; files: Set<string>; from?: string | null } = { all: false, files: new Set() };
+let othersTimer: NodeJS.Timeout | undefined;
+/** The timer of the look for a new extension after files were created. */
+let folderTimer: NodeJS.Timeout | undefined;
+/** How long the other open documents wait after the last change: a keystroke analyses its own document only. */
+const othersDelay = 300;
 /** Why a side of a patch comparison is not renamed in: its edits would land in the comparison. */
 const sideRenameRefusal = 'Rename in the patch or in the script, not in a side of their comparison';
 /** Why a game document is not renamed in, nor its patch written. */
@@ -430,14 +441,14 @@ function refreshTexts(): void {
  * document is analysed again, and the closed scripts of the workspace when their problems are asked
  * for. A newer build stops an older one.
  */
-async function refreshIndex(): Promise<void> {
+async function refreshIndex(): Promise<boolean> {
   if (!game) {
-    return;
+    return false;
   }
   const folders = scriptFolders(game.folder, extensionFolders(), game.files);
   const sources = JSON.stringify(folders);
   if (sources === indexSources) {
-    return;
+    return false;
   }
   indexSources = sources;
   const generation = ++indexGeneration;
@@ -467,7 +478,7 @@ async function refreshIndex(): Promise<void> {
     let reported = slice;
     for (const [done, source] of files.entries()) {
       if (!current()) {
-        return;
+        return false;
       }
       try {
         index.setText(source.file, target.files.readText(source.file), source.source);
@@ -484,7 +495,7 @@ async function refreshIndex(): Promise<void> {
       }
     }
     if (!current()) {
-      return;
+      return false;
     }
     for (const document of documents.all()) {
       indexOpenDocument(document, index);
@@ -507,6 +518,25 @@ async function refreshIndex(): Promise<void> {
   }
   // Only a build that completed gets here.
   void checkWorkspace(true);
+  return true;
+}
+
+/**
+ * After a file the index has no source for was created: an extension may have come with it, whose
+ * scripts are indexed and texts read once the burst of new files is over (a folder copied or cloned).
+ */
+function scheduleFolderCheck(): void {
+  clearTimeout(folderTimer);
+  folderTimer = setTimeout(() => {
+    folderTimer = undefined;
+    void refreshIndex().then((rebuilt) => {
+      if (rebuilt) {
+        textSources = undefined;
+        refreshTexts();
+        reanalyzeAll();
+      }
+    });
+  }, workspaceDelay);
 }
 
 /**
@@ -619,6 +649,10 @@ connection.onDidChangeWatchedFiles((params) => {
   let changed = false;
   for (const change of params.changes) {
     const file = filePathOf(change.uri);
+    // A file in no folder the index reads: perhaps of an extension created or copied in.
+    if (file && change.type === FileChangeType.Created && game?.index && game.index.sourceOf(file) === undefined) {
+      scheduleFolderCheck();
+    }
     // An open document counts as it is in the editor.
     if (!file || documents.get(change.uri)) {
       continue;
@@ -675,6 +709,45 @@ function reanalyzeAll(except?: string): void {
   refreshSemanticTokens();
 }
 
+/**
+ * Analyses the other open documents again once typing pauses, for what a change of the document `from`
+ * means to them: every one, or those of the given files. A keystroke analyses its own document at once.
+ */
+function scheduleReanalysis(from: string, files?: readonly string[]): void {
+  if (files) {
+    for (const file of files) {
+      othersPending.files.add(fileKey(file));
+    }
+  } else {
+    othersPending.all = true;
+  }
+  othersPending.from = othersPending.from === undefined || othersPending.from === from ? from : null;
+  clearTimeout(othersTimer);
+  othersTimer = setTimeout(() => {
+    othersTimer = undefined;
+    const pending = othersPending;
+    othersPending = { all: false, files: new Set() };
+    for (const document of documents.all()) {
+      const file = filePathOf(document.uri);
+      if (document.uri !== pending.from && (pending.all || (file !== undefined && pending.files.has(fileKey(file))))) {
+        analyze(document);
+      }
+    }
+    refreshSemanticTokens();
+  }, othersDelay);
+}
+
+/**
+ * The files that use the libraries of the Mission Director script a document is, or that its patch
+ * changes: what the libraries set counts in them, which no signature tells.
+ */
+function libraryUsersOf(analysis: DocumentAnalysis, index: ScriptIndex): string[] {
+  const script = analysis.detection.script;
+  const target = analysis.patch?.target.file;
+  const name = script ? (script.schema === 'md' ? script.name : undefined) : target !== undefined ? index.scriptOf(target)?.name : undefined;
+  return name ? index.libraryUsersOf(name) : [];
+}
+
 /** Asks the client for the semantic tokens of the open documents again: their analyses changed, not only their text. */
 function refreshSemanticTokens(): void {
   if (semanticTokensRefreshSupport) {
@@ -706,8 +779,11 @@ function analysisContext(openUri?: string): AnalysisContext {
   return context;
 }
 
-/** Analyses one document and publishes its diagnostics; when other scripts see it differently now, they are analysed again. */
-function analyze(document: TextDocument): void {
+/**
+ * Analyses one document and publishes its diagnostics. When other scripts see it differently now, they are
+ * analysed again once typing pauses; when it was `typed` in, so are those that use its libraries.
+ */
+function analyze(document: TextDocument, typed = false): void {
   if (isLua(document)) {
     return;
   }
@@ -718,10 +794,19 @@ function analyze(document: TextDocument): void {
   const started = performance.now();
   const analysis = analyzeDocument(analysedDocument(document), analysisContext(document.uri));
   analysisByUri.set(document.uri, analysis);
-  if (game?.index && analysis.structure && indexOpenDocument(document, game.index, analysis.structure)) {
-    debug(`${document.uri}: names seen by other scripts changed`);
-    reanalyzeAll(document.uri);
-    scheduleWorkspaceCheck();
+  if (game?.index && analysis.structure) {
+    if (indexOpenDocument(document, game.index, analysis.structure)) {
+      debug(`${document.uri}: names seen by other scripts changed`);
+      scheduleReanalysis(document.uri);
+      scheduleWorkspaceCheck();
+    } else if (typed) {
+      // Only a change of its text: analysed again for another's change, a document changes nothing for others.
+      const users = libraryUsersOf(analysis, game.index);
+      if (users.length > 0) {
+        scheduleReanalysis(document.uri, users);
+        scheduleWorkspaceCheck(users);
+      }
+    }
   }
   const detection = analysis.detection;
   const description = detection.script
@@ -1050,13 +1135,14 @@ documents.onDidOpen((event) => {
 documents.onDidChangeContent((event) => {
   const textFile = textFileOf(event.document.uri);
   if (textFile && game) {
-    // A text being written: scripts that refer to it are checked against the editor's content.
+    // A text being written: scripts that refer to it are checked against the editor's content once typing pauses.
     game.texts.setFile(textFile, event.document.getText());
-    reanalyzeAll();
+    analyze(event.document);
+    scheduleReanalysis(event.document.uri);
     scheduleWorkspaceCheck();
     return;
   }
-  analyze(event.document);
+  analyze(event.document, true);
 });
 
 documents.onDidClose((event) => {

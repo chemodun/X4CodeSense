@@ -136,6 +136,18 @@ describe('text patches of extensions', () => {
     expect(database.has(1001, 200)).toBe(true);
     expect(database.problems).toEqual([]);
   });
+
+  it('takes a file an editor names with another case, as its uris do with the drive letter, as the one read', () => {
+    const database = loadTexts(unpacked, { extensionFolders: [patching] });
+    const count = database.fileCount;
+    const dependent = path.join(patching, 'a_dependent', 't', '0001-l044.xml');
+    const named = dependent.toUpperCase() === dependent ? dependent.toLowerCase() : dependent.toUpperCase();
+    expect(database.hasFile(named)).toBe(true);
+    database.setFile(named, '<diff><add sel="/language/page[@id=\'1001\']"><t id="200">New</t></add></diff>');
+    expect(database.fileCount).toBe(count);
+    database.removeFile(named);
+    expect(database.hasFile(dependent)).toBe(false);
+  });
 });
 
 describe('text references', () => {

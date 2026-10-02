@@ -234,6 +234,42 @@ describe('patch analysis', () => {
     ]);
   });
 
+  it('gives what a library a patch adds sets to the scripts that include it, and tells them as its users', () => {
+    const edited = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const patch = [
+      '<diff>',
+      '  <add sel="/mdscript/cues">',
+      '    <library name="PatchLib">',
+      '      <actions>',
+      '        <set_value name="$frompatch" exact="1" />',
+      '      </actions>',
+      '    </library>',
+      '  </add>',
+      '</diff>',
+    ].join('\n');
+    edited.setStructure(latePatch, patch, parseXml(patch), 'late_mod', true);
+    const user = path.join(modsFolder, 'late_mod', 'md', 'patchuser.xml');
+    const userText = [
+      '<mdscript name="PatchUser">',
+      '  <cues>',
+      '    <cue name="Use">',
+      '      <actions>',
+      '        <include_actions ref="md.Setup.PatchLib" />',
+      '        <debug_text text="$frompatch + $nothing" />',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ].join('\n');
+    edited.setStructure(user, userText, parseXml(userText), 'late_mod', true);
+    expect(
+      edited.cueVariables('Setup', 'PatchLib').map((variable) => `${variable.name} ${relative(variable.position.file)}:${variable.position.line}`)
+    ).toEqual(['frompatch mods/late_mod/md/setup.xml:4']);
+    const unset = analyzeFile(user, userText, { ...context, index: edited }).diagnostics.filter((diagnostic) => diagnostic.code === 'variable-undefined');
+    expect(unset.map((diagnostic) => diagnostic.message)).toEqual(["Variable '$nothing' is never set in cue 'Use'"]);
+    expect(edited.libraryUsersOf('Setup').map(relative)).toEqual(['mods/late_mod/md/patchuser.xml']);
+  });
+
   it('follows the editor text of the target', () => {
     const edited = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
     const text = readFileSync(setup, 'utf8').replace('<cue name="Later" />', '');

@@ -82,6 +82,11 @@ export interface VariableOccurrence {
   kind: OccurrenceKind;
   /** True when a missing variable does not fail here: under `@`, or tested with `?`. */
   guarded: boolean;
+  /**
+   * True for a guarded read whose value holds only when the variable exists: `$x?` or `@$x.y` as the whole
+   * value or a part of it joined with `and`, not under `not` or `or`. Its element runs only then.
+   */
+  tests?: boolean;
   /** True inside an interrupt library item of an AI script: it runs in the scripts that use it, which set what it reads. */
   external: boolean;
   element: XmlElement;
@@ -176,6 +181,13 @@ const placeholderValue = /^\s*(true|false|-?\d+(\.\d+)?[a-zA-Z]*)\s*$/;
 
 /** Cue keywords that name a table relative to the current cue. */
 const cueKeywords: ReadonlySet<string> = new Set(['this', 'static', 'staticbase', 'parent', 'namespace']);
+
+/** The comparisons that are false when one side is null and the other is not. */
+const comparesValues: ReadonlySet<string> = new Set(['==', 'lt', 'le', 'gt', 'ge', '<', '<=', '>', '>=']);
+
+function isNullLiteral(node: Expression): boolean {
+  return node.kind === 'name' && node.name === 'null';
+}
 
 /**
  * True when an attribute of the element stores a value into what it names. The schema says so in the
@@ -395,14 +407,17 @@ class Collector {
   }
 
   /**
-   * A read is safe where an enclosing element, or its own, tests the same variable with `?` or `@`:
-   * `<do_if value="$x?">` runs its body only when `$x` exists, and `value="$x? and $x.y"` stops before
-   * `$x.y` when it does not. A test in a cue's `<conditions>` guards the whole cue. A `do_else` is a
-   * sibling of its `do_if`, not inside it, so it stays unsafe.
+   * A read is safe where its own element tests the same variable with `?` or `@` (`value="$x? and $x.y"`
+   * stops before `$x.y`, `if $x? then $x.y` does not get there), or an enclosing element tests it so
+   * that it runs only when the variable exists: `<do_if value="$x?">` runs its body only then, and a test
+   * in a cue's `<conditions>` guards the whole cue. The body of `not $x?` or of `$x? or $y` runs without
+   * `$x` (see `VariableOccurrence.tests`), and a `do_else` is a sibling of its `do_if`, not inside it: both
+   * stay unsafe.
    */
   private guardByTests(): void {
-    const tests = new Map<XmlElement, Map<VariableTable, Set<string>>>();
-    const addTest = (element: XmlElement, occurrence: VariableOccurrence): void => {
+    const own = new Map<XmlElement, Map<VariableTable, Set<string>>>();
+    const body = new Map<XmlElement, Map<VariableTable, Set<string>>>();
+    const addTest = (tests: typeof own, element: XmlElement, occurrence: VariableOccurrence): void => {
       const byTable = tests.get(element) ?? new Map<VariableTable, Set<string>>();
       const names = byTable.get(occurrence.table) ?? new Set<string>();
       names.add(occurrence.name);
@@ -410,25 +425,36 @@ class Collector {
       tests.set(element, byTable);
     };
     for (const occurrence of this.occurrences) {
-      if (occurrence.guarded && occurrence.kind === 'reference') {
-        addTest(occurrence.element, occurrence);
-        for (let current = occurrence.element.parent; current; current = current.parent) {
-          if (current.name === 'conditions' && current.parent && this.isCue(current.parent)) {
-            addTest(current.parent, occurrence);
-            break;
-          }
+      if (!occurrence.guarded || occurrence.kind !== 'reference') {
+        continue;
+      }
+      addTest(own, occurrence.element, occurrence);
+      if (!occurrence.tests) {
+        continue;
+      }
+      addTest(body, occurrence.element, occurrence);
+      for (let current = occurrence.element.parent; current; current = current.parent) {
+        if (current.name === 'conditions' && current.parent && this.isCue(current.parent)) {
+          addTest(body, current.parent, occurrence);
+          break;
         }
       }
     }
-    if (tests.size === 0) {
+    if (own.size === 0) {
       return;
     }
+    const tested = (tests: typeof own, element: XmlElement, occurrence: VariableOccurrence): boolean =>
+      tests.get(element)?.get(occurrence.table)?.has(occurrence.name) === true;
     for (const occurrence of this.occurrences) {
       if (occurrence.guarded || occurrence.kind !== 'reference') {
         continue;
       }
-      for (let current: XmlElement | undefined = occurrence.element; current; current = current.parent) {
-        if (tests.get(current)?.get(occurrence.table)?.has(occurrence.name)) {
+      if (tested(own, occurrence.element, occurrence)) {
+        occurrence.guarded = true;
+        continue;
+      }
+      for (let current = occurrence.element.parent; current; current = current.parent) {
+        if (tested(body, current, occurrence)) {
           occurrence.guarded = true;
           break;
         }
@@ -715,10 +741,12 @@ class Collector {
         attribute
       );
 
-    const visit = (node: Expression, guarded: boolean): void => {
+    /** `holds`: the whole value is true only when this node is (the root, and what `and` and parentheses join to it). */
+    const visit = (node: Expression, guarded: boolean, holds = false): void => {
       switch (node.kind) {
         case 'variable': {
           const occurrence = record(this.tableOf(element), node.name.slice(1), node.start, node.end, node, guarded);
+          occurrence.tests = guarded && holds;
           if (occurrence.kind === 'definition') {
             this.noteType(occurrence, element);
           }
@@ -732,16 +760,17 @@ class Collector {
             }
             if (table) {
               const occurrence = record(table, node.name.slice(1), node.nameStart, node.nameEnd, node, guarded);
+              occurrence.tests = guarded && holds;
               if (occurrence.kind === 'definition') {
                 this.noteType(occurrence, element);
               }
             }
           }
-          visit(node.object, guarded);
+          visit(node.object, guarded, holds);
           return;
         }
         case 'dynamic':
-          visit(node.object, guarded);
+          visit(node.object, guarded, holds);
           visit(node.key, false);
           return;
         case 'args':
@@ -751,22 +780,26 @@ class Collector {
           }
           return;
         case 'unary':
-          visit(node.operand, guarded || node.operator === '@');
+          // `@$x.y` is null without `$x`; `not $x?` holds without it.
+          visit(node.operand, guarded || node.operator === '@', holds && node.operator === '@');
           return;
         case 'exists':
           // `$x?` tests the variable itself; `$x.y?` still evaluates `$x`.
-          visit(node.operand, guarded || node.operand.kind === 'variable' || (node.operand.kind === 'property' && node.operand.name.startsWith('$')));
+          visit(node.operand, guarded || node.operand.kind === 'variable' || (node.operand.kind === 'property' && node.operand.name.startsWith('$')), holds);
           return;
         case 'cast':
           visit(node.operand, guarded);
           return;
         case 'group':
-          visit(node.expression, guarded);
+          visit(node.expression, guarded, holds);
           return;
-        case 'binary':
-          visit(node.left, guarded);
-          visit(node.right, guarded);
+        case 'binary': {
+          // `@$x.state == cuestate.waiting` holds only with `$x` as well: null equals and orders with nothing but null.
+          const passes = node.operator === 'and' || (comparesValues.has(node.operator) && !isNullLiteral(node.left) && !isNullLiteral(node.right));
+          visit(node.left, guarded, holds && passes);
+          visit(node.right, guarded, holds && passes);
           return;
+        }
         case 'conditional':
           visit(node.condition, guarded);
           visit(node.then, guarded);
@@ -801,7 +834,7 @@ class Collector {
           return;
       }
     };
-    visit(whole, false);
+    visit(whole, false, true);
   }
 
   /** Notes what a definition tells of its variable's type, and the type it names for display. */

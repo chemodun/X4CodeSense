@@ -138,7 +138,8 @@ A few things the game's files do not say are built in:
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
 - A variable has a type only when everything that sets it in the script agrees on one: one set from a property of a variable whose own type is not known, by `do_for_each`, by a library's `return` or by other scripts has none, and neither has a variable of the global table or of a library other scripts fill. The elements of a list have no type.
 - A test of the class does not narrow the type for what follows: in `@player.target.isclass.npc and player.target.race`, `race` is reported, since `player.target` is an `object`, which has no `race`.
-- A variable that is read but never set is not reported where code the check does not follow may set it: `global.$x`, a cue of another script (`md.Script.Cue.$x`), a library the script never names or other scripts include, a variable some script writes into cues it gets as values (`$Cue.$x`), and what a cue reads after it includes a library chosen at run time (`<include_actions ref="$Thread.$NameLib"/>`).
+- A variable that is read but never set is not reported where code the check does not follow may set it: `global.$x`, a cue of another script (`md.Script.Cue.$x`), a library the script never names or other scripts include, a variable some script writes into cues it gets as values (`$Cue.$x`), what a cue reads after it includes a library chosen at run time (`<include_actions ref="$Thread.$NameLib"/>`), what a `<patch>` block for older script versions reads, and what an interrupt library item of an AI script reads, which the scripts that use it set.
+- The parameters and orders a patch adds to an AI script or library are not seen by the checks of calls and their signature help: a call that passes such a parameter is reported.
 - Semantic highlighting needs the game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
 
 ## 🚀 Getting started
@@ -267,6 +268,12 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - In a patch, the message of a property a variable's type lacks named a line of the patched file, not of the patch.
   - `%%d` (a percent sign and a d) was reported as `%d`, and a format with `%d` got a second finding about its arguments. A string holding a text reference, `'{1001, 2}'.[$a]`, is no longer counted as a format without placeholders.
   - The signature help of a format went away right after the `]` of a format in its arguments, and miscounted after an escaped quote (`'it\'s'`).
+  - What a library of another script sets was not followed while it was edited: a script that includes it kept its findings until it was edited itself. Now the scripts that include, instantiate or run a library are checked again once typing pauses in it.
+  - Typing a cue's name, or in a text file, analysed every other open document at once, on each keystroke; they are analysed once typing pauses.
+  - The variables of a library or cue a patch adds were not seen by the scripts that include it or name them as `md.Script.Cue.$x`.
+  - A read under `do_if value="not $x?"`, or beside `$x? or …`, was taken as safe, though the body runs without `$x`.
+  - An extension created or copied into the workspace while VS Code ran was not read until a restart.
+  - A text file edited under a path whose case differs from the one read at the start, as VS Code writes the drive letter, was read twice.
 
 ### [0.8.0] - 2026-10-01
 

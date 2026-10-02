@@ -253,6 +253,31 @@ describe('variable tables of a Mission Director script', () => {
     expect(undefinedReport(analysis)).toEqual(["12:37 Variable '$tested' is never set in cue 'A'"]);
   });
 
+  it('takes no test as safe whose element runs without the variable: under not, or beside or', () => {
+    const analysis = analyze(
+      md([
+        '    <cue name="A">',
+        '      <actions>',
+        '        <do_if value="not $missing?">',
+        '          <set_value name="$a" exact="$missing + 1"/>',
+        '        </do_if>',
+        '        <do_if value="$either? or $other?">',
+        '          <set_value name="$b" exact="$either + 1"/>',
+        '        </do_if>',
+        '        <do_if value="$both? and ($other2? and $other2 gt 0)">',
+        '          <set_value name="$c" exact="$both + $other2"/>',
+        '        </do_if>',
+        '        <do_if value="@$cue.state == 1">',
+        '          <set_value name="$d" exact="$cue"/>',
+        '        </do_if>',
+        '        <set_value name="$e" exact="if $own? then $own + 1 else 0"/>',
+        '      </actions>',
+        '    </cue>',
+      ])
+    );
+    expect(undefinedReport(analysis)).toEqual(["6:39 Variable '$missing' is never set in cue 'A'", "9:39 Variable '$either' is never set in cue 'A'"]);
+  });
+
   it('checks the libraries the script uses by name and leaves the others to their users', () => {
     const analysis = analyze(
       md([
