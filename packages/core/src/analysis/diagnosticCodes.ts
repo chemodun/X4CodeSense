@@ -65,7 +65,9 @@ export const diagnosticDescriptions: Readonly<Record<DiagnosticCode, string>> = 
   'patch-target-missing': 'A patch whose file is not among the game files or the extensions read.',
   'patch-no-match': 'A patch operation whose path selects nothing in the file it changes.',
   'patch-several-matches': 'A patch operation whose path selects more than one node.',
-  'patch-invalid-operation': 'A patch operation the game skips.',
+  'patch-invalid-operation': 'A patch operation the game skips, or whose result the game could not use.',
+  'patch-operation-unsupported':
+    "A patch operation that does what X4CodeSense does not model, such as changing an element's text, so its result is not shown or checked.",
   'library-root-mismatch': "A file in an extension's libraries whose root is neither 'diff' nor the root of the game's file of its name, so the game skips it.",
   'param-unknown': 'A parameter a call passes that the script, library or cue it calls does not declare.',
   'aiscript-undefined': 'An AI script a call names that no known script defines.',

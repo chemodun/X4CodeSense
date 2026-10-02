@@ -99,6 +99,21 @@ describe('parseXPath', () => {
       ['//cue/following-sibling::cue', true, "The axis 'following-sibling::' is not understood by X4CodeSense; the game may accept it"],
       ['//cue | //library', true, "A union with '|' is not understood by X4CodeSense; the game may accept it"],
       ["//cue[@name='a'][. > 1]", true, 'This operator is not understood by X4CodeSense; the game may accept it'],
+      // XPath 1.0 beyond location paths, as mods write it in `sel` and `if`: not understood, never wrong.
+      ['(//cue)[1]', true, 'A parenthesised expression is not understood by X4CodeSense; the game may accept it'],
+      ["//cue[@name='Start'] and //cue[@name='Later']", true, "The operator 'and' is not understood by X4CodeSense; the game may accept it"],
+      ["//cue[@name='Start'] or //cue", true, "The operator 'or' is not understood by X4CodeSense; the game may accept it"],
+      ["//cue/@name = 'Start'", true, "The operator '=' is not understood by X4CodeSense; the game may accept it"],
+      ["//cue/text() != ''", true, "The operator '!=' is not understood by X4CodeSense; the game may accept it"],
+      ['//cue/@name | //library', true, "A union with '|' is not understood by X4CodeSense; the game may accept it"],
+      ['//cue[*]', true, "'*' is not understood by X4CodeSense; the game may accept it"],
+      ['//cue[..]', true, "'..' is not understood by X4CodeSense; the game may accept it"],
+      ['//cue[@*]', true, "'@*' is not understood by X4CodeSense; the game may accept it"],
+      // And what is no XPath at all stays a syntax problem.
+      ['(//cue', false, "Parenthesis '(' is not closed"],
+      ["(//cue[@name='x)", false, "String 'x) is not closed"],
+      ['//cue name', false, "Expected '/' or '[', found 'n'"],
+      ['//cue/@name x', false, 'Nothing can follow an attribute'],
     ];
     for (const [path, unsupported, message] of cases) {
       expect(parseXPath(path).problem, path).toMatchObject({ unsupported, message });
@@ -112,6 +127,12 @@ describe('parseXPath', () => {
     expect(condition.path.steps[0].start).toBe(4);
     expect(conditionHolds(condition, document)).toBe(true);
     expect(conditionHolds(parseXPathCondition("//cue[@name='Start']"), document)).toBe(true);
+  });
+
+  it('reads two not() joined by and as XPath it does not understand, not as one not()', () => {
+    const condition = parseXPathCondition("not(//cue[@name='A']) and not(//cue[@name='B'])");
+    expect(condition.negated).toBe(false);
+    expect(condition.path.problem).toMatchObject({ unsupported: true, message: "'not(' as a step is not understood by X4CodeSense; the game may accept it" });
   });
 });
 
@@ -139,6 +160,17 @@ describe('evaluateXPath', () => {
     expect(select("//comment()[. = ' marker ']")).toEqual(["comment ' marker '"]);
     expect(select('//text/text()')).toEqual(['text of text']);
     expect(select("//cue[@name='Nowhere']")).toEqual([]);
+  });
+
+  it('compares attribute values as the parser gives them: a line break or tab is a space', () => {
+    const tree = documentTree(sourceOf('ws.xml', ['<cues>', '  <cue value="$x', 'and $y"/>', '  <cue value="$t\tand $u"/>', '</cues>'].join('\r\n')));
+    const selected = (path: string): number => evaluateXPath(parseXPath(path), tree).length;
+    // With the index (a child step whose first predicate is `@attr='value'`) and without (`//`).
+    for (const path of ["/cues/cue[@value='$x and $y']", "//cue[@value='$x and $y']", "/cues/cue[@value='$t and $u']", "//cue[contains(@value, 'x and')]"]) {
+      expect(selected(path), path).toBe(1);
+    }
+    // A literal with a line break is an attribute value as well.
+    expect(selected("//cue[@value='$t\nand $u']")).toBe(1);
   });
 
   it('evaluates the first steps of a path on request', () => {

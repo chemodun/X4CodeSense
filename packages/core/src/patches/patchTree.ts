@@ -10,13 +10,13 @@
  * the cases the game refuses, it is skipped and the next one goes on. A library file of the game also
  * gets the merge files of extensions, in the same load order (`mergeFile`).
  */
-import { textOf } from '../xml/miniXPath';
 import { attributeNamed, decodeAttributeValue, type XmlAttribute, type XmlElement, type XmlRegion, type XmlStructure } from '../xml/xmlStructure';
 import {
   conditionHolds,
   evaluateXPath,
   parseXPath,
   parseXPathCondition,
+  parsedAttributeValue,
   type XPath,
   type XPathCondition,
   type XPathNode,
@@ -108,11 +108,12 @@ export class PatchNode implements XPathNode<PatchNode> {
           const childValue = child.attribute(attribute);
           index.valueOf.set(child, childValue);
           if (childValue !== undefined) {
-            const list = index.byValue.get(childValue);
+            const key = parsedAttributeValue(childValue);
+            const list = index.byValue.get(key);
             if (list) {
               list.push(child);
             } else {
-              index.byValue.set(childValue, [child]);
+              index.byValue.set(key, [child]);
             }
           }
         }
@@ -206,8 +207,9 @@ export type PatchOperationKind = 'add' | 'replace' | 'remove';
 
 /**
  * What became of an operation: applied; its path selects nothing or several nodes; skipped because its
- * condition does not hold; invalid (missing `sel`, a wrong `pos`, or a case the game refuses, with the
- * reason); or unknown, when its `sel` or `if` is not understood or a patch before it was not.
+ * condition does not hold; invalid (missing `sel`, a wrong `pos`, or a case the game refuses or whose
+ * result it cannot use, with the reason); or unknown, when its `sel` or `if` is not understood, a patch
+ * before it was not, or it does what X4CodeSense does not model (with the reason).
  */
 export type PatchOperationStatus = 'applied' | 'no-match' | 'several-matches' | 'skipped' | 'invalid' | 'unknown';
 
@@ -225,8 +227,10 @@ export interface PatchOperation {
   selection?: XPathSelection<PatchNode>;
   /** For a path that selects nothing: how many of its first steps still select something. */
   matchingSteps?: number;
-  /** Why the game refuses the operation. */
+  /** Why the operation is invalid, or what X4CodeSense does not model of an unknown one. */
   reason?: string;
+  /** For an invalid operation: true when the game logs the refusal (its patch engine has the message), so it is known to skip it. */
+  refusedByGame?: boolean;
   /** Where inserted nodes went, and the nodes. */
   parent?: PatchNode;
   inserted: PatchNode[];
@@ -234,9 +238,16 @@ export interface PatchOperation {
 
 const positions: ReadonlySet<string> = new Set(['before', 'after', 'prepend']);
 
-/** The text of an operation, as an attribute value: references decoded, whitespace collapsed. */
+/**
+ * The text of an operation, as an attribute value: comments left out, as the game's parser gives the text
+ * without them; references decoded, whitespace collapsed.
+ */
 function operationText(operation: XmlElement, source: PatchSource): string {
-  return textOf(operation, source.text);
+  if (!operation.endTag) {
+    return '';
+  }
+  const inner = source.text.slice(operation.startTagEnd, operation.endTag.start).replace(/<!--[^]*?-->/g, '');
+  return decodeAttributeValue(inner, []).replace(/\s+/g, ' ').trim();
 }
 
 function insert(parent: PatchNode, index: number, nodes: PatchNode[], anchor: PatchNode, deeper: boolean): void {
@@ -336,16 +347,29 @@ export function applyPatch(
     operation.selection = selection;
     const content = builder.nodes(element.children, element.startTagEnd, element.endTag?.start ?? element.end, document);
     const elements = content.filter((node) => node.kind === 'element');
-    const refuse = (reason: string): void => {
+    // `byGame`: the game's patch engine has the message, so it is known to skip the operation; otherwise
+    // the reason tells what the result would be.
+    const refuse = (reason: string, byGame = true): void => {
       operation.status = 'invalid';
       operation.reason = reason;
+      operation.refusedByGame = byGame;
+    };
+    // What the tree does not model: the tree may differ from the game's from here on.
+    const notModelled = (reason: string): void => {
+      operation.status = 'unknown';
+      operation.reason = reason;
+      uncertain = true;
     };
     operation.status = 'applied';
     if (kind === 'add') {
       const type = attributeNamed(element, 'type')?.value.trim();
       if (type !== undefined) {
         const owner = selection.kind === 'node' ? selection.node : selection.owner;
-        if (elements.length > 0 || owner.kind !== 'element' || !type.startsWith('@')) {
+        if (!type.startsWith('@') && elements.length === 0) {
+          notModelled(`Adds the namespace '${type}'`);
+          continue;
+        }
+        if (elements.length > 0 || owner.kind !== 'element') {
           refuse(`Cannot add a node as an attribute '${type}'`);
           continue;
         }
@@ -365,21 +389,33 @@ export function applyPatch(
         continue;
       }
       const target = selection.node;
-      if (pos === 'before' || pos === 'after') {
-        const parent = target.parent;
-        if (!parent || parent.kind === 'document') {
-          refuse('Cannot add a node next to the root element');
-          continue;
-        }
-        insert(parent, parent.children.indexOf(target) + (pos === 'after' ? 1 : 0), content, target, false);
-        operation.parent = parent;
-      } else if (target.kind !== 'element') {
-        refuse('Cannot add a node into a comment');
+      const beside = pos === 'before' || pos === 'after';
+      const parent = beside ? target.parent : target;
+      if (!parent) {
+        refuse('Adds a node next to the document itself, which has no siblings', false);
         continue;
-      } else {
-        insert(target, pos === 'prepend' ? 0 : target.children.length, content, target, true);
-        operation.parent = target;
       }
+      if (parent.kind === 'document') {
+        if (elements.length > 0) {
+          refuse('Adds an element next to the root element: the file would have more than one root', false);
+        } else {
+          notModelled('Adds a node outside the root element');
+        }
+        continue;
+      }
+      if (parent.kind === 'comment') {
+        refuse('Adds a node into a comment, which holds no nodes', false);
+        continue;
+      }
+      if (content.length === 0 && operationText(element, patch) !== '') {
+        // Where it lands, the text is still checked (`text-not-allowed`); the tree has no text to add it to.
+        operation.parent = parent;
+        notModelled('Adds text alone');
+        continue;
+      }
+      const index = beside ? parent.children.indexOf(target) + (pos === 'after' ? 1 : 0) : pos === 'prepend' ? 0 : parent.children.length;
+      insert(parent, index, content, target, !beside);
+      operation.parent = parent;
       operation.inserted = content;
     } else if (kind === 'replace') {
       if (selection.kind !== 'node') {
@@ -387,12 +423,14 @@ export function applyPatch(
           refuse('Cannot replace an attribute or a text with a node');
           continue;
         }
-        if (selection.kind === 'attribute') {
-          const attribute = selection.owner.attributes.find((candidate) => candidate.name === selection.name);
-          if (attribute) {
-            attribute.value = operationText(element, patch);
-            attribute.setBy = { operation: element, source: patch };
-          }
+        if (selection.kind === 'text') {
+          notModelled('Changes the text of an element');
+          continue;
+        }
+        const attribute = selection.owner.attributes.find((candidate) => candidate.name === selection.name);
+        if (attribute) {
+          attribute.value = operationText(element, patch);
+          attribute.setBy = { operation: element, source: patch };
         }
         selection.owner.markChanged();
         continue;
@@ -401,6 +439,10 @@ export function applyPatch(
       const parent = target.parent;
       if (!parent || (target.kind === 'element' && parent.kind === 'document')) {
         refuse('Cannot replace the root element');
+        continue;
+      }
+      if (parent.kind === 'document' && elements.length > 0) {
+        refuse('Replaces a node outside the root element with an element: the file would have more than one root', false);
         continue;
       }
       // diff.xsd allows one element, the game takes several: its own DLC patches replace nodes with several.
@@ -419,10 +461,12 @@ export function applyPatch(
         const index = owner.attributes.findIndex((attribute) => attribute.name === selection.name);
         owner.attributes.splice(index, 1);
         owner.markChanged();
-      } else if (selection.kind === 'node') {
+      } else if (selection.kind === 'text') {
+        notModelled('Removes the text of an element');
+      } else {
         const parent = selection.node.parent;
         if (!parent || (selection.node.kind === 'element' && parent.kind === 'document')) {
-          refuse('Cannot remove the root element');
+          refuse('Removes the root element: the file would have none', false);
           continue;
         }
         parent.children.splice(parent.children.indexOf(selection.node), 1);

@@ -162,7 +162,7 @@ class Reader {
 }
 
 /** Where the bracket opened at `start` closes, skipping strings; else where an unclosed string starts, or nothing. */
-function closingBracket(text: string, start: number): { close: number } | { unclosedString?: number } {
+function closingBracket(text: string, start: number, open = '[', closing = ']'): { close: number } | { unclosedString?: number } {
   let depth = 0;
   for (let index = start; index < text.length; index++) {
     const character = text[index];
@@ -172,9 +172,9 @@ function closingBracket(text: string, start: number): { close: number } | { uncl
         return { unclosedString: index };
       }
       index = close;
-    } else if (character === '[') {
+    } else if (character === open) {
       depth++;
-    } else if (character === ']') {
+    } else if (character === closing) {
       depth--;
       if (depth === 0) {
         return { close: index };
@@ -191,6 +191,9 @@ function subject(reader: Reader): XPathSubject | undefined {
     reader.position++;
     const name = reader.name();
     if (!name) {
+      if (reader.startsWith('*')) {
+        reader.unsupported("'@*'", start, reader.position + 1);
+      }
       reader.fail("Expected an attribute name after '@'");
     }
     return { kind: 'attribute', name: name.name, start, end: name.end };
@@ -283,6 +286,10 @@ function primary(reader: Reader): XPathPredicate {
     if (literal) {
       reader.unsupported('A string before the comparison', start);
     }
+    // `[*]`, `[..]`, `[/a]`, `[$v]`, `[-1]`: XPath, beyond the subset.
+    if (/^[*./$-]/.test(reader.peek())) {
+      reader.unsupported(`'${reader.text.slice(start).trim()}'`, start, reader.text.length);
+    }
     reader.fail('Expected a condition', start);
   }
   const operator = comparison(reader);
@@ -368,6 +375,18 @@ function test(reader: Reader): XPathTest {
   if (reader.startsWith('..') || reader.startsWith('.')) {
     reader.unsupported(`'${reader.startsWith('..') ? '..' : '.'}' as a step`, start, start + (reader.startsWith('..') ? 2 : 1));
   }
+  if (reader.startsWith('(')) {
+    // `(//move_to)[1]`: a filter expression, which mods write to pick one of several matches.
+    const bracket = closingBracket(reader.text, start, '(', ')');
+    if (!('close' in bracket)) {
+      const quoted = bracket.unclosedString;
+      if (quoted !== undefined) {
+        reader.fail(`String ${reader.text.slice(quoted, quoted + 21)} is not closed`, quoted, reader.text.length);
+      }
+      reader.fail("Parenthesis '(' is not closed", start, reader.text.length);
+    }
+    reader.unsupported('A parenthesised expression', start, reader.text.length);
+  }
   const name = reader.name();
   if (!name) {
     reader.fail(reader.done ? 'Expected a name at the end of the path' : `Expected a name, found '${reader.peek()}'`, start);
@@ -385,6 +404,21 @@ function test(reader: Reader): XPathTest {
     return { kind, start, end: reader.position };
   }
   return { kind: 'element', name: name.name, start, end: name.end };
+}
+
+/**
+ * After a step: an XPath operator makes the path part of an expression beyond the subset, such as
+ * `//a and //b` in `if` or `@name = 'x'`, which is not understood rather than wrong.
+ */
+function rejectOperator(reader: Reader): void {
+  reader.skipSpaces();
+  const operator = /^(?:!=|<=|>=|=|<|>|\||\+|-|\*|(?:and|or|div|mod)(?![\w:-]))/.exec(reader.text.slice(reader.position))?.[0];
+  if (operator === '|') {
+    reader.unsupported("A union with '|'", reader.position);
+  }
+  if (operator !== undefined) {
+    reader.unsupported(`The operator '${operator}'`, reader.position, reader.position + operator.length);
+  }
 }
 
 /** Reads a location path; a problem stops the reading and keeps the steps before it. */
@@ -406,9 +440,7 @@ export function parseXPath(text: string): XPath {
       } else if (reader.startsWith('/')) {
         reader.position += 1;
       } else if (steps.length > 0) {
-        if (reader.startsWith('|')) {
-          reader.unsupported("A union with '|'", reader.position);
-        }
+        rejectOperator(reader);
         reader.fail(`Expected '/' or '[', found '${reader.peek()}'`);
       }
       if (reader.done && steps.length === 0 && !descendants) {
@@ -434,6 +466,7 @@ export function parseXPath(text: string): XPath {
       }
       if (stepTest.kind === 'attribute' || stepTest.kind === 'text') {
         if (!reader.done) {
+          rejectOperator(reader);
           reader.fail(`Nothing can follow ${stepTest.kind === 'attribute' ? 'an attribute' : 'text()'}`);
         }
       }
@@ -450,7 +483,9 @@ export function parseXPath(text: string): XPath {
 /** Reads the condition of `if`: a path, or `not(path)`. */
 export function parseXPathCondition(text: string): XPathCondition {
   const negated = /^(\s*not\s*\()([^]*)\)\s*$/.exec(text);
-  if (!negated) {
+  // `not(//a) and not(//b)` is no `not(...)` of one path: its parenthesis closes before the end.
+  const bracket = negated ? closingBracket(text, negated[1].length - 1, '(', ')') : undefined;
+  if (!negated || !bracket || !('close' in bracket) || bracket.close !== negated[1].length + negated[2].length) {
     return { negated: false, path: parseXPath(text) };
   }
   const offset = negated[1].length;
@@ -493,8 +528,9 @@ export interface XPathNode<N extends XPathNode<N>> {
   /** The text an element holds, a comment's text. */
   stringValue(): string;
   /**
-   * The child elements of a name whose attribute has a value, in document order: a node that keeps an
-   * index answers a step such as `ware[@id='energycells']` without looking at every `ware`.
+   * The child elements of a name whose attribute has a value (as the parser gives it, see
+   * `parsedAttributeValue`), in document order: a node that keeps an index answers a step such as
+   * `ware[@id='energycells']` without looking at every `ware`.
    */
   childrenWith?(name: string, attribute: string, value: string): readonly N[];
 }
@@ -502,19 +538,27 @@ export interface XPathNode<N extends XPathNode<N>> {
 /** What a path selects: a node, an attribute of an element, or the text of an element. */
 export type XPathSelection<N> = { kind: 'node'; node: N } | { kind: 'attribute'; owner: N; name: string } | { kind: 'text'; owner: N };
 
+/**
+ * An attribute value as the game's XML parser gives it: each line break and tab written in it is a space
+ * (XML 1.0, 3.3.3). Paths compare values so; their literals are in an attribute too, `sel` or `if`.
+ */
+export function parsedAttributeValue(value: string): string {
+  return value.replace(/\r\n?|[\n\t]/g, ' ');
+}
+
 function valuesOf<N extends XPathNode<N>>(subject: XPathSubject, selection: XPathSelection<N>): string[] {
   if (selection.kind !== 'node') {
     if (subject.kind !== 'self') {
       return [];
     }
     const value = selection.kind === 'attribute' ? selection.owner.attribute(selection.name) : selection.owner.stringValue();
-    return value === undefined ? [] : [value];
+    return value === undefined ? [] : [selection.kind === 'attribute' ? parsedAttributeValue(value) : value];
   }
   const node = selection.node;
   switch (subject.kind) {
     case 'attribute': {
       const value = node.attribute(subject.name);
-      return value === undefined ? [] : [value];
+      return value === undefined ? [] : [parsedAttributeValue(value)];
     }
     case 'child':
       return node.children.filter((child) => child.kind === 'element' && child.name === subject.name).map((child) => child.stringValue());
@@ -529,13 +573,15 @@ function holds<N extends XPathNode<N>>(predicate: XPathPredicate, selection: XPa
       return position === (predicate.position === 'last' ? size : predicate.position);
     case 'compare': {
       const values = valuesOf(predicate.subject, selection);
-      return values.some((value) => (predicate.operator === '=' ? value === predicate.value.value : value !== predicate.value.value));
+      const literal = parsedAttributeValue(predicate.value.value);
+      return values.some((value) => (predicate.operator === '=' ? value === literal : value !== literal));
     }
     case 'exists':
       return valuesOf(predicate.subject, selection).length > 0;
     case 'function': {
       const value = valuesOf(predicate.subject, selection)[0] ?? '';
-      return predicate.name === 'contains' ? value.includes(predicate.value.value) : value.startsWith(predicate.value.value);
+      const literal = parsedAttributeValue(predicate.value.value);
+      return predicate.name === 'contains' ? value.includes(literal) : value.startsWith(literal);
     }
     case 'not':
       return !holds(predicate.operand, selection, position, size);
@@ -584,7 +630,7 @@ function indexedLookup(step: XPathStep): { name: string; attribute: string; valu
   if (step.descendants || test.kind !== 'element' || first?.kind !== 'compare' || first.operator !== '=' || first.subject.kind !== 'attribute') {
     return undefined;
   }
-  return { name: test.name, attribute: first.subject.name, value: first.value.value };
+  return { name: test.name, attribute: first.subject.name, value: parsedAttributeValue(first.value.value) };
 }
 
 /**

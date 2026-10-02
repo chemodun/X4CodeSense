@@ -6,6 +6,7 @@ import type { Range } from 'vscode-languageserver-types';
 import {
   afterEarlier,
   analyzeText,
+  applyPatch,
   attributeNamed,
   comparePatch,
   completionAt,
@@ -184,6 +185,53 @@ describe('patch analysis', () => {
     expect(report(nested)).toEqual([]);
     expect(nested.patch?.target.file).toBe(api);
     expect(nested.patch?.operations.map((operation) => operation.status)).toEqual(['applied']);
+  });
+
+  it('reads silent as a boolean, leaves comments out of a value, and says what is known of what the game does', () => {
+    const analysis = analyzeFile(
+      latePatch,
+      [
+        '<diff>',
+        `  <remove sel="//cue[@name='Nope']" silent="1"/>`,
+        `  <add sel="//cue[@name='Later']" type="@instantiate"><!-- each time -->true</add>`,
+        '  <add sel="/"><cue name="Second"/></add>',
+        '  <remove sel="/mdscript"/>',
+        '  <add sel="/mdscript" pos="after"><!-- after the root --></add>',
+        '  <add sel="/mdscript" type="namespace::x"/>',
+        '</diff>',
+      ].join('\n')
+    );
+    expect(report(analysis)).toEqual([
+      "2 3 patch-no-match: No matching node in md/setup.xml after 1 earlier patch: 'cue[@name='Nope']' selects nothing (silent)",
+      '4 1 patch-invalid-operation: Adds an element next to the root element: the file would have more than one root',
+      '5 1 patch-invalid-operation: Removes the root element: the file would have none',
+      '6 3 patch-operation-unsupported: Adds a node outside the root element: X4CodeSense does not model this, so the comparison does not show it',
+      "7 3 patch-operation-unsupported: Adds the namespace 'namespace::x': X4CodeSense does not model this, so the comparison does not show it",
+    ]);
+    // The comment is no part of the value, as the game's parser gives the text.
+    const later = analysis.patch?.document ? evaluateXPath(parseXPath("//cue[@name='Later']"), analysis.patch.document) : [];
+    expect(later.map((selection) => (selection.kind === 'node' ? selection.node.attribute('instantiate') : undefined))).toEqual(['true']);
+  });
+
+  it('does not model text: an operation that changes only text is unknown, not applied', () => {
+    const target = ['<root>', '  <shadows>true</shadows>', '  <fullscreen>false</fullscreen>', '  <item/>', '</root>'].join('\n');
+    const patch = [
+      '<diff>',
+      '  <replace sel="/root/shadows/text()">false</replace>',
+      '  <remove sel="/root/fullscreen/text()"/>',
+      '  <add sel="/root/item">text alone</add>',
+      '</diff>',
+    ].join('\n');
+    const operations = applyPatch(documentTree({ file: 'conf.xml', text: target, structure: parseXml(target) }), {
+      file: 'patch.xml',
+      text: patch,
+      structure: parseXml(patch),
+    });
+    expect(operations.map((operation) => `${operation.kind} ${operation.status}: ${operation.reason ?? ''}`)).toEqual([
+      'replace unknown: Changes the text of an element',
+      'remove unknown: Removes the text of an element',
+      'add unknown: Adds text alone',
+    ]);
   });
 
   it('follows the editor text of the target', () => {

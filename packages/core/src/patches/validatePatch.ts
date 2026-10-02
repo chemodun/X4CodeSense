@@ -7,8 +7,10 @@
  * - `sel` and `if` that cannot be XPath (`patch-path-syntax`, error), or that X4CodeSense does not
  *   understand (`patch-path-unsupported`, information).
  * - With the index: a patch with nothing to patch (`patch-target-missing`), and per operation a path that
- *   selects nothing (`patch-no-match`, error, information with `silent="true"`) or several nodes
- *   (`patch-several-matches`), and what the game refuses to do (`patch-invalid-operation`).
+ *   selects nothing (`patch-no-match`, error, information with `silent="true"` or `"1"`) or several nodes
+ *   (`patch-several-matches`), what the game refuses to do or could not use (`patch-invalid-operation`),
+ *   and what X4CodeSense does not model, such as changing an element's text (`patch-operation-unsupported`,
+ *   information).
  * - With the index and the schemas: text an `add` or `replace` holds beside the elements it brings in,
  *   which goes into an element of the script that allows none (`text-not-allowed`, warning). Text inside
  *   what it brings in is checked where it lands in the script.
@@ -36,6 +38,7 @@ export type PatchDiagnosticCode =
   | 'patch-no-match'
   | 'patch-several-matches'
   | 'patch-invalid-operation'
+  | 'patch-operation-unsupported'
   | 'library-root-mismatch';
 
 export interface PatchValidation {
@@ -171,7 +174,8 @@ export function validatePatch(document: TextDocument, structure: XmlStructure, o
     if (operation.status === 'no-match' && sel && pathOf) {
       const step = pathOf.steps[operation.matchingSteps ?? 0] ?? pathOf.steps[pathOf.steps.length - 1];
       const range = step ? rangeInValue(sel, step.start, step.end) : { start: sel.valueStart, end: sel.valueEnd };
-      const silent = attributeNamed(operation.element, 'silent')?.value === 'true';
+      // `xs:boolean`: the game's own DLC patches write `silent="1"`.
+      const silent = /^\s*(true|1)\s*$/.test(attributeNamed(operation.element, 'silent')?.value ?? '');
       report(
         'patch-no-match',
         `No matching node in ${target.name}${earlier}: '${shown(pathOf.text.slice(step?.start ?? 0, step?.end ?? pathOf.text.length).replace(/^\/+/, ''))}' selects nothing${silent ? ' (silent)' : ''}`,
@@ -187,14 +191,28 @@ export function validatePatch(document: TextDocument, structure: XmlStructure, o
         sel.valueEnd
       );
     } else if (operation.status === 'invalid' && operation.reason !== undefined) {
-      report('patch-invalid-operation', `${operation.reason}: the game skips this operation`, operation.element.nameStart, operation.element.nameEnd);
+      report(
+        'patch-invalid-operation',
+        operation.refusedByGame ? `${operation.reason}: the game skips this operation` : operation.reason,
+        operation.element.nameStart,
+        operation.element.nameEnd
+      );
+    } else if (operation.status === 'unknown' && operation.reason !== undefined) {
+      report(
+        'patch-operation-unsupported',
+        `${operation.reason}: X4CodeSense does not model this, so the comparison does not show it`,
+        operation.element.nameStart,
+        operation.element.nameEnd,
+        DiagnosticSeverity.Information
+      );
     }
   }
-  // An operation that brings in nodes puts its text among them; one that sets a value has no parent.
+  // An operation that brings in nodes puts its text among them; one that sets a value has no parent. Text
+  // added alone is not modelled, but where it lands is known.
   const schema = options.schemas && targetSchema(patch, options.schemas);
   const text = patch.source.text;
   for (const operation of schema ? patch.operations : []) {
-    const parent = operation.status === 'applied' ? operation.parent : undefined;
+    const parent = operation.status === 'applied' || operation.status === 'unknown' ? operation.parent : undefined;
     const declaration = parent && schema && declarationOf(parent, schema);
     if (!parent || !declaration || declaration.allowsText) {
       continue;
