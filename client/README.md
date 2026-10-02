@@ -10,7 +10,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 
 ### Checks as you type
 
-- XML well-formedness: unclosed tags, missing or unquoted attribute values, missing end tags, repeated attributes.
+- XML well-formedness, as the game's parser sees it: unclosed tags, missing or unquoted attribute values, missing end tags, repeated attributes, attributes without whitespace between them, an `&` that starts no reference or an entity XML does not know (`&nbsp;`), `--` inside a comment, a `<` that starts no tag, text outside the root element, an XML declaration that is not at the very start.
 - Validation against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes, invalid attribute values. Text inside an element, which the schemas allow nowhere in scripts, is a warning: a stray `>`, an attribute typed after its tag was closed.
 - Expressions, parsed as the game parses them: syntax errors, `@` combined with `?`, text references that are not `{page, id}` literals, `%d` in format strings.
 - Formats, `'%s of %s'.[$a, $b]` and `{page, id}.[…]`: fewer arguments than the placeholders take is a warning; arguments no placeholder takes, which are not shown, are reported as information.
@@ -241,6 +241,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - The files of `libraries` are in the workspace's problems and in the checks of x4-script-check.
   - Rename and find all references of a variable, a label or another name also cover the paths of patches that pick an element by a value holding it, such as `set_value[@name='$count']` or `do_if[@value='$count gt 0']`: a rename no longer leaves such a path selecting nothing, and is refused when the path is outside the workspace.
   - Text inside an element that the schema allows to hold only elements, or nothing, is reported as a warning (`text-not-allowed`): a stray `>` after a start tag, an attribute typed after its tag was closed. In a patch, also text in `<diff>` and `remove`, and text an `add` or `replace` puts into a script's element.
+  - Well-formedness problems for which the game's parser refuses a file: attributes without whitespace between them, an `&` that starts no reference or names an entity XML does not define, a character reference to no character (`&#0;`), `--` inside a comment, a `<` that starts no tag, text outside the root element, an XML declaration that is not at the very start. The game's files and the mods have none.
   - Variables have a type when everything that sets them agrees on one: completion after `$ship.` offers that type's properties, hover and go to definition of `$ship.name` name its property, and hover over `$ship` tells the type and what tells it. What actions write is guessed from their names and documentation where the schema does not state it (`create_ship` a ship), and marked "(guessed)"; `x4CodeSense.guessVariableTypes` turns the guessing off, `--no-type-guesses` in x4-script-check.
   - A property a variable's type does not have is reported, as for `player.ship`: a warning where the script states the type, information (`expression-unknown-property-guessed`) where it is guessed, worded as the guess it rests on. On the game's own scripts, six, in four files; none in the DLCs.
 - Changed
@@ -256,6 +257,10 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - XPath in a patch that the game evaluates but X4CodeSense does not, such as `(//move_to)[1]`, `//a and //b` in `if` or `@name = 'x'`, was reported as an error; it is information now, as other XPath not understood.
   - `silent="1"`, as the DLCs' patches write it, was not taken as silent.
   - A path comparing an attribute's value now takes a line break or tab in it as a space, as the game's parser does; and a comment in the text of an operation that sets a value is no longer part of the value.
+  - A script whose root start tag lost its `>` lost every check and feature; it keeps them now, with the unclosed tag reported.
+  - In a file that starts with a byte order mark, columns on its first line were one too far in x4-script-check, in the problems of files checked from disk, and where go to definition or rename from another file leads.
+  - `</` typed for an end tag gave two errors about an empty name, and a value whose quote was just opened was reported as invalid.
+  - A value of type `xs:positiveInteger`, such as `sinceversion` of `patch`, could be 0.
 
 ### [0.8.0] - 2026-10-01
 

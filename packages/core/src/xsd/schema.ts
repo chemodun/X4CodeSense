@@ -25,7 +25,7 @@ export interface XsdProblem {
   message: string;
 }
 
-export type XsdBuiltin = 'string' | 'integer' | 'nonNegativeInteger' | 'float' | 'boolean' | 'other';
+export type XsdBuiltin = 'string' | 'integer' | 'nonNegativeInteger' | 'positiveInteger' | 'float' | 'boolean' | 'other';
 
 export interface XsdEnumeration {
   value: string;
@@ -88,7 +88,7 @@ const builtinByName: Record<string, XsdBuiltin> = {
   int: 'integer',
   long: 'integer',
   short: 'integer',
-  positiveInteger: 'nonNegativeInteger',
+  positiveInteger: 'positiveInteger',
   nonNegativeInteger: 'nonNegativeInteger',
   unsignedInt: 'nonNegativeInteger',
   float: 'float',
@@ -185,6 +185,7 @@ function patternSource(pattern: string): string {
 
 const integerPattern = /^[+-]?\d+$/;
 const nonNegativeIntegerPattern = /^\+?\d+$/;
+const positiveIntegerPattern = /^\+?0*[1-9]\d*$/;
 const floatPattern = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 const booleanPattern = /^(true|false|1|0)$/;
 
@@ -194,6 +195,8 @@ function acceptsBuiltin(builtin: XsdBuiltin, value: string): boolean {
       return integerPattern.test(value);
     case 'nonNegativeInteger':
       return nonNegativeIntegerPattern.test(value);
+    case 'positiveInteger':
+      return positiveIntegerPattern.test(value);
     case 'float':
       return floatPattern.test(value);
     case 'boolean':

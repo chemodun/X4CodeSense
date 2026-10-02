@@ -34,12 +34,13 @@ const schemaLocationAttribute = 'xsi:nonamespaceschemalocation';
 /**
  * Reads the first start tag of an XML text without scanning the rest.
  * Tolerant of a BOM, a prolog, comments and processing instructions before the root.
- * Returns nothing while the start tag is still being typed, so a document does not change its kind
- * before the tag is complete.
+ * Returns nothing while the start tag of a new file is still being typed, so a document does not change
+ * its kind before the tag is complete; a root start tag without its `>` before the rest of a file, which
+ * its end tag closes, still counts (the scanner keeps it open), so the file stays what it is.
  */
 function firstStartTag(text: string): XmlElement | undefined {
   const root = parseXml(text, { stopAfterFirstStartTag: true }).elements[0];
-  return root?.startTagClosed ? root : undefined;
+  return root && (root.startTagClosed || !root.selfClosing) ? root : undefined;
 }
 
 /** Root element of a patch document. */

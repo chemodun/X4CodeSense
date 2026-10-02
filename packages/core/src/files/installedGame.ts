@@ -9,7 +9,7 @@
  */
 import * as path from 'node:path';
 import { Catalogs, extensionCatalogs, gameCatalogs, type CatalogProblem } from 'x4-catalog';
-import { diskFiles, subfolderNames, type FileSource, type FolderEntry } from './fileSource';
+import { diskFiles, subfolderNames, withoutByteOrderMark, type FileSource, type FolderEntry } from './fileSource';
 
 /** The folders of the game the analysis reads; the catalogs keep only their files (they list over 460,000). */
 const readFolders = /^(md|aiscripts|libraries|t)\//i;
@@ -110,7 +110,7 @@ class CatalogGame implements InstalledGame {
     if (at && at.inner !== '') {
       const text = at.catalogs.readText(at.inner);
       if (text !== undefined) {
-        return text;
+        return withoutByteOrderMark(text);
       }
       if (this.onlyCatalogs(at)) {
         throw new Error(`${file}: not in the game's catalogs`);

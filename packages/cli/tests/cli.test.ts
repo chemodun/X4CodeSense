@@ -440,6 +440,20 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     });
   });
 
+  it('counts the columns of a file with a byte order mark as an editor does, and keeps the mark when fixing', async () => {
+    const marked = path.join(extension, 'md', 'Marked.xml');
+    const text = '﻿<mdscript name=Marked bogus="1">\n  <cues/>\n</mdscript>\n';
+    await withFile(marked, text, async () => {
+      const result = await run('--unpacked', unpacked, '--fix', extension);
+      expect(lines(result)).toEqual([
+        `${marked}:1:16: fixed: Put the value in quotes [unquoted-attribute-value]`,
+        `${marked}:1:25: error: Unknown attribute 'bogus' in 'mdscript' [unknown-attribute]`,
+        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 1 finding(s) (1 error(s)); 1 fix(es) applied to 1 file(s)',
+      ]);
+      expect(readFileSync(marked, 'utf8')).toBe(text.replace('name=Marked', 'name="Marked"'));
+    });
+  });
+
   it('fixes every file before checking any, so a fixed definition counts in the files before it', async () => {
     const caller = path.join(extension, 'md', 'A_Caller.xml');
     const callee = path.join(extension, 'md', 'B_Callee.xml');

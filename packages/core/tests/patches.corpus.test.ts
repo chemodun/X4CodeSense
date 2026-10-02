@@ -19,6 +19,7 @@ import {
   analyzeText,
   attributeNamed,
   comparePatch,
+  diskFiles,
   hoverAt,
   loadGameData,
   newProblems,
@@ -314,10 +315,10 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
         continue;
       }
       compared++;
-      // Without earlier patches, the target as its file has it, to the byte order mark and the line breaks.
+      // Without earlier patches, the target as an editor has its file: to the line breaks, without the byte order mark.
       if (patch.earlier.length === 0) {
         asFiled++;
-        if (comparison.before !== readFileSync(patch.target.file, 'utf8')) {
+        if (comparison.before !== diskFiles.readText(patch.target.file)) {
           wrong.push(`${where}: before is not the file`);
         }
       }

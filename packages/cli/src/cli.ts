@@ -321,6 +321,9 @@ function checkFolder(scriptFolder: ScriptFolder, context: AnalysisContext, game:
 /** Fix all leaves out a fix whose edits touch an earlier one's; the next round takes it. */
 const fixRounds = 10;
 
+/** The UTF-8 byte order mark. */
+const byteOrderMark = Buffer.from([0xef, 0xbb, 0xbf]);
+
 /**
  * Applies the preferred fixes of a file as the editor's fix all does, round after round until none is
  * left, and writes the file when it changed; the index learns the new text, so the files checked after
@@ -357,7 +360,9 @@ async function fixFile(file: string, context: AnalysisContext, game: GameData | 
     text = fixed;
   }
   if (text !== original) {
-    await writeFile(file, text, 'utf8');
+    // The text was read without the byte order mark the file may start with; the file keeps it.
+    const mark = readFileSync(file).subarray(0, 3).equals(byteOrderMark) ? '﻿' : '';
+    await writeFile(file, mark + text, 'utf8');
     const source = game?.index?.sourceOf(file);
     if (source !== undefined) {
       game?.index?.setText(file, text, source);

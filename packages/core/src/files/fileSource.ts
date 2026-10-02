@@ -13,7 +13,10 @@ export interface FolderEntry {
 }
 
 export interface FileSource {
-  /** Reads a file as UTF-8; throws when it cannot be read, as `readFileSync` does. */
+  /**
+   * Reads a file as UTF-8 without a byte order mark, as an editor gives its text, so positions agree with
+   * the editor's; throws when it cannot be read, as `readFileSync` does.
+   */
   readText(file: string): string;
   /** Whether a file or folder is there. */
   exists(file: string): boolean;
@@ -39,9 +42,14 @@ function isDirectoryOnDisk(file: string): boolean {
   }
 }
 
+/** A text without the byte order mark it may start with. */
+export function withoutByteOrderMark(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 /** The files on the disk. */
 export const diskFiles: FileSource = {
-  readText: (file) => readFileSync(file, 'utf8'),
+  readText: (file) => withoutByteOrderMark(readFileSync(file, 'utf8')),
   exists: (file) => existsSync(file),
   isDirectory: isDirectoryOnDisk,
   list: (folder) => {

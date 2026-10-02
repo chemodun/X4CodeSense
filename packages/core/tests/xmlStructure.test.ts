@@ -142,9 +142,53 @@ describe('parseXml on well formed input', () => {
   });
 
   it('reads a root without children and content between tags', () => {
-    const structure = parseXml('<a>\n  some text & more\n</a>');
+    const structure = parseXml('<a>\n  some text &amp; more &#x41;&#10;\n</a>');
     expect(names(structure)).toEqual(['a']);
     expect(structure.problems).toEqual([]);
+  });
+});
+
+describe("what the game's parser refuses and the structure survives", () => {
+  const found = (text: string): string[] => parseXml(text).problems.map((problem) => `${problem.code} ${text.slice(problem.start, problem.end)}`);
+
+  it('reports attributes without whitespace between them', () => {
+    expect(found('<a name="$x"exact="1" y="2"/>')).toEqual(['missing-attribute-space exact']);
+    expect(parseXml('<a name="$x"exact="1"/>').elements[0].attributes.map((attribute) => attribute.name)).toEqual(['name', 'exact']);
+  });
+
+  it('reports an & that starts no reference, an undefined entity and a character reference to no character', () => {
+    expect(found('<a comment="a & b" text="a &nbsp; b">x & y &#0; &#xD800; &amp; &#65;</a>')).toEqual([
+      'invalid-reference &',
+      'invalid-reference &nbsp;',
+      'invalid-reference &',
+      'invalid-reference &#0;',
+      'invalid-reference &#xD800;',
+    ]);
+    // `&#X41;` is no reference: XML writes the x of a hexadecimal one in lower case.
+    expect(found('<a x="&#X41;"/>')).toEqual(['invalid-reference &']);
+    // A document type that declares entities makes them known.
+    expect(found('<!DOCTYPE a [ <!ENTITY nbsp "&#160;"> ]>\n<a x="&nbsp;"/>')).toEqual([]);
+  });
+
+  it("reports '--' inside a comment, also right before its end", () => {
+    expect(found('<a><!-- a -- b --></a>')).toEqual(['invalid-comment --']);
+    expect(found('<a><!-- a ---></a>')).toEqual(['invalid-comment --']);
+    expect(found('<a><!----><!-- - --></a>')).toEqual([]);
+  });
+
+  it("reports a '<' that starts no tag", () => {
+    expect(found('<a> 1 < 2 <1abc/></a>')).toEqual(['unescaped-less-than <', 'unescaped-less-than <']);
+  });
+
+  it('reports text outside the root element, but not a byte order mark', () => {
+    expect(found('﻿<?xml version="1.0"?>\n<a/>\n')).toEqual([]);
+    expect(found('before <a/> after\n')).toEqual(['text-outside-root before', 'text-outside-root after']);
+  });
+
+  it('reports an XML declaration that is not at the very start', () => {
+    expect(found('\n<?xml version="1.0"?>\n<a/>')).toEqual(['misplaced-xml-declaration <?xml']);
+    expect(found('<a/>\n<?xml version="1.0"?>')).toEqual(['misplaced-xml-declaration <?xml']);
+    expect(found('<?xml-stylesheet href="a"?>\n<a/>')).toEqual([]);
   });
 });
 
@@ -315,10 +359,30 @@ describe('parseXml on broken input', () => {
     expect(structure.elements[0].selfClosing).toBe(true);
   });
 
-  it('ignores a < that does not start markup', () => {
+  it('reports a < that does not start markup, and keeps the element', () => {
     const structure = parseXml('<a> 1 < 2 </a>');
     expect(names(structure)).toEqual(['a']);
-    expect(structure.problems).toEqual([]);
+    expect(codes(structure)).toEqual(['unescaped-less-than']);
+  });
+
+  it('keeps a root open whose start tag lost its >, when its end tag closes the text', () => {
+    const text = '<?xml version="1.0"?>\n<mdscript name="Lost"\n  <cues>\n    <cue name="A"/>\n  </cues>\n</mdscript>\n';
+    const structure = parseXml(text);
+    expect(codes(structure)).toEqual(['unclosed-start-tag']);
+    const [root, cues] = structure.elements;
+    expect(structure.roots).toEqual([root]);
+    expect(root.selfClosing).toBe(false);
+    expect(cues.parent).toBe(root);
+    expect(root.endTag).toBeDefined();
+    // Without the end tag, as while a new file's root is typed, it stays an empty element.
+    expect(parseXml('<mdscript name="New"\n<cues/>').elements[0].selfClosing).toBe(true);
+    // Another element's start tag is cut as ever.
+    expect(parseXml('<a>\n  <b x="1"\n  <c/>\n</a>').elements[1].selfClosing).toBe(true);
+  });
+
+  it('reports an end tag without a name once', () => {
+    expect(parseXml('<a></\n</a>').problems.map((problem) => [problem.code, problem.message])).toEqual([['unclosed-end-tag', 'End tag has no name']]);
+    expect(parseXml('<a></></a>').problems.map((problem) => [problem.code, problem.message])).toEqual([['unexpected-end-tag', 'End tag has no name']]);
   });
 
   it('never throws on fragments', () => {

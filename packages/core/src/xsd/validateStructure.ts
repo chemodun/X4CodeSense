@@ -181,7 +181,9 @@ class Validator {
   }
 
   private validateValue(element: XmlElement, attribute: XmlAttribute, declared: XsdAttribute): void {
-    if (attribute.quote === '' || this.options.checkedElsewhere?.(declared) || acceptsValue(declared.type, attribute.value)) {
+    // A value whose quote was just opened is being typed: the unclosed value is reported already.
+    const typing = !attribute.closed && attribute.value === '';
+    if (attribute.quote === '' || typing || this.options.checkedElsewhere?.(declared) || acceptsValue(declared.type, attribute.value)) {
       return;
     }
     const shown = attribute.value.length > 40 ? `${attribute.value.slice(0, 37)}...` : attribute.value;

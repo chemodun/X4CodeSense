@@ -212,6 +212,11 @@ describe('simple types', () => {
     expect(md.simpleType('nope')).toBeUndefined();
   });
 
+  it('tells a positive integer from zero', () => {
+    const positive: XsdSimpleType = { variety: 'atomic', builtin: 'positiveInteger', enumerations: [], patterns: [], members: [] };
+    expect(['1', '+7', '007', '0', '00', '-1', ''].map((value) => acceptsValue(positive, value))).toEqual([true, true, true, false, false, false, false]);
+  });
+
   it('treats several patterns of one restriction as alternatives', () => {
     const lvalue = findShip.attributes.get('name')?.type;
     expect(lvalue).toBeDefined();
@@ -259,6 +264,20 @@ describe('structure validation', () => {
     expect(analysis.declarations.size).toBe(analysis.structure?.elements.length);
     const root = analysis.structure?.roots[0];
     expect(root && analysis.declarations.get(root)).toBe(md.root('mdscript'));
+  });
+
+  it('checks a script whose root start tag lost its >, the rest of the file as it is', () => {
+    const text = valid.replace('<mdscript name="Sample">', '<mdscript name="Sample"').replace('<set_value name="$x"', '<set_value nme="$x"');
+    expect(report(text)).toEqual([
+      "1:1 unclosed-start-tag: Start tag of 'mdscript' is not closed",
+      "7:10 missing-required-attribute: Missing required attribute 'name' in 'set_value'",
+      "7:20 unknown-attribute: Unknown attribute 'nme' in 'set_value'",
+    ]);
+  });
+
+  it('leaves a value alone whose quote was just opened', () => {
+    const text = valid.replace('filter="error"', 'filter="');
+    expect(report(text)).toEqual(["8:63 unclosed-attribute: Value of attribute 'filter' is not closed"]);
   });
 
   it('does nothing without schemas and nothing for a patch', () => {

@@ -99,7 +99,13 @@ export type XmlProblemCode =
   | 'unclosed-comment'
   | 'unclosed-cdata'
   | 'unclosed-processing-instruction'
-  | 'unclosed-declaration';
+  | 'unclosed-declaration'
+  | 'missing-attribute-space'
+  | 'invalid-reference'
+  | 'invalid-comment'
+  | 'unescaped-less-than'
+  | 'text-outside-root'
+  | 'misplaced-xml-declaration';
 
 export interface XmlProblem {
   code: XmlProblemCode;
@@ -197,6 +203,21 @@ function resolveReference(body: string): string | undefined {
   return Object.prototype.hasOwnProperty.call(namedReferences, body) ? namedReferences[body] : undefined;
 }
 
+/** A reference as XML writes one: `&#N;`, `&#xH;` or `&name;`. */
+const referencePattern = /^&(#x[0-9a-fA-F]+|#[0-9]+|[A-Za-z_:][\w:.-]*);/;
+
+/** A code point XML allows in a document (production `Char`). */
+function isXmlCharacter(codePoint: number): boolean {
+  return (
+    codePoint === 0x9 ||
+    codePoint === 0xa ||
+    codePoint === 0xd ||
+    (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+    (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+    (codePoint >= 0x10000 && codePoint <= 0x10ffff)
+  );
+}
+
 /** Decodes the references in a raw attribute value, recording each one in `references`. Unknown references stay as written. */
 export function decodeAttributeValue(raw: string, references: EntityReference[]): string {
   let ampersand = raw.indexOf('&');
@@ -275,6 +296,10 @@ class Scanner {
   private readonly comments: XmlRegion[] = [];
   private readonly problems: XmlProblem[] = [];
   private readonly open: XmlElement[] = [];
+  /** The next `&` at or after the last offset asked for; -1 when there is none. Offsets are asked in text order. */
+  private ampersand = -2;
+  /** True once a document type declaration declares entities: references to them are not checked. */
+  private entitiesDeclared = false;
 
   constructor(text: string) {
     this.text = text;
@@ -287,6 +312,9 @@ class Scanner {
     let position = 0;
     while (position < length) {
       const lt = text.indexOf('<', position);
+      if (!options.stopAfterFirstStartTag) {
+        this.checkContent(position, lt < 0 ? length : lt);
+      }
       if (lt < 0) {
         break;
       }
@@ -303,6 +331,7 @@ class Scanner {
           break;
         }
       } else {
+        this.problem('unescaped-less-than', "'<' starts no tag: write '&lt;' for the character", lt, lt + 1);
         position = lt + 1;
       }
     }
@@ -317,6 +346,58 @@ class Scanner {
     this.problems.push({ code, message, start, end });
   }
 
+  private nextAmpersand(from: number): number {
+    if (this.ampersand !== -1 && this.ampersand < from) {
+      this.ampersand = this.text.indexOf('&', from);
+    }
+    return this.ampersand;
+  }
+
+  /** The text between two pieces of markup: outside the root element only whitespace, inside it references checked. */
+  private checkContent(start: number, end: number): void {
+    const text = this.text;
+    if (this.open.length > 0) {
+      this.checkReferences(start, end);
+      return;
+    }
+    // A byte order mark may start the file.
+    const first = this.skipWhitespace(start === 0 && text.charCodeAt(0) === 0xfeff ? 1 : start);
+    if (first >= end) {
+      return;
+    }
+    let last = end;
+    while (last > first && isWhitespace(text.charCodeAt(last - 1))) {
+      last--;
+    }
+    this.problem('text-outside-root', 'Text outside the root element', first, last);
+  }
+
+  /**
+   * Reports what the game's parser refuses in text and attribute values: an `&` that starts no reference,
+   * an entity XML does not define (only `&lt;`, `&gt;`, `&amp;`, `&quot;` and `&apos;` without a document
+   * type that declares more), and a character reference to a code point XML does not allow, such as `&#0;`.
+   */
+  private checkReferences(start: number, end: number): void {
+    const text = this.text;
+    for (let at = this.nextAmpersand(start); at >= 0 && at < end; at = this.nextAmpersand(at + 1)) {
+      const match = referencePattern.exec(text.slice(at, Math.min(end, at + 64)));
+      if (!match) {
+        this.problem('invalid-reference', "'&' starts no reference: write '&amp;' for the character", at, at + 1);
+        continue;
+      }
+      const body = match[1];
+      const referenceEnd = at + match[0].length;
+      if (body.charCodeAt(0) === HASH) {
+        const codePoint = body.charCodeAt(1) === 0x78 ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+        if (!isXmlCharacter(codePoint)) {
+          this.problem('invalid-reference', `Character reference '${match[0]}' is no character XML allows`, at, referenceEnd);
+        }
+      } else if (!this.entitiesDeclared && !Object.prototype.hasOwnProperty.call(namedReferences, body)) {
+        this.problem('invalid-reference', `Entity '${match[0]}' is not defined: XML knows only &lt;, &gt;, &amp;, &quot; and &apos;`, at, referenceEnd);
+      }
+    }
+  }
+
   private scanDeclaration(lt: number): number {
     const text = this.text;
     if (text.startsWith('<!--', lt)) {
@@ -327,6 +408,12 @@ class Scanner {
         return this.length;
       }
       this.comments.push({ start: lt, end: close + 3 });
+      // `--` may not stand inside a comment, nor `-` right before its `-->`; the `--` of `-->` is the first found at the latest.
+      const hyphens = text.indexOf('--', lt + 4);
+      if (hyphens < close || (close > lt + 4 && text.charCodeAt(close - 1) === MINUS)) {
+        const at = hyphens < close ? hyphens : close - 1;
+        this.problem('invalid-comment', "'--' is not allowed inside a comment", at, at + 2);
+      }
       return close + 3;
     }
     if (text.startsWith('<![CDATA[', lt)) {
@@ -346,6 +433,7 @@ class Scanner {
       } else if (code === RIGHT_BRACKET) {
         brackets--;
       } else if (code === GT && brackets <= 0) {
+        this.entitiesDeclared ||= text.slice(lt, position).includes('<!ENTITY');
         return position + 1;
       }
       position++;
@@ -355,6 +443,10 @@ class Scanner {
   }
 
   private scanProcessingInstruction(lt: number): number {
+    // `<?xml ...?>` only at the very start, a byte order mark aside: not after a line break or a comment either.
+    if (/^<\?xml(\s|\?>)/.test(this.text.slice(lt, lt + 7)) && lt !== (this.text.charCodeAt(0) === 0xfeff ? 1 : 0)) {
+      this.problem('misplaced-xml-declaration', 'The XML declaration must be at the very start of the file', lt, lt + 5);
+    }
     const close = this.text.indexOf('?>', lt + 2);
     if (close < 0) {
       this.problem('unclosed-processing-instruction', 'Processing instruction is not closed', lt, lt + 2);
@@ -429,6 +521,11 @@ class Scanner {
         break;
       }
       if (isNameStart(code)) {
+        const previous = element.attributes[element.attributes.length - 1];
+        if (previous?.closed && previous.quote !== '' && position === previous.end) {
+          const name = text.slice(position, this.readName(position));
+          this.problem('missing-attribute-space', `Attribute '${name}' must be separated by whitespace from the one before`, position, position + name.length);
+        }
         position = this.scanAttribute(element, position);
       } else {
         this.problem('unexpected-character', `Unexpected '${text[position]}' in the start tag of '${element.name}'`, position, position + 1);
@@ -437,8 +534,9 @@ class Scanner {
     }
     element.startTagEnd = position;
     if (!element.startTagClosed) {
-      // A cut-off start tag counts as an empty element, so the elements after it keep their places.
-      element.selfClosing = true;
+      // A cut-off start tag counts as an empty element, so the elements after it keep their places. The
+      // root's stays open when its end tag closes the text: a file whose root lost its `>` keeps its structure.
+      element.selfClosing = !(parent === undefined && this.roots.length === 1 && this.endsWithEndTagOf(element.name));
     }
     if (element.selfClosing) {
       element.end = position;
@@ -446,6 +544,16 @@ class Scanner {
       this.open.push(element);
     }
     return position;
+  }
+
+  /** True when the last thing in the text, but whitespace, is the end tag of the name. */
+  private endsWithEndTagOf(name: string): boolean {
+    const text = this.text;
+    let end = this.length;
+    while (end > 0 && isWhitespace(text.charCodeAt(end - 1))) {
+      end--;
+    }
+    return name !== '' && /^<\/(\S+?)\s*>$/.exec(text.slice(text.lastIndexOf('<', end - 1), end))?.[1] === name;
   }
 
   private scanAttribute(element: XmlElement, nameStart: number): number {
@@ -516,6 +624,7 @@ class Scanner {
     }
     attribute.rawValue = text.slice(attribute.valueStart, attribute.valueEnd);
     attribute.value = decodeAttributeValue(attribute.rawValue, attribute.references);
+    this.checkReferences(attribute.valueStart, attribute.valueEnd);
     return attribute.end;
   }
 
@@ -599,6 +708,12 @@ class Scanner {
     const nameEnd = this.readName(nameStart);
     const name = text.slice(nameStart, nameEnd);
     let position = this.skipWhitespace(nameEnd);
+    if (name === '') {
+      // `</` while the name is still to be typed: one problem, and no element is closed.
+      const closed = text.charCodeAt(position) === GT;
+      this.problem(closed ? 'unexpected-end-tag' : 'unclosed-end-tag', 'End tag has no name', lt, closed ? position + 1 : nameEnd);
+      return closed ? position + 1 : nameEnd;
+    }
     let end: number;
     if (text.charCodeAt(position) === GT) {
       position++;

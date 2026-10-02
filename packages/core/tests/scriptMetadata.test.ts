@@ -53,6 +53,11 @@ describe('getMetadata', () => {
     expect(getMetadata('<mdscript name="Typing">')?.name).toBe('Typing');
   });
 
+  it('keeps a file what it is when its root start tag loses its > before the rest', () => {
+    expect(getMetadata('<mdscript name="Lost"\n  <cues/>\n</mdscript>\n')).toEqual({ schema: 'md', rootElement: 'mdscript', name: 'Lost' });
+    expect(getMetadata('<aiscript name="lost"\n  <attention min="unknown"/>\n</aiscript>')?.name).toBe('lost');
+  });
+
   it('reports an empty name when the attribute is missing', () => {
     expect(getMetadata('<aiscript>')).toEqual({ schema: 'aiscripts', rootElement: 'aiscript', name: '' });
   });

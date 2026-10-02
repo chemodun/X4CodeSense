@@ -26,7 +26,7 @@ import {
   type WorkspaceEdit,
   type WorkspaceSymbol,
 } from 'vscode-languageserver/node';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -39,6 +39,7 @@ import {
   comparisonSideOf,
   completionAt,
   definitionAt,
+  diskFiles,
   DocumentInfoRequestMethod,
   documentSymbols,
   EditorTabsNotificationMethod,
@@ -537,13 +538,13 @@ function rereadFromDisk(file: string): boolean {
       changed = game.texts.hasFile(file);
       game.texts.removeFile(file);
     } else if (wanted && (inReadFolder || game.texts.hasFile(file))) {
-      game.texts.setFile(file, readFileSync(file, 'utf8'));
+      game.texts.setFile(file, diskFiles.readText(file));
       changed = true;
     }
   }
   const source = game.index?.sourceOf(file);
   if (game.index && source) {
-    changed = (exists ? game.index.setText(file, readFileSync(file, 'utf8'), source) : game.index.removeFile(file)) || changed;
+    changed = (exists ? game.index.setText(file, diskFiles.readText(file), source) : game.index.removeFile(file)) || changed;
   }
   return changed;
 }
@@ -881,7 +882,7 @@ function isChecked(file: string): boolean {
 function checkClosedFile(key: string, file: string, shown = false): void {
   let text: string;
   try {
-    text = readFileSync(file, 'utf8');
+    text = diskFiles.readText(file);
   } catch {
     clearWorkspaceProblems(key);
     return;
