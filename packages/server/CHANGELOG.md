@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.9.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.8.0...x4-script-language-server@v0.9.0) (2026-10-02)
+
+
+### Features
+
+* patches and merge files of the game's library files ([628a5b6](https://github.com/chemodun/X4CodeSense/commit/628a5b631284c12340f5aca8ca75d6bbcd86a861))
+* the extension brings the checker along, settings of another type and deleted folders no longer stop or fool the server ([de1f609](https://github.com/chemodun/X4CodeSense/commit/de1f609b592d9dfe91e37c5d3500e8f08d8d772e))
+* variable types from what sets them, guessed for actions from the schema's words ([fabb120](https://github.com/chemodun/X4CodeSense/commit/fabb120462e7c7d10f2b1197c45a766375611f2b))
+* well-formedness the game's parser checks, a script whose root lost its &gt; stays checked ([ddccfb4](https://github.com/chemodun/X4CodeSense/commit/ddccfb4e759a3aa5c38be77191e0630e01fd9ece))
+
+
+### Bug Fixes
+
+* what libraries set is followed across scripts, other documents wait for a pause ([85293fa](https://github.com/chemodun/X4CodeSense/commit/85293fa7145aa67a96fb8bd1d5210979b732cf9d))
+
+
+### Performance Improvements
+
+* keep parsed expressions from one keystroke to the next ([9cb0853](https://github.com/chemodun/X4CodeSense/commit/9cb08531fbff060c94a89cdce0550abe324e4af0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.8.0 to 0.9.0
+
 ## [0.8.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.7.0...x4-script-language-server@v0.8.0) (2026-10-01)
 
 
