@@ -364,6 +364,11 @@ export class TextDatabase {
     return this.files.size;
   }
 
+  /** The files read, each as the key it is kept under: its resolved path in lower case. */
+  fileKeys(): string[] {
+    return [...this.files.keys()];
+  }
+
   /** Patch operations that were not applied, with file and line. */
   get problems(): string[] {
     return [...this.files.values()].flatMap((file) => file.problems);

@@ -74,6 +74,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverEntry = path.resolve(here, '../src/server.ts');
 const coreEntry = path.resolve(here, '../../core/src/index.ts');
+const catalogEntry = path.resolve(here, '../../catalog/src/index.ts');
 const unpacked = path.resolve(here, '../../core/tests/fixtures/unpacked');
 
 let workDir: string;
@@ -97,6 +98,8 @@ const progress: string[] = [];
 const statusWaiters = new Set<(status: ServerStatus) => boolean>();
 /** How often the server asked for the semantic tokens of the open documents again. */
 let semanticTokensRefreshes = 0;
+/** The methods the server registered for. */
+const registrations: string[] = [];
 
 async function documentInfo(uri: string): Promise<DocumentInfoResult> {
   return connection.sendRequest<DocumentInfoResult>(DocumentInfoRequestMethod, { uri });
@@ -159,12 +162,14 @@ beforeAll(async () => {
     format: 'cjs',
     outfile: bundle,
     logLevel: 'silent',
-    alias: { 'x4-script-core': coreEntry },
+    alias: { 'x4-script-core': coreEntry, 'x4-catalog': catalogEntry },
   });
   child = spawn(process.execPath, [bundle, '--stdio'], { stdio: ['pipe', 'pipe', 'inherit'] });
   connection = createProtocolConnection(new StreamMessageReader(child.stdout!), new StreamMessageWriter(child.stdin!));
   connection.onRequest(ConfigurationRequest.type, (params) => params.items.map(() => ({ ...clientSettings })));
-  connection.onRequest(RegistrationRequest.type, () => undefined);
+  connection.onRequest(RegistrationRequest.type, (params) => {
+    registrations.push(...params.registrations.map((registration) => registration.method));
+  });
   connection.onNotification(StatusNotificationMethod, (status: ServerStatus) => {
     statuses.push(status);
     for (const waiter of [...statusWaiters]) {
@@ -184,7 +189,12 @@ beforeAll(async () => {
     processId: process.pid,
     rootUri: null,
     capabilities: {
-      workspace: { configuration: true, workspaceFolders: true, semanticTokens: { refreshSupport: true } },
+      workspace: {
+        configuration: true,
+        didChangeConfiguration: { dynamicRegistration: true },
+        workspaceFolders: true,
+        semanticTokens: { refreshSupport: true },
+      },
       textDocument: { completion: { completionItem: { snippetSupport: true } } },
       window: { workDoneProgress: true },
     },
@@ -235,7 +245,88 @@ describe('status', () => {
     expect(statuses[0].gameFolder).toBeUndefined();
     // The fixture's index is built before the client has made room for its progress, which then only ends.
     await vi.waitFor(() => expect(progress).toEqual(['begin: reading the game files', 'end', 'end']));
+    expect(registrations).toEqual(['workspace/didChangeConfiguration']);
   });
+});
+
+describe('clients other than VS Code', () => {
+  /**
+   * Starts another server from the test's bundle, for a client with these workspace capabilities, which
+   * answers `workspace/configuration` with `settings()` and `client/registerCapability` with `register`.
+   * Returns its connection and the statuses it sent.
+   */
+  async function startServer(
+    workspace: Record<string, unknown>,
+    settings: () => unknown,
+    register: () => void
+  ): Promise<{ other: ProtocolConnection; sent: ServerStatus[] }> {
+    const otherChild = spawn(process.execPath, [path.join(workDir, 'server.js'), '--stdio'], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const other = createProtocolConnection(new StreamMessageReader(otherChild.stdout!), new StreamMessageWriter(otherChild.stdin!));
+    const sent: ServerStatus[] = [];
+    other.onRequest(ConfigurationRequest.type, (params) => params.items.map(settings));
+    other.onRequest(RegistrationRequest.type, register);
+    other.onNotification(StatusNotificationMethod, (status: ServerStatus) => {
+      sent.push(status);
+    });
+    other.listen();
+    onTestFinished(async () => {
+      try {
+        await other.sendRequest(ShutdownRequest.type);
+        await other.sendNotification(ExitNotification.type);
+      } finally {
+        other.dispose();
+        otherChild.kill();
+      }
+    });
+    await other.sendRequest(InitializeRequest.type, { processId: process.pid, rootUri: null, capabilities: { workspace } });
+    await other.sendNotification(InitializedNotification.type, {});
+    return { other, sent };
+  }
+
+  const ready = (sent: ServerStatus[]): ServerStatus | undefined => sent.filter((status) => status.state === 'ready').pop();
+
+  it('reads the game for a client that takes no registration for configuration changes', async () => {
+    let asked = 0;
+    const refuse = (): void => {
+      asked++;
+      throw new Error('client/registerCapability is not supported');
+    };
+    // One that does not offer it is not asked; one that offers it and then fails still gets the game.
+    const unoffered = await startServer({ configuration: true }, () => ({ unpackedFileLocation: unpacked }), refuse);
+    await vi.waitFor(() => expect(ready(unoffered.sent)?.schemas).toEqual(['aiscripts', 'diff', 'md']), { timeout: 10_000 });
+    expect(asked).toBe(0);
+    const failing = await startServer(
+      { configuration: true, didChangeConfiguration: { dynamicRegistration: true } },
+      () => ({ unpackedFileLocation: unpacked }),
+      refuse
+    );
+    await vi.waitFor(() => expect(ready(failing.sent)?.schemas).toEqual(['aiscripts', 'diff', 'md']), { timeout: 10_000 });
+    expect(asked).toBe(1);
+  }, 30_000);
+
+  it('takes a setting of another type as its default, and a language number as the text files are named', async () => {
+    let settings: Record<string, unknown> = {
+      unpackedFileLocation: unpacked,
+      gameFolder: null,
+      extensionsFolder: 42,
+      languageNumber: '049',
+      limitLanguageOutput: true,
+      diagnosticMode: 'everything',
+      debug: 'yes',
+    };
+    const { other, sent } = await startServer(
+      { configuration: true },
+      () => settings,
+      () => undefined
+    );
+    // German and English: `049` is the `49` of `0001-l049.xml`.
+    await vi.waitFor(() => expect(ready(sent)).toMatchObject({ schemas: ['aiscripts', 'diff', 'md'], textFiles: 2 }), { timeout: 10_000 });
+    settings = { unpackedFileLocation: null };
+    const before = sent.length;
+    await other.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await vi.waitFor(() => expect(ready(sent.slice(before))?.schemas).toEqual([]), { timeout: 10_000 });
+    expect(ready(sent)?.gameFolder).toBeUndefined();
+  }, 30_000);
 });
 
 describe('language server over stdio', () => {
@@ -1075,7 +1166,7 @@ describe('script index', () => {
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   }, 30_000);
 
-  it('indexes an extension created in the workspace while the server runs', async () => {
+  it('indexes an extension created in the workspace while the server runs, and forgets one deleted', async () => {
     const mods = path.join(workDir, 'growingmods');
     const write = (file: string, text: string): string => {
       mkdirSync(path.dirname(file), { recursive: true });
@@ -1093,6 +1184,12 @@ describe('script index', () => {
     const fresh = write(path.join(mods, 'second', 'md', 'second.xml'), '<mdscript name="GrowSecond">\n  <cues/>\n</mdscript>\n');
     await connection.sendNotification(DidChangeWatchedFilesNotification.type, { changes: [{ uri: fresh, type: FileChangeType.Created }] });
     await vi.waitFor(async () => expect(await names('growsecond')).toEqual(['GrowSecond']), { timeout: 10_000 });
+
+    // The mod's folder deleted at once: VS Code reports the folder alone, not the files in it.
+    rmSync(path.join(mods, 'second'), { recursive: true });
+    const folder = pathToFileURL(path.join(mods, 'second')).toString();
+    await connection.sendNotification(DidChangeWatchedFilesNotification.type, { changes: [{ uri: folder, type: FileChangeType.Deleted }] });
+    await vi.waitFor(async () => expect(await names('grow')).toEqual(['GrowFirst']), { timeout: 10_000 });
     await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, { event: { added: [], removed: [workspace] } });
   }, 30_000);
 
@@ -1434,9 +1531,17 @@ describe('problems of the workspace', () => {
     await connection.sendNotification(DidChangeWatchedFilesNotification.type, { changes: [{ uri: caller.uri, type: FileChangeType.Changed }] });
     await fixedOnDisk;
 
+    // A folder deleted on disk, as by a checkout: VS Code reports the folder alone, and its scripts' problems go.
+    const deleted = diagnosticsCount(broken.uri, 0);
+    rmSync(path.dirname(broken.file), { recursive: true });
+    await connection.sendNotification(DidChangeWatchedFilesNotification.type, {
+      changes: [{ uri: pathToFileURL(path.dirname(broken.file)).toString(), type: FileChangeType.Deleted }],
+    });
+    await deleted;
+
     // Only the open files again: the closed ones' problems are cleared.
     clientSettings.diagnosticMode = 'openFilesOnly';
-    const cleared = diagnosticsCount(broken.uri, 0);
+    const cleared = diagnosticsCount(caller.uri, 0);
     await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
     await cleared;
   }, 30_000);

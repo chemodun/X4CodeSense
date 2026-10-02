@@ -15,6 +15,7 @@ import { writeCatalog, type CatalogFile } from 'x4-catalog';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cliEntry = path.resolve(here, '../src/cli.ts');
 const coreEntry = path.resolve(here, '../../core/src/index.ts');
+const catalogEntry = path.resolve(here, '../../catalog/src/index.ts');
 const fixtureUnpacked = path.resolve(here, '../../core/tests/fixtures/unpacked');
 
 let workDir: string;
@@ -131,7 +132,7 @@ function lines(result: Run): string[] {
 }
 
 /** Writes a file for one test and removes it afterwards, whatever happens. */
-async function withFile(file: string, content: string, body: () => Promise<void>): Promise<void> {
+async function withFile(file: string, content: string | Buffer, body: () => Promise<void>): Promise<void> {
   writeFileSync(file, content);
   try {
     await body();
@@ -150,7 +151,7 @@ beforeAll(async () => {
     format: 'cjs',
     outfile: bundle,
     logLevel: 'silent',
-    alias: { 'x4-script-core': coreEntry },
+    alias: { 'x4-script-core': coreEntry, 'x4-catalog': catalogEntry },
   });
   unpacked = path.join(mkdtempSync(path.join(tmpdir(), 'x4codesense-cli-game-')), 'unpacked');
   cpSync(fixtureUnpacked, unpacked, { recursive: true });
@@ -454,6 +455,21 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     });
   });
 
+  it('leaves a file that is not UTF-8 as it is when fixing, and says so', async () => {
+    const latin = path.join(extension, 'md', 'Latin.xml');
+    // Windows-1252, which XML allows: the ü is the byte FC, no character in UTF-8.
+    const bytes = Buffer.from('<?xml version="1.0" encoding="windows-1252"?>\n<mdscript name=Latin>\n  <!-- für -->\n  <cues/>\n</mdscript>\n', 'latin1');
+    await withFile(latin, bytes, async () => {
+      const result = await run('--fix', '--format', 'json', extension);
+      const report = JSON.parse(result.stdout) as JsonReport;
+      expect(report.fixed).toEqual([]);
+      expect(report.findings.map((finding) => `${path.basename(finding.file)} ${finding.code}`)).toEqual(['Latin.xml unquoted-attribute-value']);
+      expect(report.problems).toEqual([`${latin}: not fixed: the file is not UTF-8`]);
+      expect(result.stderr).toContain(`${latin}: not fixed: the file is not UTF-8`);
+      expect(readFileSync(latin).equals(bytes)).toBe(true);
+    });
+  });
+
   it('fixes every file before checking any, so a fixed definition counts in the files before it', async () => {
     const caller = path.join(extension, 'md', 'A_Caller.xml');
     const callee = path.join(extension, 'md', 'B_Callee.xml');
@@ -624,6 +640,18 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     const result = await run(workDir);
     expect(result.code).toBe(0);
     expect(lines(result)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s) (no schema validation: pass --unpacked or --game)']);
+  });
+
+  it('checks a folder given twice, or inside another given folder, once', async () => {
+    const broken = path.join(extension, 'md', 'Broken.xml');
+    await withFile(broken, '<mdscript name="Broken">\n  <cues>\n</mdscript>\n', async () => {
+      const once = lines(await run(extension));
+      expect(once.at(-1)).toBe(
+        '4 file(s) in 2 folder(s): 3 script(s), 1 patch(es), 1 finding(s) (1 error(s); no schema validation: pass --unpacked or --game)'
+      );
+      expect(lines(await run(extension, extension))).toEqual(once);
+      expect(lines(await run(workDir, extension))).toEqual(once);
+    });
   });
 
   it('fails on a path that is not a folder and on unknown options', async () => {
@@ -798,12 +826,16 @@ describe('x4-script-check on an installed game', { timeout: 30_000 }, () => {
     expect(mods.findings.map((finding) => `${finding.file} ${finding.code}`)).toEqual([`${dlcScript} unknown-element`, `${modScript} unknown-element`]);
   });
 
-  it('takes the extracted files first, and refuses a folder that is no installed game', async () => {
+  it('takes the extracted files first, an option given over the environment, and refuses a folder that is no installed game', async () => {
     const both = await run('--unpacked', unpacked, '--game', workDir, extension);
     expect(both.code).toBe(0);
     expect(lines(both)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s)']);
     const notGame = await run('--game', workDir, extension);
     expect(notGame.code).toBe(2);
     expect(notGame.stderr).toContain(`Not an installed game, it has no 01.cat: ${workDir}`);
+    // The folder given is checked, whatever X4_UNPACKED says.
+    const overVariable = await execute(undefined, ['--game', workDir, extension], { X4_UNPACKED: unpacked });
+    expect(overVariable.code).toBe(2);
+    expect(overVariable.stderr).toContain(`Not an installed game, it has no 01.cat: ${workDir}`);
   });
 });

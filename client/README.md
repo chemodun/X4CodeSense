@@ -20,7 +20,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 - Parameters a call passes that the script, order or library it names does not declare: a `<param name="…">` of `run_script`, `create_order`, `run_actions`, a `cue` with `ref` and the like. Parameters a call leaves out are not reported; the game takes them as null.
 - AI script names and order ids a call writes as is (`run_script name="'move.generic'"`, `create_order id="'Attack'"`) that no script of the game, its DLCs, the extensions or your workspace defines.
 
-All of it keeps working while a tag, an attribute or a quote is still being typed. Open files count with their unsaved changes, and files changed on disk in the workspace are read again.
+All of it keeps working while a tag, an attribute or a quote is still being typed. Open files count with their unsaved changes, and files changed, created or deleted on disk in the workspace, also with their folder, are read again or forgotten.
 
 The Problems panel lists the problems of the open scripts, also of those in tabs that VS Code restored at start but has not shown yet, as they are on disk. With `x4CodeSense.diagnosticMode` set to `workspace`, it also lists those of every other script and patch in the workspace folders, as they are on disk. They are checked once the scripts are indexed, and again when something they refer to changes, for example when a cue or an order is renamed in the editor; an open script's problems follow the editor as before.
 
@@ -94,7 +94,7 @@ These open the other file when what is created belongs there; the game's own scr
 
 ### Status bar
 
-The status bar shows the type and name of the script, or the file a patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and where from, the extracted files or the installed game and its version, and which scripts show problems; a click opens a menu of the commands.
+While a script or a patch is active, the status bar shows the type and name of the script, or the file the patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and where from, the extracted files or the installed game and its version, and which scripts show problems; a click opens a menu of the commands.
 
 ### Command line and CI
 
@@ -104,6 +104,12 @@ The same checks run outside VS Code with [x4-script-check](https://www.npmjs.com
 npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
 npx x4-script-check --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" path\to\your\extension
 npx x4-script-check --fix --unpacked C:\X4\extracted path\to\your\extension
+```
+
+The extension brings the checker along, so it also runs without npm, with Node.js 22 or later: `dist\x4-script-check.js` in the extension's folder, `%USERPROFILE%\.vscode\extensions\x4devtools.x4codesense-<version>` (the folder with the newest version, when an update left older ones), takes the same options.
+
+```powershell
+node "$env:USERPROFILE\.vscode\extensions\x4devtools.x4codesense-<version>\dist\x4-script-check.js" --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" path\to\your\extension
 ```
 
 ## 📚 Where its knowledge comes from
@@ -179,10 +185,10 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
 
 ### Set it up
 
-1. Run **X4CodeSense: Select the Installed Game...** from the Command Palette (`Ctrl+Shift+P`), or click the X4CodeSense item in the status bar, and choose the folder the game is installed in. Or run **X4CodeSense: Select the Extracted Game Files...** and choose the folder you extracted the game to.
-2. Open your extension's folder as the workspace, or a folder with several extensions.
-3. If your extension uses the texts or scripts of other extensions that are not in the workspace, set `x4CodeSense.extensionsFolder` to where they are, for example `..` when your extensions sit side by side.
-4. Open a script. The status bar shows the progress while the game files are read and the scripts are indexed, a few seconds, and its tooltip tells what was read.
+1. Open your extension's folder as the workspace, or a folder with several extensions.
+2. Open a script. The status bar shows its type and name, with a warning while the game files are not set.
+3. Run **X4CodeSense: Select the Installed Game...** from the Command Palette (`Ctrl+Shift+P`), or from the menu a click on that status bar item opens, and choose the folder the game is installed in. Or run **X4CodeSense: Select the Extracted Game Files...** and choose the folder you extracted the game to. The status bar shows the progress while the game files are read and the scripts are indexed, a few seconds, and its tooltip tells what was read.
+4. If your extension uses the texts or scripts of other extensions that are not in the workspace, set `x4CodeSense.extensionsFolder` to where they are, for example `..` when your extensions sit side by side.
 
 ## ⚙️ Extension settings
 
@@ -192,11 +198,11 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
   - _default_: empty
 - `x4CodeSense.extensionsFolder` - where the other extensions are, usually set per workspace. Relative to the workspace folder: empty or `.` is the workspace itself (a workspace of several extensions), `..` the folder above it (one workspace per extension, the extensions side by side); an absolute path is taken as is. The folder may be an extension or hold extensions, which are read in the order their `content.xml` dependencies give, so a dependency's texts and patches come before yours.
   - _default_: empty
-- `x4CodeSense.languageNumber` - the preferred language for texts; the game's `libraries/languages.xml` lists the numbers.
+- `x4CodeSense.languageNumber` - the preferred language for texts; the game's `libraries/languages.xml` lists the numbers. Leading zeros, as in the name of `0001-l007.xml`, do not matter.
   - _default_: `44` (English)
 - `x4CodeSense.limitLanguageOutput` - show only the preferred language in hovers, and read only the text files of that language and English.
   - _default_: `false`
-- `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes, invalid values and text inside elements are always reported.
+- `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes, invalid values, missing required attributes and text inside elements are always reported.
   - _default_: `true`
 - `x4CodeSense.guessVariableTypes` - guess what an action writes into a variable from the action's name and documentation where the schema does not state it: `create_ship` a ship, `find_ship` with `multiple` a list. What rests on a guess says so: hover and completion mark the type "(guessed)", and a property such a type lacks is information (`expression-unknown-property-guessed`), not a warning. Off, only what the scripts and the schema state types a variable: `<param type>`, the value `set_value` sets, groups.
   - _default_: `true`
@@ -234,7 +240,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [0.9.0] - unreleased
+### [0.9.0] - 2026-10-03
 
 - Added
   - Patches of the game's library files, in an extension's `libraries` folder (`libraries/wares.xml` and the like): applied to the game's file after the patches and merge files of the DLCs and extensions loaded before them, with the problems of their paths, completion, hover and go to definition in them, the status bar, and the diff of the file without and with the patch.
@@ -245,7 +251,9 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - Well-formedness problems for which the game's parser refuses a file: attributes without whitespace between them, an `&` that starts no reference or names an entity XML does not define, a character reference to no character (`&#0;`), `--` inside a comment, a `<` that starts no tag, text outside the root element, an XML declaration that is not at the very start. The game's files and the mods have none.
   - Variables have a type when everything that sets them agrees on one: completion after `$ship.` offers that type's properties, hover and go to definition of `$ship.name` name its property, and hover over `$ship` tells the type and what tells it. What actions write is guessed from their names and documentation where the schema does not state it (`create_ship` a ship), and marked "(guessed)"; `x4CodeSense.guessVariableTypes` turns the guessing off, `--no-type-guesses` in x4-script-check.
   - A property a variable's type does not have is reported, as for `player.ship`: a warning where the script states the type, information (`expression-unknown-property-guessed`) where it is guessed, worded as the guess it rests on. On the game's own scripts, six, in four files; none in the DLCs.
+  - The extension brings x4-script-check along, `dist\x4-script-check.js` in its folder: the scripts can be checked from a command line with Node.js alone, without npm.
 - Changed
+  - x4-script-check: `--game` or `--unpacked` given wins over the `X4_UNPACKED` and `X4_GAME` environment variables; `X4_UNPACKED` was taken even with `--game` given.
   - A variable's type comes from the `exact` or `default` of `set_value` and `param` only, no longer from that of `create_list`, `append_to_list`, `do_all` and the like, where it is a count or the element added; `null`, and a bare `true`, `false` or number set before the real value, tell none.
   - Patches are applied faster where a step of a path picks a node by an attribute's value, such as `cue[@name='Start']`: the node is found without looking at each of its siblings.
   - A script is checked again faster after each change: the expressions the change left as they were are not parsed again, nor their properties looked up again. In the largest scripts, about a quarter less time per change.
@@ -278,6 +286,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - Renaming a cue left its bare names in a library of another script that the cue's script includes, and renaming a label left those in an interrupt library item the script uses, without a word: the game then no longer finds them. Find all references lists them now, and the rename takes them or is refused, with the reason.
   - Renaming an AI script name or an order id showed VS Code's "The element can't be renamed."; it gives the reason now.
   - Find all references of a name used in many files is two to three times faster: the texts of those files are kept between requests.
+  - A setting of another type than declared, such as `null` for a folder in settings.json, stopped the language server from reading the settings: no game files, no status, well-formedness only. It counts as the default now. The same happened in an LSP client that refuses to register for configuration changes.
+  - `x4CodeSense.languageNumber` with leading zeros, `007` as in the name `0001-l007.xml`, showed English texts.
+  - A folder deleted on disk, a mod or one a checkout removed, left its scripts in the index and their problems in the Problems panel: VS Code reports the folder alone, not the files in it.
+  - x4-script-check checked a folder given twice, or inside another given folder, twice: every finding was reported twice.
+  - `--fix` of x4-script-check wrote a file that is not UTF-8 back with a replacement character for each of its other characters; it leaves such a file as it is now, and says so.
 
 ### [0.8.0] - 2026-10-01
 

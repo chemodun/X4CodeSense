@@ -14,6 +14,7 @@ import {
   type CompletionItem,
   type CompletionList,
   type DocumentSymbol,
+  type FileEvent,
   type Hover,
   type InitializeParams,
   type InitializeResult,
@@ -122,6 +123,41 @@ const defaultSettings: X4CodeSenseSettings = {
   debug: false,
 };
 
+const diagnosticModes: readonly X4CodeSenseSettings['diagnosticMode'][] = ['openFilesOnly', 'workspace'];
+
+/**
+ * The settings as the client sends them, each of its declared type: any other value, such as `null` in
+ * settings.json or a number for a folder, counts as the default.
+ */
+function settingsOf(received: unknown): X4CodeSenseSettings {
+  const values = typeof received === 'object' && received !== null ? (received as Partial<Record<keyof X4CodeSenseSettings, unknown>>) : {};
+  const text = (key: 'unpackedFileLocation' | 'gameFolder' | 'extensionsFolder'): string => {
+    const value = values[key];
+    return typeof value === 'string' ? value : defaultSettings[key];
+  };
+  const flag = (key: 'limitLanguageOutput' | 'validateXmlStructure' | 'guessVariableTypes' | 'debug'): boolean => {
+    const value = values[key];
+    return typeof value === 'boolean' ? value : defaultSettings[key];
+  };
+  return {
+    unpackedFileLocation: text('unpackedFileLocation'),
+    gameFolder: text('gameFolder'),
+    extensionsFolder: text('extensionsFolder'),
+    languageNumber: languageNumberOf(values.languageNumber),
+    limitLanguageOutput: flag('limitLanguageOutput'),
+    validateXmlStructure: flag('validateXmlStructure'),
+    guessVariableTypes: flag('guessVariableTypes'),
+    diagnosticMode: diagnosticModes.find((mode) => mode === values.diagnosticMode) ?? defaultSettings.diagnosticMode,
+    debug: flag('debug'),
+  };
+}
+
+/** A language number as the names of the text files give it, `7` for `007`; the default for anything but digits. */
+function languageNumberOf(value: unknown): string {
+  const digits = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  return /^\d+$/.test(digits) ? String(Number(digits)) : defaultSettings.languageNumber;
+}
+
 /** Characters after which the client asks for completion without being told to. */
 // `/`, `@` and `'` for the paths of patch documents.
 const completionTriggerCharacters = ['<', '.', '"', ' ', '$', '{', ',', '/', '@', "'"];
@@ -131,6 +167,8 @@ const documents = new TextDocuments(TextDocument);
 
 let settings: X4CodeSenseSettings = defaultSettings;
 let hasConfigurationCapability = false;
+/** The client takes a registration for `workspace/didChangeConfiguration`; VS Code sends it without one too. */
+let configurationRegistration = false;
 let snippetSupport = false;
 let workspaceFolderSupport = false;
 let semanticTokensRefreshSupport = false;
@@ -215,6 +253,10 @@ function warn(message: string): void {
   connection.console.warn(`[X4CodeSense] ${message}`);
 }
 
+function reportError(doing: string, error: unknown): void {
+  connection.console.error(`[X4CodeSense] ${doing} failed: ${error instanceof Error ? error.message : String(error)}`);
+}
+
 function debug(message: string): void {
   if (settings.debug) {
     log(message);
@@ -291,6 +333,7 @@ function analysedDocument(document: TextDocument): TextDocument {
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   hasConfigurationCapability = params.capabilities.workspace?.configuration === true;
+  configurationRegistration = params.capabilities.workspace?.didChangeConfiguration?.dynamicRegistration === true;
   snippetSupport = params.capabilities.textDocument?.completion?.completionItem?.snippetSupport === true;
   workspaceFolderSupport = params.capabilities.workspace?.workspaceFolders === true;
   semanticTokensRefreshSupport = params.capabilities.workspace?.semanticTokens?.refreshSupport === true;
@@ -409,7 +452,7 @@ function extensionFolders(): string[] {
 function textOptions(): TextLoadOptions {
   const options: TextLoadOptions = { extensionFolders: extensionFolders() };
   if (settings.limitLanguageOutput) {
-    options.languages = new Set([settings.languageNumber || '44', '44']);
+    options.languages = new Set([settings.languageNumber, '44']);
   }
   return options;
 }
@@ -581,7 +624,7 @@ function rereadFromDisk(file: string): boolean {
 
 /** How hover, definition and completion show texts. */
 function textDisplay(): TextDisplayOptions {
-  return { language: settings.languageNumber || '44', limitLanguage: settings.limitLanguageOutput };
+  return { language: settings.languageNumber, limitLanguage: settings.limitLanguageOutput };
 }
 
 /** True for a text file: `0001-l044.xml` or another language in a `t` folder. */
@@ -605,18 +648,22 @@ function overlayOpenTextFiles(): void {
   }
 }
 
+/** Reads the settings and what they ask for; whatever fails, the client is told the state the server is in. */
 async function refreshSettings(): Promise<void> {
   if (!hasConfigurationCapability) {
     return;
   }
-  const received = (await connection.workspace.getConfiguration('x4CodeSense')) as Partial<X4CodeSenseSettings> | null;
-  settings = { ...defaultSettings, ...(received ?? {}) };
-  log(
-    `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
-  );
-  await refreshGameData();
-  refreshTexts();
-  void refreshIndex();
+  try {
+    settings = settingsOf(await connection.workspace.getConfiguration('x4CodeSense'));
+    log(
+      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
+    );
+    await refreshGameData();
+    refreshTexts();
+    void refreshIndex();
+  } catch (error) {
+    reportError('reading the settings and the game files', error);
+  }
   sendStatus();
 }
 
@@ -635,19 +682,74 @@ connection.onInitialized(async () => {
     });
   }
   if (hasConfigurationCapability) {
-    await connection.client.register(DidChangeConfigurationNotification.type, { section: 'x4CodeSense' });
+    if (configurationRegistration) {
+      await connection.client
+        .register(DidChangeConfigurationNotification.type, { section: 'x4CodeSense' })
+        .catch((error: unknown) => reportError('registering for workspace/didChangeConfiguration', error));
+    }
     await refreshSettings();
   } else {
-    await refreshGameData();
-    void refreshIndex();
+    try {
+      await refreshGameData();
+      void refreshIndex();
+    } catch (error) {
+      reportError('reading the game files', error);
+    }
     sendStatus();
   }
   log('server initialized');
 });
 
+/** The files the server knows: indexed, read for the texts, or with problems shown while closed. */
+function knownFiles(): string[] {
+  const files = [...(game?.index?.entries() ?? []), ...(game?.index?.libraryFiles() ?? [])].map((entry) => entry.file);
+  files.push(...(game?.texts.fileKeys() ?? []));
+  for (const published of workspaceProblems.values()) {
+    const file = filePathOf(published.uri);
+    if (file !== undefined) {
+      files.push(file);
+    }
+  }
+  return files;
+}
+
+/**
+ * The changes, file by file. A folder deleted on disk is reported as the folder alone, which the client's
+ * watcher of deletions passes on: every file below it the server knows counts as deleted, and the
+ * extensions are looked at again, since one of them may be gone.
+ */
+function fileChanges(changes: readonly FileEvent[]): FileEvent[] {
+  const result = new Map<string, FileEvent>();
+  const folders = new Set<string>();
+  for (const change of changes) {
+    const file = filePathOf(change.uri);
+    if (file !== undefined && change.type === FileChangeType.Deleted && !file.toLowerCase().endsWith('.xml')) {
+      folders.add(fileKey(file));
+    } else {
+      result.set(file === undefined ? change.uri : fileKey(file), change);
+    }
+  }
+  if (folders.size === 0) {
+    return [...result.values()];
+  }
+  for (const file of knownFiles()) {
+    for (let folder = path.dirname(file); ; folder = path.dirname(folder)) {
+      if (folders.has(fileKey(folder))) {
+        result.set(fileKey(file), { uri: clientUris.get(fileKey(file)) ?? pathToFileURL(file).toString(), type: FileChangeType.Deleted });
+        break;
+      }
+      if (path.dirname(folder) === folder) {
+        break;
+      }
+    }
+  }
+  scheduleFolderCheck();
+  return [...result.values()];
+}
+
 connection.onDidChangeWatchedFiles((params) => {
   let changed = false;
-  for (const change of params.changes) {
+  for (const change of fileChanges(params.changes)) {
     const file = filePathOf(change.uri);
     // A file in no folder the index reads: perhaps of an extension created or copied in.
     if (file && change.type === FileChangeType.Created && game?.index && game.index.sourceOf(file) === undefined) {

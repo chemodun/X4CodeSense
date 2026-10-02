@@ -76,7 +76,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   // Scripts and text files of the workspace change on disk too (checkouts, other editors): the server reads them again.
   const xmlFiles = vscode.workspace.createFileSystemWatcher('**/*.xml');
-  context.subscriptions.push(xmlFiles);
+  // A folder deleted (a mod, or by a checkout) is reported as the folder alone, not as the files in it.
+  const deletions = vscode.workspace.createFileSystemWatcher('**/*', true, true, false);
+  context.subscriptions.push(xmlFiles, deletions);
   const clientOptions: LanguageClientOptions = {
     // Lua files only get the hover of `ReadText` calls, with the text they read. The sides of a patch
     // comparison are the script before and after the patch; game documents the files of an installed game.
@@ -87,7 +89,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { scheme: patchedScheme, language: 'xml' },
       { scheme: gameFileScheme, language: 'xml' },
     ],
-    synchronize: { configurationSection: 'x4CodeSense', fileEvents: xmlFiles },
+    synchronize: { configurationSection: 'x4CodeSense', fileEvents: [xmlFiles, deletions] },
     outputChannelName: 'X4CodeSense',
   };
   const languageClient = new LanguageClient('x4CodeSense', 'X4CodeSense', serverOptions, clientOptions);

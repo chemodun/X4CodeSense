@@ -177,7 +177,7 @@
         "x4CodeSense.languageNumber": {
           "type": "string",
           "default": "44",
-          "description": "Preferred language number for text lookups, for example 44 for English."
+          "description": "Preferred language number for text lookups, for example 44 for English; leading zeros do not matter."
         },
         "x4CodeSense.limitLanguageOutput": {
           "type": "boolean",
@@ -187,7 +187,7 @@
         "x4CodeSense.validateXmlStructure": {
           "type": "boolean",
           "default": true,
-          "description": "Check the order and completeness of child elements against the game's XSD schemas. Unknown elements and attributes, invalid attribute values and text inside elements are always reported when the game files are set."
+          "description": "Check the order and completeness of child elements against the game's XSD schemas. Unknown elements and attributes, invalid attribute values, missing required attributes and text inside elements are always reported when the game files are set."
         },
         "x4CodeSense.guessVariableTypes": {
           "type": "boolean",

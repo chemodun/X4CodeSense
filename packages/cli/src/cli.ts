@@ -110,10 +110,9 @@ the file it changes: the game's, or the named extension's.
 
 Options:
   --unpacked <folder>   extracted vanilla game files; enables validation against the game schemas
-                        (also read from the X4_UNPACKED environment variable)
   --game <folder>       the installed game, the folder of X4.exe: its files and its DLCs' are read
                         from their catalogs, nothing is extracted; used when --unpacked is not given
-                        (also read from the X4_GAME environment variable)
+                        Without either, the X4_UNPACKED environment variable is read, else X4_GAME.
   --extensions <folder> other extensions the checked ones refer to: their texts and scripts are
                         read, they are not checked; may be given several times
   --no-structure        do not check the order and completeness of child elements
@@ -151,14 +150,6 @@ function oneOf<T extends string>(option: string, value: string, allowed: readonl
 
 function parseOptions(argv: string[]): Options {
   const options: Options = { roots: [], extensions: [], structure: true, typeGuesses: true, fix: false, format: 'text', failOn: 'hint', help: false };
-  const unpacked = process.env.X4_UNPACKED;
-  if (unpacked !== undefined && unpacked !== '') {
-    options.unpacked = unpacked;
-  }
-  const installed = process.env.X4_GAME;
-  if (installed !== undefined && installed !== '') {
-    options.game = installed;
-  }
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const equals = argument.startsWith('--') ? argument.indexOf('=') : -1;
@@ -196,6 +187,16 @@ function parseOptions(argv: string[]): Options {
   }
   if (options.roots.length === 0) {
     options.roots.push('.');
+  }
+  // The environment only when the command line names no game: an option given wins over either variable.
+  if (options.unpacked === undefined && options.game === undefined) {
+    const unpacked = process.env.X4_UNPACKED;
+    const installed = process.env.X4_GAME;
+    if (unpacked !== undefined && unpacked !== '') {
+      options.unpacked = unpacked;
+    } else if (installed !== undefined && installed !== '') {
+      options.game = installed;
+    }
   }
   return options;
 }
@@ -328,9 +329,10 @@ const byteOrderMark = Buffer.from([0xef, 0xbb, 0xbf]);
  * Applies the preferred fixes of a file as the editor's fix all does, round after round until none is
  * left, and writes the file when it changed; the index learns the new text, so the files checked after
  * it see what it defines now. Returns the fixes applied, at the problems they fixed. A file of an
- * installed game, read from its catalogs, is no file to write: it is left as it is.
+ * installed game, read from its catalogs, is no file to write: it is left as it is; so is a file that is
+ * not UTF-8, which `problems` then tells.
  */
-async function fixFile(file: string, context: AnalysisContext, game: GameData | undefined): Promise<Applied[]> {
+async function fixFile(file: string, context: AnalysisContext, game: GameData | undefined, problems: string[]): Promise<Applied[]> {
   const files = game?.files ?? diskFiles;
   if (files.inCatalogs?.(file)) {
     return [];
@@ -360,8 +362,16 @@ async function fixFile(file: string, context: AnalysisContext, game: GameData | 
     text = fixed;
   }
   if (text !== original) {
+    const bytes = readFileSync(file);
+    // Read as UTF-8, the characters of another encoding were replaced: written back, they would be lost.
+    if (!Buffer.from(bytes.toString('utf8'), 'utf8').equals(bytes)) {
+      const problem = `${file}: not fixed: the file is not UTF-8`;
+      console.error(problem);
+      problems.push(problem);
+      return [];
+    }
     // The text was read without the byte order mark the file may start with; the file keeps it.
-    const mark = readFileSync(file).subarray(0, 3).equals(byteOrderMark) ? '﻿' : '';
+    const mark = bytes.subarray(0, 3).equals(byteOrderMark) ? '﻿' : '';
     await writeFile(file, mark + text, 'utf8');
     const source = game?.index?.sourceOf(file);
     if (source !== undefined) {
@@ -511,8 +521,14 @@ const descriptions: ReadonlyMap<string, string> = new Map([...Object.entries(dia
 
 const sarifLevels: Record<Severity, string> = { error: 'error', warning: 'warning', info: 'note', hint: 'note' };
 
-/** The checker's version from its package manifest, when it runs from the installed package. */
+/** The checker's version, set where the VS Code extension bundles it: its package.json there is the extension's. */
+declare const X4_SCRIPT_CHECK_VERSION: string | undefined;
+
+/** The checker's version from its package manifest, when it runs from the installed package, or from its bundle. */
 function checkerVersion(): string | undefined {
+  if (typeof X4_SCRIPT_CHECK_VERSION === 'string') {
+    return X4_SCRIPT_CHECK_VERSION;
+  }
   try {
     const manifest = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as { name?: unknown; version?: unknown };
     return manifest.name === 'x4-script-check' && typeof manifest.version === 'string' ? manifest.version : undefined;
@@ -653,21 +669,31 @@ async function main(argv: string[]): Promise<number> {
     }
   }
   const scriptFolders: ScriptFolder[] = [];
+  // A folder given twice, or inside another given folder, is checked once.
+  const collected = new Set<string>();
   for (const root of options.roots) {
     const resolved = path.resolve(root);
     if (!files.isDirectory(resolved)) {
       console.error(`Not a folder: ${resolved}`);
       return 2;
     }
-    scriptFolders.push(...collectScriptFolders(resolved, files, game));
+    for (const scriptFolder of collectScriptFolders(resolved, files, game)) {
+      const key = scriptFolder.folder.toLowerCase();
+      if (!collected.has(key)) {
+        collected.add(key);
+        scriptFolders.push(scriptFolder);
+      }
+    }
   }
+  // What the reports list besides the findings: the problems of the game files, the files --fix left alone.
+  const problems = [...(game?.problems ?? [])];
   // Every file fixed before any is checked: a fix in one may change what another refers to.
   let applied: Applied[] | undefined;
   if (options.fix) {
     applied = [];
     for (const scriptFolder of scriptFolders) {
       for (const file of xmlFilesOf(files, scriptFolder.folder)) {
-        applied.push(...(await fixFile(file, context, game)));
+        applied.push(...(await fixFile(file, context, game, problems)));
       }
     }
   }
@@ -678,7 +704,6 @@ async function main(argv: string[]): Promise<number> {
     findings.push(...checkFolder(scriptFolder, context, game, counters));
   }
   const validated = context.schemas !== undefined;
-  const problems = game?.problems ?? [];
   if (options.format === 'json') {
     console.log(jsonReport(findings, counters, validated, problems, applied));
   } else if (options.format === 'sarif') {
