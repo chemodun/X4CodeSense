@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.3.0...x4-script-check@v0.4.0) (2026-10-02)
+
+
+### Features
+
+* patches and merge files of the game's library files ([628a5b6](https://github.com/chemodun/X4CodeSense/commit/628a5b631284c12340f5aca8ca75d6bbcd86a861))
+* report text inside elements, and refuse it in the side of a patch ([97d0f22](https://github.com/chemodun/X4CodeSense/commit/97d0f227d088e533b4a99407dc9d80cd20b5871f))
+* the extension brings the checker along, settings of another type and deleted folders no longer stop or fool the server ([de1f609](https://github.com/chemodun/X4CodeSense/commit/de1f609b592d9dfe91e37c5d3500e8f08d8d772e))
+* variable types from what sets them, guessed for actions from the schema's words ([fabb120](https://github.com/chemodun/X4CodeSense/commit/fabb120462e7c7d10f2b1197c45a766375611f2b))
+* well-formedness the game's parser checks, a script whose root lost its &gt; stays checked ([ddccfb4](https://github.com/chemodun/X4CodeSense/commit/ddccfb4e759a3aa5c38be77191e0630e01fd9ece))
+
+
+### Bug Fixes
+
+* no unset-variable finding after the include of a library chosen at run time ([89604ab](https://github.com/chemodun/X4CodeSense/commit/89604ab7d5ee7a2d642868a4ea7434f77ce63b3e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.8.0 to 0.9.0
+
 ## [0.3.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.2.0...x4-script-check@v0.3.0) (2026-10-01)
 
 
