@@ -1,6 +1,6 @@
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
-import type { XmlAttribute, XmlElement, XmlStructure } from '../xml/xmlStructure';
+import { textRunsOf, type XmlAttribute, type XmlElement, type XmlRegion, type XmlStructure } from '../xml/xmlStructure';
 import type { ContentProblem } from './contentModel';
 import { acceptsFreeText, acceptsValue, constrainedByPattern, enumerationsOf, type XsdAttribute, type XsdElement, type XsdSchema } from './schema';
 
@@ -28,9 +28,24 @@ export type StructureDiagnosticCode =
   | 'missing-child-element'
   | 'unknown-attribute'
   | 'missing-required-attribute'
-  | 'invalid-attribute-value';
+  | 'invalid-attribute-value'
+  | 'text-not-allowed';
 
 const listedNames = 8;
+
+/**
+ * The text an element holds where its declaration allows none, as stretches. A stretch with a `<` is left
+ * out: a `<` that starts no tag is one being typed, or a CDATA section or processing instruction.
+ */
+export function textNotAllowed(element: XmlElement, text: string, comments: readonly XmlRegion[]): XmlRegion[] {
+  return textRunsOf(element, text, comments).filter((run) => !text.slice(run.start, run.end).includes('<'));
+}
+
+/** Text as a message shows it: whitespace collapsed, long text cut. */
+export function shownText(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ');
+  return collapsed.length > 40 ? `${collapsed.slice(0, 37)}...` : collapsed;
+}
 
 function listOf(names: readonly string[]): string {
   if (names.length === 0) {
@@ -75,17 +90,20 @@ function requiredAttributes(declaration: XsdElement): readonly string[] {
 class Validator {
   readonly diagnostics: Diagnostic[] = [];
   readonly declarations = new Map<XmlElement, XsdElement>();
+  private readonly text: string;
 
   constructor(
     private readonly document: TextDocument,
     private readonly options: StructureValidationOptions
-  ) {}
+  ) {
+    this.text = document.getText();
+  }
 
-  private report(code: StructureDiagnosticCode, message: string, start: number, end: number): void {
+  private report(code: StructureDiagnosticCode, message: string, start: number, end: number, severity: DiagnosticSeverity = DiagnosticSeverity.Error): void {
     this.diagnostics.push({
       range: Range.create(this.document.positionAt(start), this.document.positionAt(end)),
       message,
-      severity: DiagnosticSeverity.Error,
+      severity,
       code,
       source: this.options.source,
     });
@@ -96,6 +114,7 @@ class Validator {
     if (!root) {
       return;
     }
+    const comments = structure.comments;
     for (const extra of structure.roots.slice(1)) {
       this.report('unknown-root-element', `Unexpected root element '${extra.name}': the document already has a root`, extra.nameStart, extra.nameEnd);
     }
@@ -115,6 +134,9 @@ class Validator {
       const checked = this.options.checkElement?.(element) ?? true;
       if (checked) {
         this.validateAttributes(element, declaration);
+        if (!declaration.allowsText) {
+          this.validateText(element, comments);
+        }
       }
       this.validateChildren(element, declaration, checked);
       for (const child of element.children) {
@@ -142,6 +164,19 @@ class Validator {
       if (!element.attributes.some((attribute) => attribute.name === name)) {
         this.report('missing-required-attribute', `Missing required attribute '${name}' in '${element.name}'`, element.nameStart, element.nameEnd);
       }
+    }
+  }
+
+  /** Text in an element whose declaration allows none; the game's scripts hold none. */
+  private validateText(element: XmlElement, comments: readonly XmlRegion[]): void {
+    for (const run of textNotAllowed(element, this.text, comments)) {
+      this.report(
+        'text-not-allowed',
+        `Element '${element.name}' does not allow text, found '${shownText(this.text.slice(run.start, run.end))}'`,
+        run.start,
+        run.end,
+        DiagnosticSeverity.Warning
+      );
     }
   }
 

@@ -719,6 +719,68 @@ export function attributeNamed(element: XmlElement, name: string): XmlAttribute 
   return element.attributes.find((attribute) => attribute.name === name);
 }
 
+/** Index of the first comment that ends after the offset. */
+function firstCommentEndingAfter(comments: readonly XmlRegion[], offset: number): number {
+  let low = 0;
+  let high = comments.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (comments[middle].end <= offset) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
+
+/**
+ * The text an element holds outside its child elements and comments, as stretches from their first
+ * character that is not whitespace to their last. None for an element without an end tag: where its
+ * content ends is not known. CDATA sections and processing instructions are not told apart from text.
+ */
+export function textRunsOf(element: XmlElement, text: string, comments: readonly XmlRegion[]): XmlRegion[] {
+  if (!element.endTag) {
+    return [];
+  }
+  const runs: XmlRegion[] = [];
+  const addRun = (start: number, end: number): void => {
+    let first = start;
+    let last = end;
+    while (first < last && isWhitespace(text.charCodeAt(first))) {
+      first++;
+    }
+    while (last > first && isWhitespace(text.charCodeAt(last - 1))) {
+      last--;
+    }
+    if (first < last) {
+      runs.push({ start: first, end: last });
+    }
+  };
+  const gap = (start: number, end: number): void => {
+    let at = start;
+    while (at < end && isWhitespace(text.charCodeAt(at))) {
+      at++;
+    }
+    if (at === end) {
+      return;
+    }
+    let from = start;
+    for (let index = firstCommentEndingAfter(comments, start); index < comments.length && comments[index].start < end; index++) {
+      addRun(from, comments[index].start);
+      from = comments[index].end;
+    }
+    addRun(from, end);
+  };
+  let from = element.startTagEnd;
+  for (const child of element.children) {
+    gap(from, child.start);
+    from = child.end;
+  }
+  gap(from, element.endTag.start);
+  return runs;
+}
+
 /** True when the offset lies inside a comment. */
 export function isInComment(structure: XmlStructure, offset: number): boolean {
   const comments = structure.comments;

@@ -21,7 +21,7 @@ Options:
 - `--game <folder>` - the installed game, the folder of `X4.exe`. Its files and those of its DLCs (the folders of its `extensions` whose names start with `ego_dlc_`) are read from their catalogs (`01.cat`, …, a DLC's `ext_01.cat`, …) where they lie: nothing is extracted, and the X Catalog Tool is not needed. The other folders in its `extensions`, the player's mods, are not part of the game: give them as paths to check or with `--extensions`. Used when `--unpacked` is not given. Also read from the `X4_GAME` environment variable.
 - `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd` and `common.xsd`, and scripts are validated against them. Also read from the `X4_UNPACKED` environment variable.
 - `--extensions <folder>` - other extensions the checked ones refer to: their texts and scripts are read, they are not checked. May be given several times.
-- `--no-structure` - report unknown elements, attributes and values only, not the order and completeness of child elements.
+- `--no-structure` - report unknown elements, attributes and values and text inside elements only, not the order and completeness of child elements.
 - `--fix` - apply the preferred quick fixes to the files first, then report what is left, see below.
 - `--format <format>` - `text` (default), `json`, `github` or `sarif`, see below.
 - `--fail-on <severity>` - the least severe finding that fails the check: `error`, `warning`, `info` or `hint`. The default, `hint`, fails on any finding; with `--fail-on error`, warnings are reported and the exit code is 0.

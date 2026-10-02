@@ -5,7 +5,7 @@ import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserve
 import { detectDocument } from '../scripts/scriptMetadata';
 import type { DocumentDetection } from '../types';
 import type { ScriptProperties } from '../properties/scriptProperties';
-import { attributeNamed, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
+import { attributeNamed, elementAt, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { rootElementName, type SchemaSet } from '../xsd/loadSchemas';
 import type { XsdElement } from '../xsd/schema';
 import { validateStructure } from '../xsd/validateStructure';
@@ -287,10 +287,16 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
   };
   patch.patched = { written, analysis: patched };
   const diagnostics: Diagnostic[] = [];
+  // Text an operation holds beside what it brings in is the patch check's to report, written out or not.
+  const structure = patch.source.structure;
+  const inOperation = (offset: number): boolean => {
+    const element = elementAt(structure, offset);
+    return element !== undefined && element.parent === structure.roots[0];
+  };
   // The well-formedness problems come first in every analysis.
   for (const diagnostic of patched.diagnostics.slice(patched.structure?.problems.length ?? 0)) {
     const range = sourceRange(written, patch.source, patched.document.offsetAt(diagnostic.range.start), patched.document.offsetAt(diagnostic.range.end));
-    if (range) {
+    if (range && !(diagnostic.code === 'text-not-allowed' && inOperation(range.start))) {
       diagnostics.push({ ...diagnostic, range: Range.create(document.positionAt(range.start), document.positionAt(range.end)) });
     }
   }

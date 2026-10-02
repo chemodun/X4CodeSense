@@ -1,10 +1,11 @@
 /**
  * The XSD model of one schema (`md` or `aiscripts`, with `common.xsd` merged in, or `diff`), built from
  * the schema texts with the core's own scanner. Only the subset of XML Schema the game uses is supported:
- * sequence, choice, all, group references, `any` wildcards, named complex types with extension,
- * attribute groups, simple types with restriction facets, unions and lists; entities a schema file
- * declares in its own DOCTYPE are expanded in facet values. Everything is compiled lazily and cached, so a
- * schema loads in milliseconds and only the parts a document touches get resolved.
+ * sequence, choice, all, group references, `any` wildcards, named complex types with extension, mixed
+ * and simple content (whether an element may hold text), attribute groups, simple types with
+ * restriction facets, unions and lists; entities a schema file declares in its own DOCTYPE are expanded
+ * in facet values. Everything is compiled lazily and cached, so a schema loads in milliseconds and only
+ * the parts a document touches get resolved.
  */
 import type { SourceLocation } from '../sourceLocation';
 import { attributeNamed, decodeAttributeValue, parseXml, type XmlElement } from '../xml/xmlStructure';
@@ -70,6 +71,13 @@ export interface XsdAttribute {
 interface ComplexType {
   attributes: Map<string, XsdAttribute>;
   particle?: Particle;
+  /** True when the content may hold text: mixed or simple content. */
+  text?: boolean;
+}
+
+function isMixed(node: XmlElement): boolean {
+  const mixed = attributeNamed(node, 'mixed')?.value.trim();
+  return mixed === 'true' || mixed === '1';
 }
 
 const builtinByName: Record<string, XsdBuiltin> = {
@@ -423,6 +431,15 @@ export class XsdElement {
   child(name: string): XsdElement | undefined {
     return this.contentModel.declarations.get(name);
   }
+
+  /**
+   * True when the element may hold text: its type is simple, or a complex type with mixed or simple
+   * content, or it has no type at all. A complex type that holds elements only, or nothing, does not.
+   */
+  get allowsText(): boolean {
+    const type = this.resolved();
+    return type === null || type.text === true;
+  }
 }
 
 const emptyAttributes: ReadonlyMap<string, XsdAttribute> = new Map();
@@ -619,6 +636,9 @@ export class XsdSchema {
   }
 
   private compileComplexType(node: XmlElement, into: ComplexType): void {
+    if (isMixed(node)) {
+      into.text = true;
+    }
     for (const child of node.children) {
       switch (localName(child.name)) {
         case 'attribute':
@@ -637,6 +657,9 @@ export class XsdSchema {
           break;
         case 'complexContent':
         case 'simpleContent': {
+          if (localName(child.name) === 'simpleContent' || isMixed(child)) {
+            into.text = true;
+          }
           const derivation = firstChildNamed(child, 'extension', 'restriction');
           if (!derivation) {
             break;

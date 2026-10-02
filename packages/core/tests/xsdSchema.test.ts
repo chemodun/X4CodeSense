@@ -1,17 +1,8 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import {
-  acceptsFreeText,
-  acceptsValue,
-  analyzeText,
-  enumerationsOf,
-  loadSchemas,
-  typeNamesOf,
-  type XsdElement,
-  type XsdSchema,
-  type XsdSimpleType,
-} from '../src';
+import { DiagnosticSeverity } from 'vscode-languageserver-types';
+import { acceptsFreeText, acceptsValue, analyzeText, enumerationsOf, loadSchemas, typeNamesOf, XsdSchema, type XsdElement, type XsdSimpleType } from '../src';
 
 const libraries = fileURLToPath(new URL('./fixtures/unpacked/libraries', import.meta.url));
 const schemas = loadSchemas(libraries);
@@ -112,6 +103,46 @@ describe('element declarations', () => {
     expect(attentionActions.child('label')).toBeDefined();
     expect(declaration(aiscripts, 'aiscript', 'interrupts', 'library', 'actions').attributes.get('name')?.typeName).toBe('namestring');
     expect(declaration(aiscripts, 'aiscript', 'init').child('set_value')).toBeDefined();
+  });
+
+  it('tells which elements may hold text: simple types, mixed and simple content, no type', () => {
+    const text = [
+      '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">',
+      '  <xs:complexType name="holder"><xs:sequence><xs:element name="item" type="xs:string"/></xs:sequence></xs:complexType>',
+      '  <xs:element name="root">',
+      '    <xs:complexType>',
+      '      <xs:sequence>',
+      '        <xs:element name="plain" type="xs:string"/>',
+      '        <xs:element name="anything"/>',
+      '        <xs:element name="mixed"><xs:complexType mixed="true"><xs:sequence><xs:element name="b"/></xs:sequence></xs:complexType></xs:element>',
+      '        <xs:element name="derived"><xs:complexType><xs:complexContent mixed="true"><xs:restriction base="xs:anyType"/></xs:complexContent></xs:complexType></xs:element>',
+      '        <xs:element name="valued"><xs:complexType><xs:simpleContent><xs:extension base="xs:string"><xs:attribute name="unit"/></xs:extension></xs:simpleContent></xs:complexType></xs:element>',
+      '        <xs:element name="holder" type="holder"/>',
+      '        <xs:element name="empty"><xs:complexType><xs:attribute name="a"/></xs:complexType></xs:element>',
+      '      </xs:sequence>',
+      '    </xs:complexType>',
+      '  </xs:element>',
+      '</xs:schema>',
+    ].join('\n');
+    const schema = new XsdSchema('text', [{ path: 'text.xsd', text }]);
+    expect(schema.problems).toEqual([]);
+    const root = declaration(schema, 'root');
+    expect(['plain', 'anything', 'mixed', 'derived', 'valued', 'holder', 'empty'].map((name) => `${name} ${root.child(name)?.allowsText}`)).toEqual([
+      'plain true',
+      'anything true',
+      'mixed true',
+      'derived true',
+      'valued true',
+      'holder false',
+      'empty false',
+    ]);
+    expect(root.allowsText).toBe(false);
+    // The game's scripts hold elements only; its diff.xsd takes text in add and replace, the value of an attribute.
+    expect([cue.allowsText, actions.allowsText, (actions.child('set_value') as XsdElement).allowsText]).toEqual([false, false, false]);
+    const diff = schemas.diff as XsdSchema;
+    expect(
+      ['diff', 'add', 'replace', 'remove'].map((name) => (name === 'diff' ? declaration(diff, 'diff') : declaration(diff, 'diff', name)).allowsText)
+    ).toEqual([false, true, true, false]);
   });
 });
 
@@ -332,5 +363,43 @@ describe('structure validation', () => {
   it('ignores namespace and schema instance attributes', () => {
     const text = '<mdscript name="S" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd"><cues/></mdscript>';
     expect(report(text)).toEqual([]);
+  });
+
+  it('reports text in elements that hold only elements or nothing, as a warning, with content checking off too', () => {
+    const text = [
+      '<mdscript name="S">',
+      '  <cues>',
+      '    <cue name="A">hello',
+      '      <actions>',
+      '        <set_value name="$x" exact="1">2</set_value>',
+      '        <!-- a comment --> one <!-- another --> two &amp; three',
+      '        <set_value name="$y"/> exact="1"',
+      '        <!-- only a comment -->',
+      '      </actions>',
+      '    </cue>>',
+      '  </cues>',
+      '</mdscript>',
+    ].join('\n');
+    const expected = [
+      "3:19 text-not-allowed: Element 'cue' does not allow text, found 'hello'",
+      "5:40 text-not-allowed: Element 'set_value' does not allow text, found '2'",
+      "6:28 text-not-allowed: Element 'actions' does not allow text, found 'one'",
+      "6:49 text-not-allowed: Element 'actions' does not allow text, found 'two &amp; three'",
+      "7:32 text-not-allowed: Element 'actions' does not allow text, found 'exact=\"1\"'",
+      "10:11 text-not-allowed: Element 'cues' does not allow text, found '>'",
+    ];
+    expect(report(text)).toEqual(expected);
+    expect(report(text, false)).toEqual(expected);
+    expect(new Set(analyzeText(text, { schemas }).diagnostics.map((diagnostic) => diagnostic.severity))).toEqual(new Set([DiagnosticSeverity.Warning]));
+  });
+
+  it('leaves the text alone while a tag is typed, and in an element not closed yet', () => {
+    const wrap = (actions: string): string =>
+      `<mdscript name="S">\n  <cues>\n    <cue name="A">\n      <actions>\n${actions}\n      </actions>\n    </cue>\n  </cues>\n</mdscript>`;
+    const texts = (text: string): string[] => report(text).filter((line) => line.includes('text-not-allowed'));
+    expect(texts(wrap('        <'))).toEqual([]);
+    expect(texts(wrap('        < set_value'))).toEqual([]);
+    expect(texts(wrap('        <do_if value="1">\n          typing'))).toEqual([]);
+    expect(texts(wrap('        <![CDATA[ data ]]>'))).toEqual([]);
   });
 });

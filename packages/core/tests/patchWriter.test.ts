@@ -183,6 +183,57 @@ describe('the patch for an edited side: what cannot be written', () => {
     expect(written.refused.map((refusal) => refusal.reason)).toEqual(['The patch brings in <cue> and changes it again: change it where the patch does']);
   });
 
+  it("tells text typed inside an element, the game's, the patch's or a new one, and writes nothing", () => {
+    const reason = (name: string): string => `Text inside <${name}> changed: only elements, attributes and comments are written into the patch`;
+    for (const [from, to, name] of [
+      ['<cue name="Later" instantiate="true"/>', '<cue name="Later" instantiate="true">hello</cue>', 'cue'],
+      ['<actions>', '<actions>hello', 'actions'],
+      ['<cue name="Late" />', '<cue name="Late">hello</cue>', 'cue'],
+      ['<cue name="Later" instantiate="true"/>', '<cue name="Later" instantiate="true"/>\n    <cue name="Mine">hello</cue>', 'cue'],
+      ['    <cue name="Later"', '    hello\n    <cue name="Later"', 'cues'],
+    ]) {
+      const written = write((after) => after.replace(from, to));
+      const edited = written.after.replace(from, to);
+      expect(written.text, to).toBeUndefined();
+      expect(written.refused, to).toEqual([{ line: edited.slice(0, edited.indexOf('hello')).split('\n').length - 1, reason: reason(name) }]);
+    }
+    // Whitespace is no text.
+    expect(write((after) => after.replace('<cue name="Later" instantiate="true"/>', '<cue name="Later" instantiate="true">\n    </cue>'))).toMatchObject({
+      text: patchText,
+      refused: [],
+    });
+  });
+
+  it("keeps the text a game's file holds, and tells a removal of it and a patch that would lose it", () => {
+    const gameIcons = path.join(gameFolder, 'libraries', 'icons.xml');
+    const lateIcons = path.join(modsFolder, 'late_mod', 'libraries', 'icons.xml');
+    const edited = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const target = readFileSync(gameIcons, 'utf8').replace(
+      '<icon name="game_icon" texture="a.tga" />',
+      '<icon name="game_icon" texture="a.tga">big</icon>\n  loose'
+    );
+    edited.setStructure(gameIcons, target, parseXml(target), 'game', true);
+    const writeIcons = (text: string, change: (after: string) => string): PatchWrite & { side: string } => {
+      const patch = analyzeText(text, { ...context, index: edited }, pathToFileURL(lateIcons).toString()).patch!;
+      const side = change(comparePatch(patch, edited)!.after);
+      return { ...writePatch(patch, side, edited), side };
+    };
+    const late = readFileSync(lateIcons, 'utf8');
+    // The side shows the icon's text; what follows it in the game's <icons> is not shown before the patch's icon.
+    const changed = writeIcons(late, (after) => after.replace('texture="c.tga"', 'texture="d.tga"'));
+    expect(changed.refused).toEqual([]);
+    expect(changed.text).toBe(late.replace('texture="c.tga"', 'texture="d.tga"'));
+    expect(writeIcons(late, (after) => after.replace('>big<', '><')).refused.map((refusal) => refusal.reason)).toEqual([
+      'Text inside <icon> changed: only elements, attributes and comments are written into the patch',
+    ]);
+    // With the icon's value set, the side shows all of <icons>; an icon added after it would leave its text out.
+    const sizes = `<?xml version="1.0" encoding="utf-8"?>\n<diff>\n  <add sel="/icons/icon[@name='game_icon']" type="@size">2</add>\n</diff>\n`;
+    const losing = writeIcons(sizes, (after) => after.replace('big</icon>', 'big</icon>\n  <icon name="mine" />'));
+    expect(losing.refused).toEqual([
+      { line: losing.side.slice(0, losing.side.indexOf('loose')).split('\n').length - 1, reason: 'The patch written would not give this text' },
+    ]);
+  });
+
   it('never throws on a side cut anywhere, as while typing', () => {
     const patch = analyzeText(patchText, context, pathToFileURL(latePatch).toString()).patch!;
     const after = comparePatch(patch, index)!.after;

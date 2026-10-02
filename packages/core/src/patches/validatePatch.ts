@@ -9,6 +9,9 @@
  * - With the index: a patch with nothing to patch (`patch-target-missing`), and per operation a path that
  *   selects nothing (`patch-no-match`, error, information with `silent="true"`) or several nodes
  *   (`patch-several-matches`), and what the game refuses to do (`patch-invalid-operation`).
+ * - With the index and the schemas: text an `add` or `replace` holds beside the elements it brings in,
+ *   which goes into an element of the script that allows none (`text-not-allowed`, warning). Text inside
+ *   what it brings in is checked where it lands in the script.
  * - A merge file, a file in an extension's `libraries` that is no patch, whose root is not the root of the
  *   game's file it merges into: the game skips it (`library-root-mismatch`).
  */
@@ -17,13 +20,14 @@ import * as path from 'node:path';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
 import type { PatchTarget, ScriptIndex } from '../project/scriptIndex';
+import type { ScriptSchema } from '../types';
 import { attributeNamed, rangeInValue, type XmlAttribute, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { parseXPath, parseXPathCondition, type XPath } from '../xml/xpath';
-import { diffSchemaName, type SchemaSet } from '../xsd/loadSchemas';
-import { typeNamesOf, type XsdAttribute, type XsdElement } from '../xsd/schema';
-import { validateStructure } from '../xsd/validateStructure';
+import { diffSchemaName, rootElementName, type SchemaSet } from '../xsd/loadSchemas';
+import { typeNamesOf, type XsdAttribute, type XsdElement, type XsdSchema } from '../xsd/schema';
+import { shownText, textNotAllowed, validateStructure, type StructureDiagnosticCode } from '../xsd/validateStructure';
 import { afterEarlier, analyzePatch, type PatchAnalysis } from './patchAnalysis';
-import type { PatchOperation } from './patchTree';
+import type { PatchNode, PatchOperation } from './patchTree';
 
 export type PatchDiagnosticCode =
   | 'patch-path-syntax'
@@ -71,10 +75,36 @@ function operationsOf(structure: XmlStructure): XmlElement[] {
 
 const shown = (text: string): string => (text.length > 60 ? `${text.slice(0, 57)}...` : text);
 
+/** The schema of the script a patch changes, by the root element of its tree. */
+function targetSchema(patch: PatchAnalysis, schemas: SchemaSet): XsdSchema | undefined {
+  const root = patch.document?.children.find((child) => child.kind === 'element');
+  const schema = (Object.keys(rootElementName) as ScriptSchema[]).find((name) => rootElementName[name] === root?.name);
+  return schema && schemas.schemas[schema];
+}
+
+/** The declaration of an element of a script's tree, by the names from its root down. */
+function declarationOf(node: PatchNode, schema: XsdSchema): XsdElement | undefined {
+  const names: string[] = [];
+  for (let at: PatchNode | undefined = node; at?.kind === 'element'; at = at.parent) {
+    names.unshift(at.name);
+  }
+  let declaration = names.length > 0 ? schema.root(names[0]) : undefined;
+  for (const name of names.slice(1)) {
+    declaration = declaration?.child(name);
+  }
+  return declaration;
+}
+
 /** Validates a patch document: its structure, its paths, and with the index what it does to its target. */
 export function validatePatch(document: TextDocument, structure: XmlStructure, options: PatchValidationOptions): PatchValidation {
   const diagnostics: Diagnostic[] = [];
-  const report = (code: PatchDiagnosticCode, message: string, start: number, end: number, severity: DiagnosticSeverity = DiagnosticSeverity.Error): void => {
+  const report = (
+    code: PatchDiagnosticCode | StructureDiagnosticCode,
+    message: string,
+    start: number,
+    end: number,
+    severity: DiagnosticSeverity = DiagnosticSeverity.Error
+  ): void => {
     diagnostics.push({ range: Range.create(document.positionAt(start), document.positionAt(end)), message, severity, code, source: options.source });
   };
   const result: PatchValidation = { diagnostics, declarations: new Map() };
@@ -158,6 +188,25 @@ export function validatePatch(document: TextDocument, structure: XmlStructure, o
       );
     } else if (operation.status === 'invalid' && operation.reason !== undefined) {
       report('patch-invalid-operation', `${operation.reason}: the game skips this operation`, operation.element.nameStart, operation.element.nameEnd);
+    }
+  }
+  // An operation that brings in nodes puts its text among them; one that sets a value has no parent.
+  const schema = options.schemas && targetSchema(patch, options.schemas);
+  const text = patch.source.text;
+  for (const operation of schema ? patch.operations : []) {
+    const parent = operation.status === 'applied' ? operation.parent : undefined;
+    const declaration = parent && schema && declarationOf(parent, schema);
+    if (!parent || !declaration || declaration.allowsText) {
+      continue;
+    }
+    for (const run of textNotAllowed(operation.element, text, structure.comments)) {
+      report(
+        'text-not-allowed',
+        `The text '${shownText(text.slice(run.start, run.end))}' goes into '${parent.name}', which does not allow text`,
+        run.start,
+        run.end,
+        DiagnosticSeverity.Warning
+      );
     }
   }
   return result;

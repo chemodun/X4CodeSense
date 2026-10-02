@@ -10,11 +10,13 @@
  *   changes the nearest place before it.
  *
  * The trees of both texts are compared, not the texts: elements and comments, their names, attributes
- * and order. Whitespace between them and the order of attributes do not count; neither does text inside
- * elements, which scripts do not have. Children are paired by what they are whole, then by name and
- * their first identifying attribute, then by name. Nothing is written unless the patch, applied again,
- * gives the edited tree and each of its operations selects what it did before; otherwise the changes
- * that cannot be written are told, with the reason.
+ * and order. Whitespace between them and the order of attributes do not count. Text inside elements,
+ * which the game's scripts do not have, is not written: when the edited text has other text inside its
+ * elements than the side shows, nothing is written, and that is told. Children are paired by what they
+ * are whole, then by name and their first identifying attribute, then by name. Nothing is written unless
+ * the patch, applied again, gives the edited tree with its text inside elements and each of its
+ * operations selects what it did before; otherwise the changes that cannot be written are told, with the
+ * reason.
  *
  * A path names every element from the root. Every element below the root that has `name`, `value`,
  * `ref` or `id` gets the first of them, then more of its attributes while siblings of its name share the
@@ -22,9 +24,10 @@
  * predicate only when siblings share its name.
  */
 import type { ScriptIndex } from '../project/scriptIndex';
-import { attributeNamed, parseXml, type XmlElement, type XmlRegion, type XmlStructure } from '../xml/xmlStructure';
+import { attributeNamed, parseXml, textRunsOf, type XmlElement, type XmlRegion, type XmlStructure } from '../xml/xmlStructure';
 import { evaluateXPath, parseXPath } from '../xml/xpath';
 import { analyzePatch, treeBefore, treeBeforePatch, type PatchAnalysis } from './patchAnalysis';
+import { writePatchedTree } from './patchedDocument';
 import { documentTree, type PatchNode, type PatchNodeAttribute, type PatchOperation, type PatchSource } from './patchTree';
 
 /** An edit of a text: `length` characters at `offset` replaced by `text`. */
@@ -924,6 +927,42 @@ export function lineEdits(before: string, after: string): PatchTextEdit[] {
   return edits;
 }
 
+/** The stretches of text inside the elements of a text, in order, whitespace collapsed; and its lines. */
+interface ElementTexts {
+  texts: { element: XmlElement; start: number; text: string }[];
+  lines: Lines;
+}
+
+function elementTextsOf(text: string, structure: XmlStructure): ElementTexts {
+  const texts: ElementTexts['texts'] = [];
+  for (const element of structure.elements) {
+    for (const run of textRunsOf(element, text, structure.comments)) {
+      texts.push({ element, start: run.start, text: text.slice(run.start, run.end).replace(/\s+/g, ' ') });
+    }
+  }
+  // An element's text after its children comes after theirs.
+  texts.sort((a, b) => a.start - b.start);
+  return { texts, lines: new Lines(text) };
+}
+
+/**
+ * The first stretch of text inside an element that differs between two texts, with its line and
+ * element: in whichever text it comes first, the lines before an edit being alike in both.
+ */
+function textDifference(before: ElementTexts, after: ElementTexts): { line: number; name: string } | undefined {
+  const count = Math.max(before.texts.length, after.texts.length);
+  let at = 0;
+  while (at < count && before.texts[at]?.element.name === after.texts[at]?.element.name && before.texts[at]?.text === after.texts[at]?.text) {
+    at++;
+  }
+  if (at === count) {
+    return undefined;
+  }
+  const old = before.texts[at] && { line: before.lines.of(before.texts[at].start), name: before.texts[at].element.name };
+  const now = after.texts[at] && { line: after.lines.of(after.texts[at].start), name: after.texts[at].element.name };
+  return now && (!old || now.line <= old.line) ? now : old;
+}
+
 /**
  * What a patch must become so that the file it changes, with the patch applied, is the edited text:
  * the side of a patch comparison after editing. See the header.
@@ -943,6 +982,13 @@ export function writePatch(patch: PatchAnalysis, edited: string, index: ScriptIn
   const editedProblem = editedSource.structure.problems[0];
   if (editedProblem) {
     return refuse(`Not well-formed: ${editedProblem.message}`, new Lines(edited).of(editedProblem.start));
+  }
+  // The side as it shows the file, text between nodes of different files left out.
+  const side = patch.patched?.written.text ?? writePatchedTree(patch.document).text;
+  const editedTexts = elementTextsOf(edited, editedSource.structure);
+  const textChange = textDifference(elementTextsOf(side, patch.patched?.analysis.structure ?? parseXml(side)), editedTexts);
+  if (textChange) {
+    return refuse(`Text inside <${textChange.name}> changed: only elements, attributes and comments are written into the patch`, textChange.line);
   }
   const editedTree = documentTree(editedSource);
   const hashes = new Hashes();
@@ -1029,6 +1075,14 @@ export function writePatch(patch: PatchAnalysis, edited: string, index: ScriptIn
       changes: writer.changes,
       refused: [{ line: firstDifference(analysis.document, editedTree, hashes), reason: 'The patch written would not give this text' }],
     };
+  }
+  // Text the edited file keeps inside elements, which the patch may have moved away from where it is shown.
+  if (editedTexts.texts.length > 0) {
+    const written = writePatchedTree(analysis.document).text;
+    const lost = textDifference(elementTextsOf(written, parseXml(written)), editedTexts);
+    if (lost) {
+      return { edits: [], changes: writer.changes, refused: [{ line: lost.line, reason: 'The patch written would not give this text' }] };
+    }
   }
   return { text, edits: lineEdits(patch.source.text, text), changes: writer.changes.sort((a, b) => a.line - b.line), refused: [] };
 }

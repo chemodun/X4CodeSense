@@ -11,7 +11,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 ### Checks as you type
 
 - XML well-formedness: unclosed tags, missing or unquoted attribute values, missing end tags, repeated attributes.
-- Validation against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes, invalid attribute values.
+- Validation against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes, invalid attribute values. Text inside an element, which the schemas allow nowhere in scripts, is a warning: a stray `>`, an attribute typed after its tag was closed.
 - Expressions, parsed as the game parses them: syntax errors, `@` combined with `?`, text references that are not `{page, id}` literals, `%d` in format strings.
 - Formats, `'%s of %s'.[$a, $b]` and `{page, id}.[…]`: fewer arguments than the placeholders take is a warning; arguments no placeholder takes, which are not shown, are reported as information.
 - Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword.
@@ -82,14 +82,14 @@ These open the other file when what is created belongs there; the game's own scr
 - A patch is applied to the file it changes as the game applies it, after the patches loaded before it: a patch in your extension's `md` or `aiscripts` folder changes the game's file of the same name, one in `extensions/<folder>/md` that extension's file.
 - A patch in your extension's `libraries` folder changes the game's library file of the same name, such as `libraries/wares.xml`. A file there whose root is that file's (`<wares>`) is a merge file: the game adds the children of its root to its file, and so do the patches loaded after it. A file whose root is neither `diff` nor the game file's is reported, since the game skips it.
 - Reported: a `sel` that selects nothing or several nodes, at the step where it stops matching; a patch with nothing to patch; an operation the game refuses; `sel` or `if` that is no valid XPath. The operations and their attributes are checked against the game's `diff.xsd`.
-- What an `add` or `replace` brings in is checked where it lands in a script, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there.
+- What an `add` or `replace` brings in is checked where it lands in a script, as the game will load it, and completion, hover, go to definition, references and rename work in it as they do there. Text it holds beside its elements goes into the script's element too, and is reported there as text in a script is.
 - In `sel` and `if`, hover tells what each step selects and where it is written, go to definition goes there, and completion offers the element and attribute names and the values, such as cue names, of the file as the operation finds it.
 - **Show What This Patch Changes**, also a button in the editor's title bar, opens a diff of the file the patch changes, without and with the patch, and follows the patch as you type. What an operation brings in is shown at the column of the element it replaces or is added next to, or one step deeper than the element it is added into. **Open the File This Patch Changes** opens that file. Both work in a DLC's patch opened from the installed game as well, read only.
 - **Edit This Patch Above What It Changes**, also a button in the title bar, puts the patch in the upper part of the window and that diff full width below it. While the window stays so, a file opened in the diff's group, from the Explorer for example, moves up to the patch's group, and the diff below follows the patch in front above. A patch's diffs close with it, unless their side has changes not yet written. The side with the patch can be edited, and the caret follows between the patch and that side:
   - Typing in what the patch brings in, its elements and the values it sets, goes into the patch as you type, undo included.
   - Other changes, such as a value of the game's own script, an element added next to the game's or one removed, are written into the patch when you save that side (or press **Write Changes into the Patch** in its title bar). They become new operations with a full path, in the order of the places they change: `replace` of a value, `add` with `type` for a new attribute, `add` next to a neighbour for new elements, `remove`, or `replace` of a whole element whose new value spans lines. Elements next to what the patch brings in join its `add`. The patch shows the changes unsaved, and Undo there takes them back.
   - A path names each element from the root: cues and libraries by `name`, other elements by `name`, `value`, `ref` or `id` when they have one, more attributes or a position only where siblings would share it.
-  - Nothing is written unless the patch, applied again, gives exactly the side's elements and attributes and each operation selects what it did before. Otherwise the side stays unsaved and the reason is shown, for example a side that is not well-formed, or a change outside the root element.
+  - Nothing is written unless the patch, applied again, gives exactly the side's elements and attributes and each operation selects what it did before. Otherwise the side stays unsaved and the reason is shown, for example a side that is not well-formed, a change outside the root element, or text typed inside an element.
 - Both sides of that diff are the script they show: hover, go to definition, references, the outline and semantic highlighting work in them as in the script itself, and in the side with the patch completion and quick fixes too. That side shows the problems the file before the patch does not have: those in what the patch brings in, those of your edits in the side, and what they break elsewhere in the script, such as a read of a variable whose `set_value` the patch removes. The file's own problems are left to the file. Rename is refused in both sides; rename in the patch or in the script.
 
 ### Status bar
@@ -130,7 +130,7 @@ A few things the game's files do not say are built in:
 - Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
 - XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
 - A rename of a variable started in a script does not reach its uses in what patches bring in (started in the patch, it does); a variable written in a patch's path is renamed from the script or the patch's content, not from the path. A variable a library of another script uses through `include_actions` is not renamed: the rename is refused, with the reason.
-- In the side with the patch, text inside elements (which scripts do not have) and the order of attributes are not written into the patch. A changed comment of the game's script becomes its removal and a new comment. What a patch brings in and then changes again with another of its operations is changed where that operation does, not from the side.
+- In the side with the patch, text inside elements, which scripts do not have, is not written into the patch: a change of it is refused, with the reason. The order of attributes is not written either. A changed comment of the game's script becomes its removal and a new comment. What a patch brings in and then changes again with another of its operations is changed where that operation does, not from the side.
 - AI scripts, Mission Director scripts and their patches are checked. The patches of library files are applied and their paths checked, but what they bring in is not, since the game has no schemas for those files. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
 - Writing the changes of the side of a large library file, such as `wares.xml` after the DLCs' patches, into its patch takes up to about a second.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
@@ -190,7 +190,7 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
   - _default_: `44` (English)
 - `x4CodeSense.limitLanguageOutput` - show only the preferred language in hovers, and read only the text files of that language and English.
   - _default_: `false`
-- `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes and invalid values are always reported.
+- `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes, invalid values and text inside elements are always reported.
   - _default_: `true`
 - `x4CodeSense.diagnosticMode` - which scripts the Problems panel lists problems of: `openFilesOnly`, the scripts open in the editor, or `workspace`, also every other script and patch in the workspace folders, as they are on disk. Checking them all takes a few seconds for a hundred scripts, once after the scripts are indexed and again in the background when something they refer to changes.
   - _default_: `openFilesOnly`
@@ -233,11 +233,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - Merge files in `libraries`, whose root is the game file's, merged as the game merges them before the patches loaded after them. A file there whose root is neither `diff` nor the game file's is reported (`library-root-mismatch`): the game skips it.
   - The files of `libraries` are in the workspace's problems and in the checks of x4-script-check.
   - Rename and find all references of a variable, a label or another name also cover the paths of patches that pick an element by a value holding it, such as `set_value[@name='$count']` or `do_if[@value='$count gt 0']`: a rename no longer leaves such a path selecting nothing, and is refused when the path is outside the workspace.
+  - Text inside an element that the schema allows to hold only elements, or nothing, is reported as a warning (`text-not-allowed`): a stray `>` after a start tag, an attribute typed after its tag was closed. In a patch, also text in `<diff>` and `remove`, and text an `add` or `replace` puts into a script's element.
 - Changed
   - Patches are applied faster where a step of a path picks a node by an attribute's value, such as `cue[@name='Start']`: the node is found without looking at each of its siblings.
   - Hover over a step of a patch's path names an element without `name` by its `id`.
 - Fixed
   - In the diff of a patch, the file's document type declaration is kept, and the end tag of an element that gets its first child ends its line with the file's line break.
+  - Text typed inside an element in the side with the patch was dropped without a word when the side was written; the change is now refused, with the reason.
 
 ### [0.8.0] - 2026-10-01
 

@@ -43,6 +43,7 @@ export const diagnosticDescriptions: Readonly<Record<DiagnosticCode, string>> = 
   'unknown-attribute': "An attribute the game's schema does not declare for its element.",
   'missing-required-attribute': "An element lacks an attribute the game's schema requires.",
   'invalid-attribute-value': "A value the game's schema does not allow for its attribute.",
+  'text-not-allowed': "Text in an element that the game's schema allows to hold only elements, or nothing.",
   'expression-syntax': 'An expression that does not parse.',
   'expression-null-safe-exists': "An expression that combines '@' and '?'.",
   'expression-text-reference': 'A text reference that is not {page, id} with two numbers.',

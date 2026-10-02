@@ -273,6 +273,30 @@ describe('what a patch brings in, checked where it lands', () => {
     expect(report(analyzeFile(latePatch, undefined, { ...context, index: edited }))).toEqual(report(late));
   });
 
+  it('reports text where it goes into an element that allows none, once, at its place in the patch', () => {
+    const text = full
+      .replace('    <cue name="Late" />\n', '    first\n    <cue name="Late">inside</cue>\n    between\n    <cue name="Latest" />\n    last\n')
+      .replace(`<replace sel="//comment()[. = ' patchmarker ']">\n`, `<replace sel="//comment()[. = ' patchmarker ']">\n    oops\n`)
+      .replace(`<remove sel="//cue[@name='Missing']" silent="true" />`, `<remove sel="//cue[@name='Missing']" silent="true">x</remove>`)
+      .replace('  <remove sel="//set_value" />', '  stray\n  <remove sel="//set_value" />');
+    const analysis = analyzeFile(latePatch, text);
+    const found = analysis.diagnostics
+      .filter((diagnostic) => diagnostic.code === 'text-not-allowed')
+      .sort((a, b) => analysis.document.offsetAt(a.range.start) - analysis.document.offsetAt(b.range.start))
+      .map((diagnostic) => `${diagnostic.range.start.line + 1} ${diagnostic.severity} ${analysis.document.getText(diagnostic.range)}: ${diagnostic.message}`);
+    expect(found).toEqual([
+      "5 2 first: The text 'first' goes into 'cues', which does not allow text",
+      "6 2 inside: Element 'cue' does not allow text, found 'inside'",
+      "7 2 between: The text 'between' goes into 'cues', which does not allow text",
+      "9 2 last: The text 'last' goes into 'cues', which does not allow text",
+      "13 2 oops: The text 'oops' goes into 'actions', which does not allow text",
+      "19 2 x: Element 'remove' does not allow text, found 'x'",
+      "23 2 stray: Element 'diff' does not allow text, found 'stray'",
+    ]);
+    // The text of `add type="@instantiate"` and of `replace .../@exact` is the value of an attribute.
+    expect(covered(late, 'text-not-allowed')).toEqual([]);
+  });
+
   it('checks only where the pieces are, and finds there what a check of the whole target finds', () => {
     const analysis = analyzeFile(latePatch, withMistakes);
     const patched = analysis.patch?.patched;
