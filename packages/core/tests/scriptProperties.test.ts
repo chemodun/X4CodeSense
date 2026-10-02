@@ -249,6 +249,17 @@ describe('property chains', () => {
     expect(time.steps[0].datatype?.name).toBe('time');
     expect(time.steps[1].datatype?.name).toBe('integer');
     expect(resolve('[1, 2].count').steps[1].datatype?.name).toBe('integer');
+    // The units that scale another are of its datatype; a number with a fraction is no integer.
+    expect(['10km', '500ms', '2min', '1h', '5', '0x1E', '1.5', '2e3'].map((number) => resolve(number).steps[0].datatype?.name)).toEqual([
+      'length',
+      'time',
+      'time',
+      'time',
+      'integer',
+      'integer',
+      'numeric',
+      'numeric',
+    ]);
 
     expect(summary(resolve('player.entity.skill.piloting'))).toEqual([
       'keyword player',
@@ -365,9 +376,9 @@ describe('property chains', () => {
     expect(first.steps.map((step) => step.text)).toEqual(['player', 'ship', 'pilot']);
     expect(summary(first.resolved)).toEqual(summary(resolve('player.ship.pilot')));
     expect(resolvedChainOf(tree.right, text, properties, 'md')).toBe(first);
-    const aiscript = resolvedChainOf(tree.right, text, properties, 'aiscript');
+    const aiscript = resolvedChainOf(tree.right, text, properties, 'aiscripts');
     expect(aiscript).not.toBe(first);
-    expect(summary(aiscript.resolved)).toEqual(summary(resolve('player.ship.pilot', 'aiscript')));
+    expect(summary(aiscript.resolved)).toEqual(summary(resolve('player.ship.pilot', 'aiscripts')));
     // A lone head is a chain of one step.
     expect(summary(resolvedChainOf(tree.left, text, properties, 'md').resolved)).toEqual(['?']);
   });

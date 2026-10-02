@@ -247,7 +247,18 @@ function ownerOfDatatype(datatype: ScriptDatatype | undefined): ChainOwner {
   return datatype ? { kind: 'datatype', datatype } : unknownOwner;
 }
 
-/** Datatype of a literal head. */
+/**
+ * Units of the expression language that scale another (the Mission Director guide's `1km`, `500ms`,
+ * `1h`, `45deg`, `1000Cr`): their numbers are of the datatype whose suffix is the unit they scale.
+ */
+const scaledUnits: Readonly<Record<string, string>> = { km: 'm', ms: 's', min: 's', h: 's', deg: 'rad', Cr: 'ct', LF: 'F' };
+
+/** The datatype of a number with a unit suffix, `10km` a length; undefined for a suffix no datatype declares. */
+export function datatypeOfUnit(suffix: string, properties: ScriptProperties): ScriptDatatype | undefined {
+  return indexOf(properties).datatypeBySuffix(scaledUnits[suffix] ?? suffix);
+}
+
+/** Datatype of a literal head. A number without a unit is an integer, or a float with a fraction or exponent. */
 function literalDatatype(step: ChainStep, properties: ScriptProperties): ScriptDatatype | undefined {
   switch (step.kind) {
     case 'string':
@@ -256,8 +267,9 @@ function literalDatatype(step: ChainStep, properties: ScriptProperties): ScriptD
     case 'brackets':
       return properties.datatype('list');
     case 'number': {
-      const suffix = step.suffix === '' ? 'i' : step.suffix;
-      return indexOf(properties).datatypeBySuffix(suffix) ?? (step.suffix === '' ? properties.datatype('numeric') : undefined);
+      const fraction = !/^0x/i.test(step.text) && /[.eE]/.test(step.text);
+      const suffix = step.suffix !== '' ? step.suffix : fraction ? 'f' : 'i';
+      return datatypeOfUnit(suffix, properties) ?? (step.suffix === '' ? properties.datatype('numeric') : undefined);
     }
     default:
       return undefined;
@@ -268,9 +280,11 @@ function literalDatatype(step: ChainStep, properties: ScriptProperties): ScriptD
  * True when a written step fits a segment of a property name pattern. A `{$type}` placeholder takes a
  * braced expression; a bare value of the lookup of that type only where the script properties declare a
  * shortcut for it, `isclass.<classname>` beside `isclass.{$class}`, so `mayattack.{$faction}` takes no
- * `argon`. When `lenient`, any bare name fits a placeholder whose type has no lookup, as the game's
- * scripts write it (`project.agr_fields_sunrise`). Strict matches are tried first, so `dock.container`
- * is the `dock` property followed by `container`, not `dock.{$docksize}`.
+ * `argon`. When `lenient`, a bare name fits a placeholder of an id that is neither a lookup nor a
+ * datatype, as the game's scripts write them (`project.agr_fields_sunrise`, `stat.population`); a bare
+ * name is no number, string, list or object, so `cargo.frob` is no `cargo.{$numeric}`. Strict matches
+ * are tried first, so `dock.container` is the `dock` property followed by `container`, not
+ * `dock.{$docksize}`.
  */
 export function segmentMatches(segment: PropertySegment, step: ChainStep, properties: ScriptProperties, schema: ScriptSchema, lenient = false): boolean {
   switch (segment.kind) {
@@ -280,7 +294,7 @@ export function segmentMatches(segment: PropertySegment, step: ChainStep, proper
       if (step.kind === 'braces' || step.kind === 'brackets') {
         return true;
       }
-      return step.kind === 'identifier' && lenient && !indexOf(properties).keyword(segment.type, schema);
+      return step.kind === 'identifier' && lenient && !indexOf(properties).keyword(segment.type, schema) && !properties.datatype(segment.type);
     case 'variable':
       // `$name`, or a braced expression that yields the name: `this.{'$' + $name}`.
       return step.kind === 'variable' || step.kind === 'braces';
@@ -561,10 +575,13 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
     let candidates: ScriptProperty[] = [];
     // Properties of other names that match as well as the best one: `mayattack.{$faction}` beside `mayattack.{$component}`.
     let ties: ScriptProperty[] = [];
+    // Complete matches that yield a list or a table, by the steps they cover: a braced step after one may be its index.
+    let collections = new Map<number, ScriptProperty>();
     // Strict matches first, then bare names for free placeholders, then a chain that ends inside a pattern.
     for (const [lenient, prefix] of matchPasses) {
       candidates = [];
       ties = [];
+      collections = new Map();
       for (const property of resolver.candidates(owner, steps[index])) {
         const length = matchLength(property, steps, index, properties, schema, lenient, prefix);
         if (length < 0) {
@@ -572,6 +589,9 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
         }
         if (owner.kind === 'unknown') {
           candidates.push(property);
+        }
+        if (length === property.segments.length && (property.type === 'list' || property.type === 'table') && !collections.has(length)) {
+          collections.set(length, property);
         }
         if (!best || length > bestLength || (length === bestLength && literalCount(property) > literalCount(best))) {
           best = property;
@@ -601,6 +621,21 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
         continue;
       }
       best = longest[0];
+    }
+    // `$ship.subordinates.{$i}`: the `$i`-th of the list `subordinates`, or `subordinates.{$assignment}`; which
+    // one the braced expression gives is not known here, so both are candidates and the type after is not.
+    const collection =
+      best && bestLength > 1 && bestLength === best.segments.length && steps[index + bestLength - 1].kind === 'braces'
+        ? collections.get(bestLength - 1)
+        : undefined;
+    if (best && collection) {
+      for (let covered = index; covered < index + bestLength; covered++) {
+        resolved[covered].candidates = [collection, best];
+        owners[covered] = owner;
+      }
+      owner = unknownOwner;
+      index += bestLength;
+      continue;
     }
     if (best) {
       // The first property decides the type; the others that fit as well are shown beside it.

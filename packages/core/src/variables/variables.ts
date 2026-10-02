@@ -35,7 +35,7 @@ import type { IndexedPosition, ScriptIndex } from '../project/scriptIndex';
 import { isChainNode, resolvedChainOf } from '../expressions/astChain';
 import { parsedValue } from '../expressions/attributeExpression';
 import type { Expression } from '../expressions/parser';
-import type { ChainStep, StepTypes } from '../expressions/propertyChain';
+import { datatypeOfUnit, type ChainStep, type StepTypes } from '../expressions/propertyChain';
 import type { ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
 import { attributeNamed, offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
@@ -951,6 +951,10 @@ class Collector {
     }
     if (node.kind === 'table') {
       return 'table';
+    }
+    if (node.kind === 'cast') {
+      // `(1 + 1)s`: the value is of the unit's datatype.
+      return datatypeOfUnit(node.suffix, this.properties)?.name;
     }
     if (isChainNode(node) || node.kind === 'name' || node.kind === 'string' || node.kind === 'number' || node.kind === 'list' || node.kind === 'textref') {
       const { resolved } = resolvedChainOf(node, text, this.properties, this.schema);

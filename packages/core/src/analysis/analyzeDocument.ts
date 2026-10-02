@@ -113,6 +113,11 @@ export interface AnalysisContext {
    * afresh. The findings are the same either way.
    */
   expressionCache?: ParsedValueCache;
+  /**
+   * For a text no editor shows, a patch's target as patched: where an offset of it was written (see
+   * `DocumentAnalysis.origin`). Messages that name a line name that one, and the analysis keeps it.
+   */
+  origin?: (offset: number) => { line: number; file?: string } | undefined;
 }
 
 /** Names of the cues and libraries of a script: they may start a chain like a keyword. */
@@ -164,7 +169,7 @@ export interface DocumentAnalysis {
 export function analyzeDocument(document: TextDocument, context: AnalysisContext = {}): DocumentAnalysis {
   const text = document.getText();
   const detection = detectDocument(text);
-  const analysis: DocumentAnalysis = { document, detection, declarations: new Map(), diagnostics: [] };
+  const analysis: DocumentAnalysis = { document, detection, declarations: new Map(), diagnostics: [], ...(context.origin ? { origin: context.origin } : {}) };
   const merge = !detection.script && !detection.isDiff && context.index ? mergeTargetOf(document.uri, context.index) : undefined;
   if (!detection.script && !detection.isDiff && !merge) {
     return analysis;
@@ -229,6 +234,7 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
           ...(checkElement ? { checkElement } : {}),
           // The types of variables where they are collected anyway, for their own check.
           ...(checkVariables && context.properties ? { variables: variablesOf(), typedProperties: context.validateTypedProperties ?? true } : {}),
+          ...(context.origin ? { origin: context.origin } : {}),
         })
       );
     }
@@ -286,15 +292,8 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
   }
   const written = writePatchedTree(patch.document);
   const touched = overlapsPieceOf(written, patch.source);
-  // The target's uri with a fragment: locations in this text are told apart from those in the file.
-  const patched = analyzeDocument(TextDocument.create(`${pathToFileURL(target).toString()}#patched`, 'xml', 0, written.text), {
-    ...context,
-    checkElement: (element) => touched(element.start, element.end),
-    // The target's trees are kept apart from the patch document's, which would take their place.
-    ...(context.expressionCache ? { expressionCache: (context.expressionCache.patched ??= {}) } : {}),
-  });
   const files = new Map<PatchSource, { document: TextDocument; file?: string }>();
-  patched.origin = (offset) => {
+  const origin = (offset: number): { line: number; file?: string } | undefined => {
     const at = sourceOffsetAt(written, offset);
     if (!at) {
       return undefined;
@@ -313,6 +312,14 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
     }
     return { line: file.document.positionAt(at.offset).line, ...(file.file === undefined ? {} : { file: file.file }) };
   };
+  // The target's uri with a fragment: locations in this text are told apart from those in the file.
+  const patched = analyzeDocument(TextDocument.create(`${pathToFileURL(target).toString()}#patched`, 'xml', 0, written.text), {
+    ...context,
+    checkElement: (element) => touched(element.start, element.end),
+    // The target's trees are kept apart from the patch document's, which would take their place.
+    ...(context.expressionCache ? { expressionCache: (context.expressionCache.patched ??= {}) } : {}),
+    origin,
+  });
   patch.patched = { written, analysis: patched };
   const diagnostics: Diagnostic[] = [];
   // Text an operation holds beside what it brings in is the patch check's to report, written out or not.

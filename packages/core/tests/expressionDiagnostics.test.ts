@@ -101,8 +101,22 @@ describe('format arguments', () => {
   it('keeps counting while a value is being typed', () => {
     const value = "'%s: %s'.['%s and %s'.[$x, $y], {2000, 1}.[$a, $b, $c]]";
     for (let cut = 0; cut <= value.length; cut++) {
-      expect(() => formats(`<debug_text text="${value.slice(0, cut)}`)).not.toThrow();
+      // Until its brackets close the value does not parse, and nothing is counted; then every format fits.
+      expect(formats(`<debug_text text="${value.slice(0, cut)}`), value.slice(0, cut)).toEqual([]);
     }
+    // A format short of an argument is counted once its brackets close, the quote of the value still open.
+    expect(formats(`<debug_text text="'%s: %s'.[$a]`)).toEqual([expect.stringContaining('takes 2 arguments but is given 1')]);
+  });
+
+  it("reads '%%d' as a percent sign and a d, and gives a format with '%d' no count beside its warning", () => {
+    expect(report(text("'100%%d'.[$x]"))).toEqual([]);
+    expect(report(text("'%d'.[$x]"))).toEqual([expect.stringContaining("'%d' is not a format specifier the game knows")]);
+    expect(formats(text("'%d'.[$x]"))).toEqual([]);
+  });
+
+  it('does not count a string that holds a text reference, which the game may put in before it formats', () => {
+    expect(formats(text("'{2000, 1}'.[$a]"))).toEqual([]);
+    expect(formats(text("'{2000, 1}: %s'.[$a, $b]"))).toEqual([]);
   });
 });
 
@@ -139,6 +153,24 @@ describe('unknown keywords and properties', () => {
     ]);
   });
 
+  it('reports a bare name after a value of a datatype, which no placeholder of it takes', () => {
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.cargo.list.frob"/>'))).toEqual([expect.stringContaining("'list' has no property 'frob'")]);
+    expect(reportWith(ai('<set_value name="$x" exact="[1, 2].frob"/>'))).toEqual([expect.stringContaining("'list' has no property 'frob'")]);
+    // An index of the list, braced, is no bare name.
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.cargo.list.{1}.name"/>'))).toEqual([]);
+  });
+
+  it('reads a braced step after a list as its index or the longer property, and types neither', () => {
+    // `sector.ships` is a list and `sector.ships.{$faction}` one too: `{$i}` may be either.
+    expect(reportWith(ai('<set_value name="$x" exact="player.ship.sector.ships.{$i}.pilot"/>'))).toEqual([]);
+  });
+
+  it('reports only the syntax error while the name after a dot is still to be typed', () => {
+    for (const value of ['player.ship.', 'player.', '1.']) {
+      expect(reportWith(ai(`<set_value name="$x" exact="${value}"/>`)), value).toEqual([]);
+    }
+  });
+
   it('leaves alone what the data cannot describe', () => {
     expect(reportWith(ai('<set_value name="$x" exact="class.nope"/>'))).toEqual([]);
     expect(reportWith(ai('<set_value name="$x" exact="player.ship.{$name}.frobnicate"/>'))).toEqual([]);
@@ -173,6 +205,17 @@ describe('unknown keywords and properties', () => {
         "5:38-48 3 expression-unknown-property-guessed: 'ship' has no property 'frobnicate' (if $c is a ship, as guessed from create_ship at line 4)",
       ]);
       expect(reportTyped(`${set}<set_value name="$x" exact="$s.speed + $s.cargo.{$w}.count + $s.isclass.ship"/>`)).toEqual([]);
+    });
+
+    it('types a value cast to a unit', () => {
+      expect(reportTyped('<set_value name="$t" exact="(1 + 1)s"/>\n      <set_value name="$x" exact="$t.frobnicate"/>')).toEqual([
+        "5:38-48 2 expression-unknown-property: 'time' has no property 'frobnicate' ($t is a time, set by set_value at line 4)",
+      ]);
+    });
+
+    it('reports nothing of the type while the name after a dot is still to be typed', () => {
+      expect(reportTyped(`${set}<set_value name="$x" exact="$s."/>`)).toEqual([]);
+      expect(reportTyped(`${set}<set_value name="$x" exact="$s.pilot."/>`)).toEqual([]);
     });
 
     it('leaves alone chains under @ or tested with ?, where the game gives null or false', () => {

@@ -46,27 +46,36 @@ export interface ExpressionValidationOptions {
    * resolved on the types, and what they lack is not reported.
    */
   typedProperties?: boolean;
+  /** Where offsets of the document were written, when that is elsewhere (a patch's target as patched): messages name those lines. */
+  origin?: (offset: number) => { line: number; file?: string } | undefined;
 }
 
 /**
  * How a variable got its type, for a message: "$ship is a ship, set by set_value at line 12", or for a
- * guess "if $ship is a ship, as guessed from create_ship at line 12".
+ * guess "if $ship is a ship, as guessed from create_ship at line 12". With an origin, the line where the
+ * definition was written: "at line 6", or "at line 40 of setup.xml".
  */
-export function describeVariableType(name: string, type: VariableType, document: TextDocument): string {
+export function describeVariableType(name: string, type: VariableType, document: TextDocument, origin?: ExpressionValidationOptions['origin']): string {
   const element = type.definition.element.name;
-  const line = document.positionAt(type.definition.start).line + 1;
+  const place = origin?.(type.definition.start) ?? { line: document.positionAt(type.definition.start).line };
+  const at = `line ${place.line + 1}${place.file === undefined ? '' : ` of ${place.file}`}`;
   const article = /^[aeiou]/i.test(type.name) ? 'an' : 'a';
   if (type.guessed) {
-    return `if ${name} is ${article} ${type.name}, as guessed from ${element} at line ${line}`;
+    return `if ${name} is ${article} ${type.name}, as guessed from ${element} at ${at}`;
   }
   const how = type.source === 'param type' ? 'declared by its param' : `set by ${element}`;
-  return `${name} is ${article} ${type.name}, ${how} at line ${line}`;
+  return `${name} is ${article} ${type.name}, ${how} at ${at}`;
 }
 
-/** The text of a format: a string, or the English text a `{page, id}` with numbers names; undefined when not known. */
+/**
+ * The text of a format: a string, or the English text a `{page, id}` with numbers names; undefined when not
+ * known. A string that holds a text reference, `'{1972092429, 9011}'.[$x]`, is not known either: whether
+ * the game puts the text in before it formats is not known.
+ */
 function formatOf(object: Expression, texts: TextDatabase | undefined): string | undefined {
   if (object.kind === 'string') {
-    return object.unterminated ? undefined : object.text.slice(1, -1);
+    const text = object.text.slice(1, -1);
+    return object.unterminated || /\{\s*\d+\s*,\s*\d+\s*\}/.test(text) ? undefined : text;
   }
   if (object.kind === 'textref' && object.page.kind === 'number' && object.id.kind === 'number' && texts) {
     const picked = texts.pick(Number(object.page.text), Number(object.id.text), '44');
@@ -129,20 +138,25 @@ export function validateExpressions(
         if (node.kind !== 'args') {
           return;
         }
+        let unknownSpecifier = false;
         if (node.object.kind === 'string') {
-          const literal = node.object.text;
-          for (let index = literal.indexOf('%d'); index >= 0; index = literal.indexOf('%d', index + 2)) {
-            const start = node.object.start + index;
-            report(
-              'expression-format-specifier',
-              "'%d' is not a format specifier the game knows; numbers format with '%s'",
-              start,
-              start + 2,
-              DiagnosticSeverity.Warning
-            );
+          // `%%` is a percent sign: `100%%d` holds no `%d`.
+          for (const match of node.object.text.matchAll(/%[%d]/g)) {
+            if (match[0] === '%d') {
+              const start = node.object.start + match.index;
+              unknownSpecifier = true;
+              report(
+                'expression-format-specifier',
+                "'%d' is not a format specifier the game knows; numbers format with '%s'",
+                start,
+                start + 2,
+                DiagnosticSeverity.Warning
+              );
+            }
           }
         }
-        if (options.formats === false || parsed.errors.length > 0) {
+        // A format with a `%d` was meant to take an argument there: its count would only repeat the warning.
+        if (options.formats === false || parsed.errors.length > 0 || unknownSpecifier) {
           return;
         }
         const format = formatOf(node.object, options.texts);
@@ -190,6 +204,10 @@ export function validateExpressions(
         checkHead(head, resolved.steps[0].keyword !== undefined);
         let typedFrom = -1;
         for (let index = 1; index < steps.length; index++) {
+          if (steps[index].text === '') {
+            // The name after a dot still to be typed: the syntax error says so.
+            break;
+          }
           if (resolved.steps[index - 1].fromVariable) {
             typedFrom = index - 1;
           }
@@ -211,7 +229,7 @@ export function validateExpressions(
             break;
           }
           const ownerName = owner.kind === 'keyword' ? owner.keyword.name : owner.datatype.name;
-          const because = variableType ? ` (${describeVariableType(steps[typedFrom].text, variableType, document)})` : '';
+          const because = variableType ? ` (${describeVariableType(steps[typedFrom].text, variableType, document, options.origin)})` : '';
           const guessed = variableType?.guessed === true;
           report(
             guessed ? 'expression-unknown-property-guessed' : 'expression-unknown-property',

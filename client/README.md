@@ -117,8 +117,8 @@ X4CodeSense has no list of its own of what the game holds: no elements, properti
 
 A few things the game's files do not say are built in:
 
-- The expression language itself: its operators, `if … then … else`, `typeof`, and the cue keywords `this`, `static`, `staticbase`, `parent` and `namespace`.
-- Thirteen keywords the game evaluates but `scriptproperties.xml` does not list, written in the format of that file. Ten take their values from the game's own files (`common.xsd`, `factions.xsd`, `parameters.xsd`, `inputmap.xml`), such as `licencetype` and `moodtype`; `component`, `datatype.macroslot` and `chairtype` are written out, as the game's scripts use them.
+- The expression language itself: its operators, `if … then … else`, `typeof`, the units that scale those `scriptproperties.xml` declares (`km`, `ms`, `min`, `h`, `deg`, `Cr`, `LF`), and which variables the cue keywords `this`, `static`, `staticbase`, `parent` and `namespace` stand for.
+- Twelve keywords the game evaluates but `scriptproperties.xml` does not list, and the `macroslot` value of its `datatype`, written in the format of that file. Ten take their values from the game's own files (`common.xsd`, `factions.xsd`, `parameters.xsd`, `inputmap.xml`), such as `licencetype` and `moodtype`; `component`, `chairtype` and `datatype.macroslot` are written out, as the game's scripts use them.
 - Which attribute of a call names what it calls (`run_script name`, `create_order id`, `run_actions ref`, `<cue ref>`, `start_script name`, `run_interrupt_script name`), and that the `ref` of `cue`, `include_actions` and `run_actions` names a cue or a library: the schemas say so only in their descriptions.
 - The patch operations `add`, `replace` and `remove`, and the names of text files (`0001-l044.xml`), as the game reads them.
 - What an action writes into a variable: the schemas type `create_ship name` and most such attributes only as "a variable that receives the result". X4CodeSense guesses the type from the words of the schema, never from a list of its own: the action's name (`create_ship` a ship, `find_object_component` a component, `get_factions_by_tag` a list), the attribute's name (`sector`) or documentation ("a list of all …"), the action's documentation ("Create an orientation(rotation) value"), and `multiple`, which makes a list. Where the schema states it, as for `groupname`, it is taken as stated. `x4CodeSense.guessVariableTypes` turns the guessing off.
@@ -136,7 +136,7 @@ A few things the game's files do not say are built in:
 - AI scripts, Mission Director scripts and their patches are checked. The patches of library files are applied and their paths checked, but what they bring in is not: of the schemas in `libraries`, only those of scripts and patches are read, not those some library files have, such as `parameters.xsd`. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
 - Writing the changes of the side of a large library file, such as `wares.xml` after the DLCs' patches, into its patch takes up to about a second.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
-- A variable has a type only when everything that sets it in the script agrees on one: one set from another variable's property, by `do_for_each`, by a library's `return` or by other scripts has none, and neither has a variable of the global table or of a library other scripts fill. The elements of a list have no type.
+- A variable has a type only when everything that sets it in the script agrees on one: one set from a property of a variable whose own type is not known, by `do_for_each`, by a library's `return` or by other scripts has none, and neither has a variable of the global table or of a library other scripts fill. The elements of a list have no type.
 - A test of the class does not narrow the type for what follows: in `@player.target.isclass.npc and player.target.race`, `race` is reported, since `player.target` is an `object`, which has no `race`.
 - A variable that is read but never set is not reported where code the check does not follow may set it: `global.$x`, a cue of another script (`md.Script.Cue.$x`), a library the script never names or other scripts include, a variable some script writes into cues it gets as values (`$Cue.$x`), and what a cue reads after it includes a library chosen at run time (`<include_actions ref="$Thread.$NameLib"/>`).
 - Semantic highlighting needs the game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
@@ -261,6 +261,12 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - In a file that starts with a byte order mark, columns on its first line were one too far in x4-script-check, in the problems of files checked from disk, and where go to definition or rename from another file leads.
   - `</` typed for an end tag gave two errors about an empty name, and a value whose quote was just opened was reported as invalid.
   - A value of type `xs:positiveInteger`, such as `sinceversion` of `patch`, could be 0.
+  - A bare name after a list, a number, a string or an object was taken as a value of its placeholder, `cargo.frob` as `cargo.{$numeric}`, and never reported; only ids such as the terraforming projects' (`project.agr_fields_sunrise`) are written so. A braced step after a list, `subordinates.{$i}`, may be its index or a longer property, so no type follows it.
+  - Typing `player.ship.` gave a second warning, about a property '' of the ship, beside the syntax error.
+  - Numbers with the units `km`, `ms`, `min`, `h`, `deg`, `Cr` and `LF`, and values cast to a unit (`(1 + 1)s`), had no type; a number with a fraction was taken as an integer.
+  - In a patch, the message of a property a variable's type lacks named a line of the patched file, not of the patch.
+  - `%%d` (a percent sign and a d) was reported as `%d`, and a format with `%d` got a second finding about its arguments. A string holding a text reference, `'{1001, 2}'.[$a]`, is no longer counted as a format without placeholders.
+  - The signature help of a format went away right after the `]` of a format in its arguments, and miscounted after an escaped quote (`'it\'s'`).
 
 ### [0.8.0] - 2026-10-01
 

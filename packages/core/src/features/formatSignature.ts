@@ -23,7 +23,9 @@ function formatCallAt(expression: string, index: number): { node: ArgsNode; open
       return;
     }
     const open = expression.indexOf('[', node.object.end);
-    const closed = expression[node.end - 1] === ']';
+    // A `]` at the end is the argument's own when the last argument ends there: `.['%s'.[$a]` is still open.
+    const last = node.args[node.args.length - 1];
+    const closed = expression[node.end - 1] === ']' && (last === undefined || last.end < node.end);
     if (open >= 0 && index > open && (!closed || index < node.end)) {
       found = { node, open };
     }
@@ -39,7 +41,12 @@ function activeArgument(expression: string, open: number, index: number): number
   for (let at = open + 1; at < index; at++) {
     const character = expression[at];
     if (quote) {
-      quote = character === quote ? undefined : quote;
+      // `'it\'s'`: an escaped quote does not end the string.
+      if (character === '\\') {
+        at++;
+      } else if (character === quote) {
+        quote = undefined;
+      }
     } else if (character === "'" || character === '"') {
       quote = character;
     } else if ('([{'.includes(character)) {

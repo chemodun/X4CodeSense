@@ -73,8 +73,19 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
     "expression-unknown-property: 'this' has no property 'id' (move.attack.object.capital.steering.xml)",
   ];
 
+  /** The same for the DLCs' scripts. */
+  const knownDlcFindings = [
+    // `player.entity` is an entity; scriptproperties.xml gives `dynamicinterior` to `room` only.
+    "expression-unknown-property: 'entity' has no property 'dynamicinterior' (story_yaki.xml)",
+    // `md.GS_Pirate2.$SilenceOtherPrisoner?`: no `md.<script>.$variable` form exists, written once in all of vanilla.
+    "expression-unknown-property: 'md' has no property 'GS_Pirate2' (setup_dlc_pirate.xml)",
+    // `@player.target.isclass.npc and player.target.race`: no narrowing after a class test, a known limitation.
+    "expression-unknown-property: 'object' has no property 'race' (story_research_welfare_2.xml)",
+  ];
+
   it('reports only the known findings through the analysis', () => {
     const found = new Set<string>();
+    const foundInDlcs = new Set<string>();
     for (const schema of ['md', 'aiscripts']) {
       for (const file of xmlFilesIn(path.join(root, schema))) {
         const analysis = analyzeText(readFileSync(file, 'utf8'), { schemas: game.schemas, properties: game.properties });
@@ -86,7 +97,23 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
         }
       }
     }
+    let dlcScripts = 0;
+    for (const { file, source } of scriptFiles(scriptFolders(root, []))) {
+      const text = readFileSync(file, 'utf8');
+      if (!source.startsWith('ego_dlc_') || !detectDocument(text).script) {
+        continue;
+      }
+      dlcScripts++;
+      for (const diagnostic of analyzeText(text, { schemas: game.schemas, properties: game.properties }).diagnostics) {
+        const code = String(diagnostic.code);
+        if (code.startsWith('expression-')) {
+          foundInDlcs.add(`${code}: ${diagnostic.message} (${path.basename(file)})`);
+        }
+      }
+    }
     expect([...found].sort()).toEqual(knownVanillaFindings);
+    expect(dlcScripts).toBeGreaterThan(0);
+    expect([...foundInDlcs].sort()).toEqual(knownDlcFindings);
   }, 60_000);
 
   /**
@@ -96,11 +123,16 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
    * DLCs or the mods, and an entry that disappears must be removed here.
    */
   const knownTypedFindings = [
+    // scriptproperties.xml gives `group` no `operational`; read as `group.{$numeric}`, the operational-th member,
+    // until a bare name stopped fitting a placeholder of a datatype. A gap of the file or a slip of the script.
+    "dlc story_yaki.xml: expression-unknown-property: 'group' has no property 'operational' ($SecretServiceStationDockingAreas is a group, set by find_dockingbay at line 719)",
     "game boarding.pod.return.xml: expression-unknown-property-guessed: 'dockingbay' has no property 'component' (if $dock is a dockingbay, as guessed from find_dockingbay at line 47)",
     "game lib.find.sectors.inrange.xml: expression-unknown-property: 'controllable' has no property 'destination' ($refobject is a controllable, set by param at line 4)",
     "game mainmenu.xml: expression-unknown-property: 'buildmodule' has no property 'neededsequenceresources' ($BuildModule is a buildmodule, set by set_value at line 92)",
     "game move.generic.xml: expression-unknown-property: 'object' has no property 'islocalhighway' ($destination is an object, declared by its param at line 13)",
     "game move.generic.xml: expression-unknown-property: 'object' has no property 'istempzone' ($destination is an object, declared by its param at line 13)",
+    // The mod's slip: `$LocModules.macro.{$C}` for `$LocModules.{$C}.macro`, which the same line writes next.
+    "mods deadairdynamicuniverse.xml: expression-unknown-property: 'constructionsequence' has no property 'macro' ($LocModules is a constructionsequence, set by set_value at line 9457)",
   ];
   const typedMessage = /\((if )?\$\w+ is an? \w+, /;
 
@@ -142,14 +174,14 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
     console.log(
       `variables with a type: game ${typed.game} of ${variables.game}, DLCs ${typed.dlc} of ${variables.dlc}, mods ${typed.mods} of ${variables.mods}`
     );
-    expect([...found].sort()).toEqual(knownTypedFindings);
+    expect([...found].sort()).toEqual(knownTypedFindings.filter((finding) => mods || !finding.startsWith('mods ')));
     // The variables give no other finding than the analysis without them.
     expect([...others].sort()).toEqual(knownVanillaFindings);
-    // On 9.00 (of 28,745, 12,710 and 5,461 variables): raise these when the model learns to tell more, never lower them.
-    expect(typed.game).toBeGreaterThanOrEqual(6218);
-    expect(typed.dlc).toBeGreaterThanOrEqual(5348);
+    // On 9.00 (of 28,745, 12,710 and 5,467 variables): raise these when the model learns to tell more, never lower them.
+    expect(typed.game).toBeGreaterThanOrEqual(6245);
+    expect(typed.dlc).toBeGreaterThanOrEqual(5398);
     if (mods) {
-      expect(typed.mods).toBeGreaterThanOrEqual(1424);
+      expect(typed.mods).toBeGreaterThanOrEqual(1466);
     }
   }, 120_000);
 });

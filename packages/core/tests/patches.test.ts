@@ -287,6 +287,20 @@ describe('what a patch brings in, checked where it lands', () => {
     expect(back('<cue name="Start">')).toBe('');
   });
 
+  it("names the patch's line where a message tells where a variable got its type", () => {
+    const patch = [
+      '<diff>',
+      `  <add sel="//cue[@name='Start']/actions">`,
+      '    <set_value name="$s" exact="player.ship" />',
+      '    <set_value name="$y" exact="$s.frobnicate" />',
+      '  </add>',
+      '</diff>',
+    ].join('\n');
+    expect(report(analyzeFile(latePatch, patch)).filter((line) => line.includes('expression-unknown-property'))).toEqual([
+      "4 2 expression-unknown-property: 'ship' has no property 'frobnicate' ($s is a ship, set by set_value at line 3)",
+    ]);
+  });
+
   it('reports what is wrong in the pieces of the patch, at their place', () => {
     const analysis = analyzeFile(latePatch, withMistakes);
     const own = new Set(report(late));

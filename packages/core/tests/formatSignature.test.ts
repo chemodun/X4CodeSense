@@ -73,6 +73,8 @@ describe('signature help for formats', () => {
     expect(shown(helpAt("'%s: %s'.['%s and %s'.[$x, |$y], $z]"))).toBe("'%s and %s' | %s [%s]");
     expect(shown(helpAt("'%s: %s'.['%s and %s'.[$x, $y], |$z]"))).toBe("'%s: %s' | %s [%s]");
     expect(shown(helpAt("'%s: %s'.['a, b', |[1, 2]]"))).toBe("'%s: %s' | %s [%s]");
+    // An escaped quote does not end a string.
+    expect(shown(helpAt("'%s and %s'.['it\\'s, so', |$b]"))).toBe("'%s and %s' | %s [%s]");
   });
 
   it('gives nothing outside the arguments of a format', () => {
@@ -85,8 +87,15 @@ describe('signature help for formats', () => {
     it('helps in arguments not closed yet, and in every cut of the value', () => {
       expect(shown(helpAt("'%s of %s'.[$a, |"))).toBe("'%s of %s' | %s [%s]");
       const value = "'%s: %s'.['%s and %s'.[$x, $y], {2000, 1}.[$a, $b, $c]]";
+      const outerArguments = value.indexOf('[') + 1;
       for (let cut = 0; cut <= value.length; cut++) {
-        expect(() => helpAt(`${value.slice(0, cut)}|`)).not.toThrow();
+        const label = helpAt(`${value.slice(0, cut)}|`)?.signatures[0]?.label;
+        // Before the outer arguments and after them nothing; inside them the help of the format they belong to.
+        if (cut < outerArguments || cut === value.length) {
+          expect(label, value.slice(0, cut)).toBeUndefined();
+        } else {
+          expect(label, value.slice(0, cut)).toMatch(/^('%s: %s'|'%s and %s'|\{2000, 1\}: )/);
+        }
       }
     });
   });

@@ -34,6 +34,7 @@
   </datatype>
   <datatype name="sector" type="component">
     <property name="ships" result="Ships in the sector" type="list" />
+    <property name="ships.{$faction}" result="Ships of the faction in the sector" type="list" />
   </datatype>
   <datatype name="faction" type="component">
     <property name="haslicence.&lt;licencetype&gt;.{$faction}" result="true iff the faction has the licence of the other faction" type="boolean" />
