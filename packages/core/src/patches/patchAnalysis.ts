@@ -109,6 +109,17 @@ export function treeBeforePatch(patch: PatchAnalysis, index: ScriptIndex): Patch
 }
 
 /**
+ * Visits each operation of a patch with its target's tree as the operation finds it, in order: a tree
+ * built once, the operations applied one after the other. `visit` must not change the tree.
+ */
+export function eachOperationTree(patch: PatchSource, target: string, index: ScriptIndex, visit: (operation: XmlElement, tree: PatchNode) => void): void {
+  const tree = earlierTree(patch.file, target, index);
+  if (tree) {
+    applyPatch(tree.document, patch, tree.uncertain, undefined, (operation) => visit(operation, tree.document));
+  }
+}
+
+/**
  * The target's tree as an operation of the patch finds it: the earlier patches applied, then the
  * patch's operations before this one. Built anew, since the patch's tree holds all its changes.
  */

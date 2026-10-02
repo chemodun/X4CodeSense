@@ -22,6 +22,7 @@
  */
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Location, Range, type TextEdit, type WorkspaceEdit } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { isGameFile, type GameData } from '../gameData';
@@ -34,6 +35,7 @@ import { isInside } from './project';
 import { attributeNamed, attributeWithValueAt, elementWithStartTagAt, type XmlElement } from '../xml/xmlStructure';
 import { isExpressionAttribute } from '../xsd/schema';
 import { scriptSchemaOf } from '../analysis/positionContext';
+import { pathMirrors, type FilePlace, type MirrorDocument } from '../patches/pathMirrors';
 import { pathNamesOf } from '../patches/pathNames';
 import { namedItemAt } from './namedItems';
 import { locationsInFiles, patchedViewAt, patchedViewOf, placeOf, rangeInPatch } from './patchContent';
@@ -570,7 +572,7 @@ function patchReferencesAt(analysis: DocumentAnalysis, offset: number, game: Gam
     return locationsOf(analysis, patchOccurrences(target, analysis, game, game.index));
   }
   const view = patchedViewAt(analysis, offset);
-  return view ? locationsInFiles(view, referencesAt(view.analysis, view.offset, game)) : [];
+  return view ? locationsInFiles(view, ownReferencesAt(view.analysis, view.offset, game)) : [];
 }
 
 /** A rename from a patch document; edits in the patched target's text go to the files it was written in. */
@@ -598,7 +600,7 @@ function patchRenameAt(
     return undefined;
   }
   // A name of the patched text alone: its places there, each in the file it was written in.
-  const edit = renameAt(view.analysis, view.offset, name, game, options);
+  const edit = editsAt(view.analysis, view.offset, name, game, options);
   if (!edit || 'refused' in edit) {
     return edit;
   }
@@ -622,6 +624,110 @@ function patchRenameAt(
   return refused ? { refused } : editsOf(analysis, distinct(here, there), name);
 }
 
+/** The analysed document as the path mirrors take it: its text may be newer than the index's. */
+function mirrorDocument(analysis: DocumentAnalysis): MirrorDocument | undefined {
+  const file = fileOf(analysis.document.uri);
+  const structure = analysis.structure;
+  return file !== undefined && structure ? { file, text: analysis.document.getText(), structure } : undefined;
+}
+
+/** Documents of files by uri: the analysed one, else the file's text as the index reads it. */
+function documentsFor(analysis: DocumentAnalysis, index: ScriptIndex): (file: string) => TextDocument {
+  const current = fileOf(analysis.document.uri);
+  const documents = new Map<string, TextDocument>();
+  return (file) => {
+    if (current !== undefined && sameFile(file, current)) {
+      return analysis.document;
+    }
+    const key = path.resolve(file).toLowerCase();
+    let document = documents.get(key);
+    if (!document) {
+      document = TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, index.currentText(file) ?? '');
+      documents.set(key, document);
+    }
+    return document;
+  };
+}
+
+/**
+ * A rename with the edits of the places in patches' paths that repeat the places it edits (`pathMirrors`):
+ * each gets the new text of the place it repeats. Refused when such a place cannot be edited.
+ */
+function withMirroredEdits(
+  analysis: DocumentAnalysis,
+  edit: WorkspaceEdit | undefined,
+  game: GameData | undefined,
+  options: RenameOptions
+): WorkspaceEdit | RenameRefusal | undefined {
+  const index = game?.index;
+  if (!edit?.changes || !game || !index) {
+    return edit;
+  }
+  const documentOf = documentsFor(analysis, index);
+  const newTexts = new Map<FilePlace, string>();
+  for (const [uri, edits] of Object.entries(edit.changes)) {
+    const file = fileOf(uri);
+    if (file === undefined) {
+      continue;
+    }
+    const document = documentOf(file);
+    for (const change of edits) {
+      newTexts.set({ file, start: document.offsetAt(change.range.start), end: document.offsetAt(change.range.end) }, change.newText);
+    }
+  }
+  const changes: Record<string, TextEdit[]> = Object.fromEntries(Object.entries(edit.changes).map(([uri, edits]) => [uri, [...edits]]));
+  const elsewhere: Elsewhere[] = [];
+  let what = '';
+  for (const mirror of pathMirrors([...newTexts.keys()], index, mirrorDocument(analysis))) {
+    const document = documentOf(mirror.file);
+    const uri = document.uri;
+    const range = Range.create(document.positionAt(mirror.start), document.positionAt(mirror.end));
+    const edits = (changes[uri] ??= []);
+    if (edits.some((existing) => existing.range.start.line === range.start.line && existing.range.start.character === range.start.character)) {
+      continue;
+    }
+    const text = document.getText(range);
+    what ||= text;
+    edits.push({ range, newText: newTexts.get(mirror.of) ?? text });
+    if (document !== analysis.document) {
+      elsewhere.push({ file: mirror.file, line: range.start.line, character: range.start.character, text });
+    }
+  }
+  const refused = placesRefusal(what, elsewhere, game, index, options);
+  return refused ? { refused } : { changes };
+}
+
+/** References with the places in patches' paths that repeat them (`pathMirrors`). */
+function withMirroredLocations(analysis: DocumentAnalysis, locations: Location[], game: GameData | undefined): Location[] {
+  const index = game?.index;
+  if (!index || locations.length === 0) {
+    return locations;
+  }
+  const documentOf = documentsFor(analysis, index);
+  const places: FilePlace[] = [];
+  for (const location of locations) {
+    const file = fileOf(location.uri);
+    const document = file === undefined ? undefined : documentOf(file);
+    if (document && file !== undefined) {
+      places.push({ file, start: document.offsetAt(location.range.start), end: document.offsetAt(location.range.end) });
+    }
+  }
+  const found = [...locations];
+  for (const mirror of pathMirrors(places, index, mirrorDocument(analysis))) {
+    const document = documentOf(mirror.file);
+    const range = Range.create(document.positionAt(mirror.start), document.positionAt(mirror.end));
+    if (
+      !found.some(
+        (location) =>
+          location.uri === document.uri && location.range.start.line === range.start.line && location.range.start.character === range.start.character
+      )
+    ) {
+      found.push(Location.create(document.uri, range));
+    }
+  }
+  return found;
+}
+
 /** A rename prompt in a patch document: the name's range there, or why it cannot be renamed. */
 function patchPrepareRenameAt(
   analysis: DocumentAnalysis,
@@ -642,16 +748,21 @@ function patchPrepareRenameAt(
     return undefined;
   }
   const placeholder = analysis.document.getText(range);
-  const edit = patchRenameAt(analysis, offset, placeholder.replace(/^\$/, ''), game, options);
+  const edit = renameAt(analysis, offset, placeholder.replace(/^\$/, ''), game, options);
   return edit && 'refused' in edit ? edit : { range, placeholder };
 }
 
 /**
  * All occurrences of the variable or named item under the caret; with the script index, also those in
- * other files. In a patch document, also of what its content names where it lands, and of the names in
- * its paths.
+ * other files, and the literals of patches' paths that repeat them. In a patch document, also of what its
+ * content names where it lands, and of the names in its paths.
  */
 export function referencesAt(analysis: DocumentAnalysis, offset: number, game?: GameData): Location[] {
+  return withMirroredLocations(analysis, ownReferencesAt(analysis, offset, game), game);
+}
+
+/** The occurrences under the caret, without the literals of paths that repeat them. */
+function ownReferencesAt(analysis: DocumentAnalysis, offset: number, game?: GameData): Location[] {
   if (analysis.detection.isDiff) {
     return patchReferencesAt(analysis, offset, game);
   }
@@ -699,7 +810,10 @@ export function prepareRenameAt(
   if (refused) {
     return { refused };
   }
-  return { range: rangeOf(analysis, found), placeholder: analysis.document.getText().slice(found.start, found.end) };
+  const placeholder = analysis.document.getText().slice(found.start, found.end);
+  // The literals of paths that repeat its places, which may lie where nothing can be edited.
+  const edit = game?.index ? renameAt(analysis, offset, placeholder.replace(/^\$/, ''), game, options) : undefined;
+  return edit && 'refused' in edit ? edit : { range: rangeOf(analysis, found), placeholder };
 }
 
 /** The script name of `<mdscript name>`, or the script or cue name of `md.Script.Cue`, under the caret, with its text offsets. */
@@ -726,10 +840,23 @@ function mdNameAt(analysis: DocumentAnalysis, offset: number, game: GameData | u
 
 /**
  * Edits that rename the variable or named item under the caret: in the document and, with the script
- * index, in other files; or why it cannot be renamed. A label named by a handler for several attention
- * blocks renames all of them together, so the handler keeps finding each.
+ * index, in other files and in the literals of patches' paths that repeat its places; or why it cannot be
+ * renamed. A label named by a handler for several attention blocks renames all of them together, so the
+ * handler keeps finding each.
  */
 export function renameAt(
+  analysis: DocumentAnalysis,
+  offset: number,
+  newName: string,
+  game?: GameData,
+  options: RenameOptions = {}
+): WorkspaceEdit | RenameRefusal | undefined {
+  const edit = editsAt(analysis, offset, newName, game, options);
+  return edit && 'refused' in edit ? edit : withMirroredEdits(analysis, edit, game, options);
+}
+
+/** The edits of a rename, without the literals of paths that repeat its places. */
+function editsAt(
   analysis: DocumentAnalysis,
   offset: number,
   newName: string,

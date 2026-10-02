@@ -4,7 +4,7 @@
  * literally is indexed at its place and is defined, so the check of unknown names finds nothing; every
  * name a script defines or names hovers and leads to its definitions; a typo planted in a name is
  * reported and fixed back; find references from the definition of the most named order and AI script
- * lists every place, within the ceiling.
+ * lists every place, the literals of patches' paths that repeat one too, within the ceiling.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -19,6 +19,7 @@ import {
   fixAll,
   hoverAt,
   loadGameData,
+  pathMirrors,
   quickFixes,
   referencesAt,
   scriptNameDefinitions,
@@ -34,14 +35,15 @@ const mods = process.env.X4_MODS;
 describe.skipIf(!extracted)('AI script names and order ids on the corpus', { timeout: 300_000 }, () => {
   const game = loadGameData(extracted ?? '', { extensionFolders: mods ? [mods] : [], index: true });
   const documents = new Map<string, TextDocument>();
-  const textAt = (location: Location): string => {
-    let document = documents.get(location.uri);
+  const documentOf = (uri: string): TextDocument => {
+    let document = documents.get(uri);
     if (!document) {
-      document = TextDocument.create(location.uri, 'xml', 0, readFileSync(fileURLToPath(location.uri), 'utf8'));
-      documents.set(location.uri, document);
+      document = TextDocument.create(uri, 'xml', 0, readFileSync(fileURLToPath(uri), 'utf8'));
+      documents.set(uri, document);
     }
-    return document.getText(location.range);
+    return document;
   };
+  const textAt = (location: Location): string => documentOf(location.uri).getText(location.range);
 
   it('indexes every name a call writes literally at its place, each defined, and hovers and defines every name a script writes', () => {
     const index = game.index;
@@ -176,10 +178,19 @@ describe.skipIf(!extracted)('AI script names and order ids on the corpus', { tim
       const document = analysis.document;
       const offset = document.offsetAt(definition.position) + 1;
       const references = referencesAt(analysis, offset, game);
-      const named = index.scriptNameReferences(kind === 'script' ? 'aiscript' : 'order', name).length;
+      const definitions = scriptNameDefinitions(index, kind, name).map((found) => found.position);
+      const calls = index.scriptNameReferences(kind === 'script' ? 'aiscript' : 'order', name).map((found) => found.position);
+      // And the literals of patches' paths that select a call by the name, `create_order[@id="'Attack'"]`.
+      const places = [...definitions, ...calls].map((position) => {
+        const start = documentOf(pathToFileURL(position.file).toString()).offsetAt(position);
+        return { file: position.file, start, end: start + name.length };
+      });
+      const mirrored = pathMirrors(places, index).length;
       const best = bestOf(5, () => referencesAt(analysis, offset, game));
-      console.log(`${kind} ${name}: ${references.length} places (${named} named by calls) in ${best.toFixed(1)} ms best of 5`);
-      expect(references.length).toBe(scriptNameDefinitions(index, kind, name).length + named);
+      console.log(
+        `${kind} ${name}: ${references.length} places (${calls.length} named by calls, ${mirrored} in patches' paths) in ${best.toFixed(1)} ms best of 5`
+      );
+      expect(references.length).toBe(definitions.length + calls.length + mirrored);
       expect(references.filter((location) => textAt(location) !== name).map((location) => location.uri)).toEqual([]);
       expect(best).toBeLessThan(fileCeilingMs);
     }

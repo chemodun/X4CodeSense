@@ -25,6 +25,7 @@ import {
   offsetInValue,
   parseXml,
   PatchNode,
+  pathMirrors,
   pathNamesOf,
   referencesAt,
   scriptSchemaOf,
@@ -32,6 +33,8 @@ import {
   type ComparisonSide,
   type DocumentAnalysis,
   type PatchComparison,
+  type PathMirror,
+  type XPathPredicate,
 } from '../src';
 import { writePatch } from '../src/patches/patchWriter';
 import { bestOf, fileCeilingMs, patchCeilingMs } from './timing';
@@ -224,6 +227,67 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
     expect(inserted).toBeGreaterThan(600);
     expect(names).toBeGreaterThan(400);
     expect(wrong).toEqual([]);
+  });
+
+  // A literal a path compares a value with repeats the value of each element it selects: from the values of
+  // a target that its patches' literals name, every literal found repeats the value's text. What a rename
+  // edits in such a value it edits in these literals too.
+  it('finds the literals of paths that repeat the values they select by', () => {
+    const equalValues = (predicate: XPathPredicate): string[] =>
+      predicate.kind === 'compare' && predicate.operator === '='
+        ? [predicate.value.value]
+        : predicate.kind === 'and' || predicate.kind === 'or'
+          ? predicate.operands.flatMap(equalValues)
+          : [];
+    const byTarget = new Map<string, Set<string>>();
+    for (const { analysis, library } of analyses) {
+      const patch = analysis.patch;
+      if (library || !patch?.target.file) {
+        continue;
+      }
+      const literals = byTarget.get(patch.target.file) ?? new Set<string>();
+      for (const operation of patch.operations) {
+        for (const step of [...(operation.path?.steps ?? []), ...(operation.condition?.path.steps ?? [])]) {
+          step.predicates.flatMap(equalValues).forEach((value) => literals.add(value));
+        }
+      }
+      byTarget.set(patch.target.file, literals);
+    }
+    let mirrors = 0;
+    const wrong: string[] = [];
+    let slowest = { ms: 0, run: (): unknown => undefined, where: '' };
+    for (const [target, literals] of byTarget) {
+      const parsed = index?.parsedFile(target);
+      if (!index || !parsed) {
+        continue;
+      }
+      const places = parsed.structure.elements.flatMap((element) =>
+        element.attributes
+          .filter((attribute) => attribute.quote !== '' && literals.has(attribute.value))
+          .map((attribute) => ({ file: target, start: attribute.valueStart, end: attribute.valueEnd }))
+      );
+      const run = (): PathMirror[] => pathMirrors(places, index);
+      const started = performance.now();
+      const found = run();
+      const ms = performance.now() - started;
+      if (ms > slowest.ms) {
+        slowest = { ms, run, where: path.basename(target) };
+      }
+      for (const mirror of found) {
+        mirrors++;
+        const written = index.parsedFile(mirror.file)?.text.slice(mirror.start, mirror.end);
+        if (written !== parsed.text.slice(mirror.of.start, mirror.of.end)) {
+          wrong.push(`${path.basename(mirror.file)} at ${mirror.start}: '${written ?? ''}' repeats '${parsed.text.slice(mirror.of.start, mirror.of.end)}'`);
+        }
+      }
+    }
+    const best = bestOf(5, slowest.run);
+    console.log(
+      `${mirrors} literals of paths repeat values of ${byTarget.size} targets; slowest ${slowest.where}: first ${slowest.ms.toFixed(1)} ms, best of 5 ${best.toFixed(1)} ms`
+    );
+    expect(mirrors).toBeGreaterThan(900);
+    expect(wrong).toEqual([]);
+    expect(best).toBeLessThan(patchCeilingMs);
   });
 
   it('compares every patch with its target, where only what it changes differs', () => {

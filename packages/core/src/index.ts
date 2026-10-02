@@ -42,6 +42,7 @@ export * from './patches/patchedDocument';
 export * from './patches/patchWriter';
 export * from './patches/comparisonSides';
 export * from './patches/pathNames';
+export * from './patches/pathMirrors';
 export * from './patches/validatePatch';
 export * from './gameData';
 export * from './analysis/analyzeDocument';

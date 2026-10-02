@@ -269,9 +269,16 @@ export function mergeFile(document: PatchNode, merge: PatchSource): boolean {
 /**
  * Applies the operations of a patch to a tree, in order, and tells what became of each. With
  * `uncertain`, the tree may differ from the game's already, so no operation is said to select nothing.
- * With `until`, the operations stop before that one.
+ * With `until`, the operations stop before that one. `before` is called with each operation before it is
+ * applied, while the tree is as the operation finds it.
  */
-export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = false, until?: XmlElement): PatchOperation[] {
+export function applyPatch(
+  document: PatchNode,
+  patch: PatchSource,
+  uncertain = false,
+  until?: XmlElement,
+  before?: (operation: XmlElement) => void
+): PatchOperation[] {
   const root = patch.structure.roots[0];
   if (!root) {
     return [];
@@ -285,6 +292,7 @@ export function applyPatch(document: PatchNode, patch: PatchSource, uncertain = 
     if (element.name !== 'add' && element.name !== 'replace' && element.name !== 'remove') {
       continue;
     }
+    before?.(element);
     const kind: PatchOperationKind = element.name;
     const operation: PatchOperation = { element, kind, status: 'unknown', matches: 0, inserted: [] };
     operations.push(operation);

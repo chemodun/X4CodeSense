@@ -319,9 +319,12 @@ describe('editor features in patches', () => {
     const line = target.findIndex((text) => text.includes('name="$count"'));
     expect(definitionAt(withRead, at(reading, '$count + 1', 2), data).map(place)).toEqual([`game/md/setup.xml:${line}:${target[line].indexOf('$count')}`]);
     expect(definitionAt(late, at(full, 'name="$b"', 7), data).map(place)).toEqual([`mods/late_mod/md/setup.xml:9:21`]);
+    const selecting = reading.split('\n').findIndex((text) => text.includes("set_value[@name='$count']"));
     expect(referencesAt(withRead, at(reading, '$count + 1', 2), data).map(place)).toEqual([
       'mods/late_mod/md/setup.xml:8:32',
       `game/md/setup.xml:${line}:${target[line].indexOf('$count')}`,
+      // The path of the patch's `replace` selects the `set_value` by the variable's name.
+      `mods/late_mod/md/setup.xml:${selecting}:${reading.split('\n')[selecting].indexOf("$count'")}`,
     ]);
   });
 
@@ -740,6 +743,151 @@ describe('patches while typing', () => {
         renameAt(analysis, offset, 'renamed', data);
       }
     }
+  });
+});
+
+describe('rename through the paths of patches', () => {
+  // A fresh index with the files as an editor has them: an extension's script, and another's patch of it.
+  const scripts = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+  const data = { ...game, index: scripts, folder: gameFolder };
+  const withScripts = { ...context, index: scripts };
+  const editable = { editableFolders: [modsFolder] };
+  const set = (file: string, lines: string[], source: string): string => {
+    const text = `${lines.join('\n')}\n`;
+    scripts.setStructure(file, text, parseXml(text), source, true);
+    return text;
+  };
+  const apiText = set(
+    api,
+    [
+      '<mdscript name="Api">',
+      '  <cues>',
+      '    <cue name="Register">',
+      '      <actions>',
+      '        <set_value name="$registered" exact="1"/>',
+      '        <do_if value="$registered == 1">',
+      '          <set_value name="$done" exact="true"/>',
+      '        </do_if>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ],
+    'ws_12345'
+  );
+  const nestedText = set(
+    nestedPatch,
+    [
+      '<diff>',
+      `  <replace sel="//cue[@name='Register']/actions/set_value[@name='$registered']/@exact">2</replace>`,
+      `  <add sel="//cue[@name='Register']/actions/do_if[@value='$registered == 1']" pos="before">`,
+      '    <set_value name="$before" exact="0"/>',
+      '  </add>',
+      `  <remove sel="//cue[@name='Register']/actions/do_if[not(@value='$registered == 1')]" silent="true"/>`,
+      '</diff>',
+    ],
+    'late_mod'
+  );
+  const at = (text: string, needle: string, delta = 0): number => text.indexOf(needle) + delta;
+  /** `file:line:character` of each place, lines and characters from 0. */
+  const where = (file: string, text: string, needle: string, delta = 0): string => {
+    const offset = text.indexOf(needle) + delta;
+    const lines = text.slice(0, offset).split('\n');
+    return `${relative(file)}:${lines.length - 1}:${lines[lines.length - 1].length}`;
+  };
+  const place = (location: { uri: string; range: { start: { line: number; character: number } } }): string =>
+    `${relative(fileURLToPath(location.uri))}:${location.range.start.line}:${location.range.start.character}`;
+  const edits = (edit: ReturnType<typeof renameAt>): string[] =>
+    edit && 'changes' in edit
+      ? Object.entries(edit.changes ?? {})
+          .flatMap(([uri, changes]) => changes.map((change) => `${place({ uri, range: change.range })} ${change.newText}`))
+          .sort()
+      : [String(edit && 'refused' in edit ? edit.refused : edit)];
+
+  it("renames a variable in the literals of another extension's paths that select by it", () => {
+    const script = analyzeFile(api, apiText, withScripts);
+    const offset = at(apiText, '$registered', 2);
+    const places = [
+      where(api, apiText, '$registered'),
+      where(api, apiText, '$registered == 1'),
+      where(nestedPatch, nestedText, "$registered']"),
+      // In an expression compared whole: the variable's part of the literal.
+      where(nestedPatch, nestedText, "$registered == 1'"),
+    ].sort();
+    expect(edits(renameAt(script, offset, 'signed', data, editable))).toEqual(places.map((found) => `${found} $signed`));
+    expect(referencesAt(script, offset, data).map(place).sort()).toEqual(places);
+    // The literal under not() selects other values: it repeats none.
+    expect(nestedText.split('\n')[5]).toContain("not(@value='$registered == 1')");
+    expect(prepareRenameAt(script, offset, data, editable)).toMatchObject({ placeholder: '$registered' });
+  });
+
+  it("refuses a rename when a path that repeats it is outside the workspace, or of the game's files", () => {
+    const script = analyzeFile(api, apiText, withScripts);
+    const offset = at(apiText, '$registered', 2);
+    const baseOnly = { editableFolders: [path.join(modsFolder, 'base_mod')] };
+    const refusal = { refused: '$registered is also written in api.xml (late_mod), outside the workspace' };
+    expect(renameAt(script, offset, 'signed', data, baseOnly)).toEqual(refusal);
+    expect(prepareRenameAt(script, offset, data, baseOnly)).toEqual(refusal);
+    // A variable no path names renames as before.
+    expect(edits(renameAt(script, at(apiText, '$done', 2), 'finished', data, baseOnly))).toEqual([`${where(api, apiText, '$done')} $finished`]);
+  });
+
+  it('renames a label of an AI script in the path of a patch of it', () => {
+    const library = path.join(gameFolder, 'aiscripts', 'lib.label.xml');
+    const libraryText = set(
+      library,
+      [
+        '<aiscript name="lib.label">',
+        '  <attention min="unknown">',
+        '    <actions>',
+        '      <label name="start"/>',
+        '      <resume label="start"/>',
+        '    </actions>',
+        '  </attention>',
+        '</aiscript>',
+      ],
+      'game'
+    );
+    const patch = path.join(modsFolder, 'late_mod', 'aiscripts', 'lib.label.xml');
+    const patchText = set(patch, ['<diff>', `  <add sel="//label[@name='start']" pos="after">`, '    <wait exact="1s"/>', '  </add>', '</diff>'], 'late_mod');
+    const script = analyzeFile(library, libraryText, withScripts);
+    const offset = at(libraryText, 'start', 2);
+    expect(edits(renameAt(script, offset, 'begin', data, editable))).toEqual(
+      [where(library, libraryText, '"start"', 1), where(library, libraryText, 'label="start"', 7), where(patch, patchText, "'start'", 1)]
+        .sort()
+        .map((found) => `${found} begin`)
+    );
+  });
+
+  it('renames in the path of a later operation of the same patch what an earlier one brought in', () => {
+    const patch = path.join(modsFolder, 'late_mod', 'md', 'setup.xml');
+    const own = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    const text = [
+      '<diff>',
+      `  <add sel="//cue[@name='Start']/actions">`,
+      '    <set_value name="$fresh" exact="1"/>',
+      '  </add>',
+      `  <replace sel="//cue[@name='Start']/actions/set_value[@name='$fresh']/@exact">2</replace>`,
+      '</diff>',
+      '',
+    ].join('\n');
+    own.setStructure(patch, text, parseXml(text), 'late_mod', true);
+    const analysis = analyzeFile(patch, text, { ...context, index: own });
+    expect(analysis.patch?.operations.map((operation) => operation.status)).toEqual(['applied', 'applied']);
+    const renamed = renameAt(analysis, at(text, '$fresh', 2), 'new', { ...game, index: own, folder: gameFolder }, editable);
+    expect(edits(renamed)).toEqual([where(patch, text, '$fresh'), where(patch, text, "$fresh'")].sort().map((found) => `${found} $new`));
+  });
+
+  it('never throws on a half-typed literal, which repeats nothing', () => {
+    const typed = nestedText.replace(`set_value[@name='$registered']/@exact">2</replace>`, `set_value[@name='$regis`);
+    const own = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+    own.setStructure(api, apiText, parseXml(apiText), 'ws_12345', true);
+    own.setStructure(nestedPatch, typed, parseXml(typed), 'late_mod', true);
+    const script = analyzeFile(api, apiText, { ...context, index: own });
+    const offset = at(apiText, '$registered', 2);
+    const found = referencesAt(script, offset, { ...game, index: own, folder: gameFolder }).map(place);
+    expect(found).not.toContain(where(nestedPatch, typed, '$regis'));
+    expect(found).toContain(where(nestedPatch, typed, "$registered == 1'"));
   });
 });
 
