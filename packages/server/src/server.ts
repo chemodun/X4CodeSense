@@ -81,6 +81,7 @@ import {
   type GameFileParams,
   type GameFileResult,
   type GameSource,
+  type ParsedValueCache,
   type PatchComparisonParams,
   type PatchComparisonResult,
   type PatchWriteParams,
@@ -154,6 +155,8 @@ let sentStatus: string | undefined;
 
 /** The latest analysis of each open document. */
 const analysisByUri = new Map<string, DocumentAnalysis>();
+/** The parsed values of each open document's latest analysis, for its next one: what a keystroke leaves is not parsed again. */
+const expressionCaches = new Map<string, ParsedValueCache>();
 /** The semantic tokens builder of each open document: it keeps the last result, which a delta request refers to. */
 const tokenBuilders = new Map<string, SemanticTokensBuilder>();
 /** The `ReadText` calls of each open Lua document, found at the first hover after a change. */
@@ -678,8 +681,17 @@ function refreshSemanticTokens(): void {
   }
 }
 
-function analysisContext(): AnalysisContext {
+/** What an analysis uses; with the uri of an open document, also the parsed values of its previous analysis. */
+function analysisContext(openUri?: string): AnalysisContext {
   const context: AnalysisContext = { validateStructure: settings.validateXmlStructure, guessVariableTypes: settings.guessVariableTypes };
+  if (openUri !== undefined) {
+    let cache = expressionCaches.get(openUri);
+    if (!cache) {
+      cache = {};
+      expressionCaches.set(openUri, cache);
+    }
+    context.expressionCache = cache;
+  }
   if (game) {
     context.schemas = game.schemas;
     context.texts = game.texts;
@@ -703,7 +715,7 @@ function analyze(document: TextDocument): void {
     return;
   }
   const started = performance.now();
-  const analysis = analyzeDocument(analysedDocument(document), analysisContext());
+  const analysis = analyzeDocument(analysedDocument(document), analysisContext(document.uri));
   analysisByUri.set(document.uri, analysis);
   if (game?.index && analysis.structure && indexOpenDocument(document, game.index, analysis.structure)) {
     debug(`${document.uri}: names seen by other scripts changed`);
@@ -751,7 +763,7 @@ function analyzeSide(document: TextDocument): DocumentAnalysis | undefined {
   const patch = filePathOf(side.patch) ?? gameFileOfUri(side.patch);
   const target = patch === undefined ? undefined : game?.index?.patchTarget(patch)?.file;
   const started = performance.now();
-  const analysis = analyzeComparisonSide(document, side.side, target, analysisContext());
+  const analysis = analyzeComparisonSide(document, side.side, target, analysisContext(document.uri));
   analysisByUri.set(document.uri, analysis);
   debug(`${document.uri}: the side ${side.side} the patch, ${target ? `as ${target}` : 'target not known'}, ${(performance.now() - started).toFixed(1)} ms`);
   return analysis;
@@ -1048,6 +1060,7 @@ documents.onDidChangeContent((event) => {
 
 documents.onDidClose((event) => {
   analysisByUri.delete(event.document.uri);
+  expressionCaches.delete(event.document.uri);
   tokenBuilders.delete(event.document.uri);
   readTextCallsByUri.delete(event.document.uri);
   staleSides.delete(event.document.uri);

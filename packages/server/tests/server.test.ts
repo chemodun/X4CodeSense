@@ -424,6 +424,47 @@ describe('completion, hover and definition', () => {
   });
 });
 
+describe('typing in expressions', () => {
+  it('reports after each edit what the text alone tells, also for values the edit left', async () => {
+    const uri = 'file:///mod/md/Typing.xml';
+    const lines = [
+      '<mdscript name="T">',
+      '  <cues>',
+      '    <cue name="A">',
+      '      <actions>',
+      '        <set_value name="$s" exact="player.ship"/>',
+      '        <set_value name="$n" exact="$s.pilot.frob"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    const text = lines.join('\n');
+    const unknown = (params: PublishDiagnosticsParams): string[] =>
+      params.diagnostics.filter((diagnostic) => diagnostic.code === 'expression-unknown-property').map((diagnostic) => diagnostic.message);
+    const asShip = ["'entity' has no property 'frob' ($s is a ship, set by set_value at line 5)"];
+    await statusWhere((status) => status.state === 'ready' && status.gameFolder === unpacked);
+    expect(unknown(await open(uri, text))).toEqual(asShip);
+    // `$s` becomes a string and a ship again, while the chain on it stays as it was.
+    const start = lines[4].indexOf('player.ship');
+    const replace = async (version: number, from: string, to: string): Promise<PublishDiagnosticsParams> => {
+      const published = nextDiagnostics(uri);
+      await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+        textDocument: { uri, version },
+        contentChanges: [{ range: { start: { line: 4, character: start }, end: { line: 4, character: start + from.length } }, text: to }],
+      });
+      return published;
+    };
+    expect(unknown(await replace(2, 'player.ship', "'text'"))).toEqual(["'string' has no property 'pilot' ($s is a string, set by set_value at line 5)"]);
+    expect(unknown(await replace(3, "'text'", 'player.ship'))).toEqual(asShip);
+    const closed = nextDiagnostics(uri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    await closed;
+    expect(unknown(await open(uri, text))).toEqual(asShip);
+  });
+});
+
 describe('references and rename', () => {
   const uri = 'file:///mod/md/Rename.xml';
   const lines = [

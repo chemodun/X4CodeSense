@@ -9,6 +9,7 @@ import { attributeNamed, elementAt, parseXml, type XmlElement, type XmlStructure
 import { rootElementName, type SchemaSet } from '../xsd/loadSchemas';
 import type { XsdElement } from '../xsd/schema';
 import { validateStructure } from '../xsd/validateStructure';
+import { reuseParsedValues, type ParsedValueCache } from '../expressions/attributeExpression';
 import { validateExpressions } from '../expressions/validateExpressions';
 import { collectVariables, type DocumentVariables } from '../variables/variables';
 import { validateVariables } from '../variables/validateVariables';
@@ -105,6 +106,13 @@ export interface AnalysisContext {
    * for the elements its pieces touch.
    */
   checkElement?: (element: XmlElement) => boolean;
+  /**
+   * The parsed values of this document's previous analysis, for an editor that analyses a document again
+   * on each change: the expressions the change left as they were are not parsed or resolved again. One
+   * per open document, kept while it is open; the analysis updates it. Without it every value is parsed
+   * afresh. The findings are the same either way.
+   */
+  expressionCache?: ParsedValueCache;
 }
 
 /** Names of the cues and libraries of a script: they may start a chain like a keyword. */
@@ -163,6 +171,9 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
   }
   const structure = parseXml(text);
   analysis.structure = structure;
+  if (context.expressionCache) {
+    reuseParsedValues(structure, context.expressionCache);
+  }
   for (const problem of structure.problems) {
     analysis.diagnostics.push({
       range: Range.create(document.positionAt(problem.start), document.positionAt(problem.end)),
@@ -279,6 +290,8 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
   const patched = analyzeDocument(TextDocument.create(`${pathToFileURL(target).toString()}#patched`, 'xml', 0, written.text), {
     ...context,
     checkElement: (element) => touched(element.start, element.end),
+    // The target's trees are kept apart from the patch document's, which would take their place.
+    ...(context.expressionCache ? { expressionCache: (context.expressionCache.patched ??= {}) } : {}),
   });
   const files = new Map<PatchSource, { document: TextDocument; file?: string }>();
   patched.origin = (offset) => {

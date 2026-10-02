@@ -3,9 +3,11 @@
  * (X4_EXTRACTED) and of a folder of extensions (X4_MODS), never committed: the tokens of each file are in
  * text order, apart, and on one line each once positioned; the text of each fits its type; every name in
  * an expression has a token, unless the analysis reports a problem with that expression; the tokens of the
- * slowest file take less than the file ceiling.
+ * slowest file take less than the file ceiling. And a keystroke as the editor analyses it, with the index,
+ * the texts, the tokens and the trees of the previous analysis: in the largest script of the game it takes
+ * less than the file ceiling, and in the largest of each source it finds what an analysis afresh finds.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -19,7 +21,9 @@ import {
   semanticTokens,
   type AnalysisContext,
   type DocumentAnalysis,
+  type ParsedValueCache,
   type SemanticTokenType,
+  type XmlAttribute,
 } from '../src';
 import { bestOf, fileCeilingMs } from './timing';
 
@@ -73,19 +77,23 @@ describe.skipIf(!extracted)('semantic tokens on the corpus', { timeout: 300_000 
     return analysis;
   }
 
+  /** The expression attributes of an analysis with a value, in document order. */
+  function expressionValues(analysis: DocumentAnalysis): XmlAttribute[] {
+    return (analysis.structure?.elements ?? []).flatMap((element) => {
+      const declaration = analysis.declarations.get(element);
+      return element.attributes.filter(
+        (attribute) => attribute.quote !== '' && attribute.value.trim() !== '' && isExpressionAttribute(declaration?.attributes.get(attribute.name))
+      );
+    });
+  }
+
   /** Names in expressions without a token, with the value they are in. */
   function untokened(analysis: DocumentAnalysis, starts: ReadonlySet<number>): { name: string; start: number; end: number }[] {
     const found: { name: string; start: number; end: number }[] = [];
-    for (const element of analysis.structure?.elements ?? []) {
-      const declaration = analysis.declarations.get(element);
-      for (const attribute of element.attributes) {
-        if (attribute.quote === '' || attribute.value.trim() === '' || !isExpressionAttribute(declaration?.attributes.get(attribute.name))) {
-          continue;
-        }
-        for (const token of parsedValue(attribute).tokens) {
-          if (token.kind === 'identifier' && !starts.has(offsetInValue(attribute, token.start))) {
-            found.push({ name: `${element.name}@${attribute.name} '${token.text}'`, start: attribute.valueStart, end: attribute.valueEnd });
-          }
+    for (const attribute of expressionValues(analysis)) {
+      for (const token of parsedValue(attribute).tokens) {
+        if (token.kind === 'identifier' && !starts.has(offsetInValue(attribute, token.start))) {
+          found.push({ name: `${attribute.element.name}@${attribute.name} '${token.text}'`, start: attribute.valueStart, end: attribute.valueEnd });
         }
       }
     }
@@ -167,5 +175,54 @@ describe.skipIf(!extracted)('semantic tokens on the corpus', { timeout: 300_000 
     expect(files).toBeGreaterThan(600);
     expect(problems).toEqual([]);
     expect(slowest.ms).toBeLessThan(fileCeilingMs);
+  });
+
+  it('analyses a keystroke as the editor does: only the value it changed is parsed again, and the findings and tokens are those of an analysis afresh', () => {
+    // The editor's context is `checked`. The server also indexes the document again on each change; that would
+    // change the index the other tests share, so it is left out here.
+    const largest = new Map<string, { file: string; size: number }>();
+    for (const entry of game.index?.entries() ?? []) {
+      if (entry.kind !== 'script') {
+        continue;
+      }
+      const source = entry.source === 'game' ? 'game' : entry.source.startsWith('ego_dlc_') ? 'DLCs' : 'mods';
+      const size = statSync(entry.file).size;
+      if (size > (largest.get(source)?.size ?? 0)) {
+        largest.set(source, { file: entry.file, size });
+      }
+    }
+    const timings: string[] = [];
+    for (const [source, { file }] of largest) {
+      const name = path.basename(file);
+      const text = readFileSync(file, 'utf8');
+      const uri = pathToFileURL(file).toString();
+      const cache: ParsedValueCache = {};
+      const keystroke = (typed: string): DocumentAnalysis => {
+        const analysis = analyzeText(typed, { ...checked, expressionCache: cache }, uri);
+        semanticTokens(analysis, game);
+        return analysis;
+      };
+      const values = expressionValues(keystroke(text));
+      // A space typed at the end of the first expression value after the middle of the script.
+      const at = values.find((attribute) => attribute.valueStart > text.length / 2 && attribute.closed)?.valueEnd;
+      expect(at, name).toBeDefined();
+      const edited = `${text.slice(0, at)} ${text.slice(at)}`;
+      const typed = keystroke(edited);
+      const afresh = analyzeText(edited, checked, uri);
+      expect(typed.diagnostics, name).toEqual(afresh.diagnostics);
+      expect(semanticTokens(typed, game), name).toEqual(semanticTokens(afresh, game));
+      const earlier = new Set(values.map((attribute) => parsedValue(attribute)));
+      const kept = expressionValues(typed).filter((attribute) => earlier.has(parsedValue(attribute))).length;
+      expect(kept, name).toBeGreaterThanOrEqual(values.length - 1);
+      // Each timed run is a keystroke too: the cache holds the analysis of the other text.
+      let round = 0;
+      const ms = bestOf(7, () => keystroke(round++ % 2 === 0 ? text : edited));
+      timings.push(`${source} ${name} ${ms.toFixed(1)} ms`);
+      if (source === 'game') {
+        expect(ms, name).toBeLessThan(fileCeilingMs);
+      }
+    }
+    console.log(`a keystroke as the editor analyses it, best of 7: ${timings.join(', ')}; ceiling ${fileCeilingMs} ms`);
+    expect(largest.has('game')).toBe(true);
   });
 });
