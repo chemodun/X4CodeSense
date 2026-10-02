@@ -268,6 +268,7 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [list]
 [*] A variable's type comes from the [b]exact[/b] or [b]default[/b] of [b]set_value[/b] and [b]param[/b] only, no longer from that of `create_list`, `append_to_list`, [b]do_all[/b] and the like, where it is a count or the element added; `null`, and a bare `true`, [b]false[/b] or number set before the real value, tell none.
 [*] Patches are applied faster where a step of a path picks a node by an attribute's value, such as `cue[@name='Start']`: the node is found without looking at each of its siblings.
+[*] A script is checked again faster after each change: the expressions the change left as they were are not parsed again, nor their properties looked up again. In the largest scripts, about a quarter less time per change.
 [*] Hover over a step of a patch's path names an element without [b]name[/b] by its `id`.
 [/list]
 [*] Fixed
