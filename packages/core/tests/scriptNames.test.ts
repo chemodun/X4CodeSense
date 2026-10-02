@@ -266,9 +266,13 @@ describe('AI script names and order ids', () => {
       spot('game/aiscripts/order.attack.xml', "'move.go'", 1),
       spot('game/md/caller.xml', "'move.go'", 1),
     ]);
-    expect(prepareRenameAt(caller, offset, game, { editableFolders: [folder] })).toBeUndefined();
-    expect(renameAt(caller, offset, 'Charge', game, { editableFolders: [folder] })).toEqual({
-      refused: 'order Attack is not renamed: the game and any extension may name it',
+    // Refused at the prompt already, with the reason, also without the index.
+    const refused = { refused: 'order Attack is not renamed: the game and any extension may name it' };
+    expect(prepareRenameAt(caller, offset, game, { editableFolders: [folder] })).toEqual(refused);
+    expect(prepareRenameAt(caller, offset)).toEqual(refused);
+    expect(renameAt(caller, offset, 'Charge', game, { editableFolders: [folder] })).toEqual(refused);
+    expect(prepareRenameAt(caller, offsetOf(callerText, '<run_script name="\'move.go\'"/>', 'move.go'), game)).toEqual({
+      refused: 'AI script move.go is not renamed: the game and any extension may name it',
     });
   });
 

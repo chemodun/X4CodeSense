@@ -77,17 +77,13 @@ class Completer {
     }
   }
 
-  /** The elements the parent's declaration allows after the named ones, or anywhere when none fits there. */
+  /** The elements the parent's declaration allows after the named ones; none where the schema allows nothing more. */
   elementNames(parentDeclaration: XsdElement | undefined, previous: string[], prefix: string, nameStart: number, nameEnd: number): void {
     if (!parentDeclaration) {
       return;
     }
     const model = parentDeclaration.contentModel;
-    let names = model.expectedAfter(previous);
-    if (names.length === 0) {
-      names = [...model.declarations.keys()];
-    }
-    for (const name of names) {
+    for (const name of model.expectedAfter(previous)) {
       if (!name.startsWith(prefix)) {
         continue;
       }

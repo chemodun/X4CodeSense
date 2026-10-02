@@ -122,6 +122,12 @@ describe('completion', () => {
     expect(labels(actions('<do_if value="1"><|</do_if>'))).toContain('set_value');
   });
 
+  it('offers no child element where the schema allows nothing more', () => {
+    expect(labels(cue('<actions/>\n      <cues/>\n      <|'))).toEqual([]);
+    expect(labels(cue('<actions/>\n      <cues/>\n      <ac|'))).toEqual([]);
+    expect(labels('<mdscript name="S">\n  <cues/>\n  <|\n</mdscript>\n')).toEqual([]);
+  });
+
   it('offers attribute names that are not present yet', () => {
     const { analysis, offset } = at(actions('<set_value |/>'));
     const items = completionAt(analysis, offset, game, { snippetSupport: true });

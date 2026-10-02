@@ -339,8 +339,13 @@ describe('quick fixes that create what is missing', () => {
   });
 
   it('creates nothing in a patch, and nothing next to an element that is not whole yet', () => {
+    // A patch of the mod's Setup: the cue it names is unknown where the patch lands, and still nothing is created.
     const patch = analyze(
-      '<diff>\n  <add sel="/mdscript/cues">\n    <cue name="X">\n      <actions>\n        <signal_cue_instantly cue="Later" />\n      </actions>\n    </cue>\n  </add>\n</diff>\n'
+      '<diff>\n  <add sel="/mdscript/cues">\n    <cue name="X">\n      <actions>\n        <signal_cue_instantly cue="Later" />\n      </actions>\n    </cue>\n  </add>\n</diff>\n',
+      pathToFileURL(path.join(project, 'mods', 'my_mod', 'md', 'setup.xml')).toString()
+    );
+    expect(patch.diagnostics.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`)).toContain(
+      "cue-undefined: 'Later' is no keyword and no cue of this script"
     );
     expect(quickFixes(patch, patch.diagnostics, game).filter((action) => action.title.startsWith('Create'))).toEqual([]);
     // While typing: whatever is created is whole, so the text has no new problem, and the cue being typed gets nothing.

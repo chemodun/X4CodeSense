@@ -524,4 +524,100 @@ describe('references and rename across scripts', () => {
     scripts.removeFile(unsaved);
     expect(refusal(user, 4, 'Register')).toBeUndefined();
   });
+
+  it('takes the bare names of a cue in a library of another script it includes, refused when other scripts include it too', () => {
+    const kit = add(path.join(workspace, 'api_mod', 'md', 'kit.xml'), 'api_mod', [
+      '<mdscript name="Kit">',
+      '  <cues>',
+      '    <library name="Ping">',
+      '      <actions>',
+      '        <signal_cue_instantly cue="Target"/>',
+      '        <set_value name="$x" exact="Target.$y"/>',
+      '      </actions>',
+      '    </library>',
+      '  </cues>',
+      '</mdscript>',
+    ]);
+    const pinger = add(path.join(workspace, 'user_mod', 'md', 'pinger.xml'), 'user_mod', [
+      '<mdscript name="Pinger">',
+      '  <cues>',
+      '    <cue name="Target"/>',
+      '    <cue name="Main">',
+      '      <actions>',
+      '        <include_actions ref="md.Kit.Ping"/>',
+      '        <cancel_cue cue="Target"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ]);
+    // The library resolves its bare Target in Pinger, the one script that includes it: from either side, every place.
+    const everywhere = [place(pinger, 2, 'Target'), place(pinger, 6, 'Target'), place(kit, 4, 'Target'), place(kit, 5, 'Target')].sort();
+    expect(references(pinger, 2, 'Target')).toEqual(everywhere);
+    expect(references(kit, 4, 'Target')).toEqual(everywhere);
+    expect(rename(pinger, 2, 'Target', 'Goal')).toEqual(everywhere.map((found) => `${found}=Goal`));
+    expect(rename(kit, 5, 'Target', 'Goal')).toEqual(everywhere.map((found) => `${found}=Goal`));
+    // Another script includes it and has a Target of its own: a rename would change the name for it too.
+    const other = add(path.join(workspace, 'other_mod', 'md', 'other.xml'), 'other_mod', [
+      '<mdscript name="Other">',
+      '  <cues>',
+      '    <cue name="Target"/>',
+      '    <cue name="Main">',
+      '      <actions>',
+      '        <include_actions ref="md.Kit.Ping"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+    ]);
+    expect(references(pinger, 2, 'Target')).toEqual(everywhere);
+    expect(refusal(pinger, 2, 'Target')).toBe(
+      'cue Target of Pinger is also named in library Ping of Kit (kit.xml), which other scripts use too (Other): a rename would change it for them'
+    );
+    expect(refusal(kit, 4, 'Target')).toBe(
+      'cue Target is resolved in each script that uses the library and defines it (Other, Pinger), which a rename here does not change'
+    );
+    for (const file of [kit, pinger, other]) {
+      scripts.removeFile(file);
+    }
+  });
+
+  it('refuses to rename a label an interrupt library item the script uses names, from either side', () => {
+    const lib = add(path.join(workspace, 'api_mod', 'aiscripts', 'lib.resume.xml'), 'api_mod', [
+      '<aiscript name="lib.resume">',
+      '  <interrupts>',
+      '    <library>',
+      '      <actions name="BackToStart">',
+      '        <resume label="start"/>',
+      '      </actions>',
+      '    </library>',
+      '  </interrupts>',
+      '  <attention min="unknown">',
+      '    <actions/>',
+      '  </attention>',
+      '</aiscript>',
+    ]);
+    const resumer = add(path.join(workspace, 'user_mod', 'aiscripts', 'order.resume.xml'), 'user_mod', [
+      '<aiscript name="order.resume">',
+      '  <attention min="unknown">',
+      '    <actions>',
+      '      <label name="start"/>',
+      '      <include_interrupt_actions ref="BackToStart"/>',
+      '      <resume label="start"/>',
+      '    </actions>',
+      '  </attention>',
+      '</aiscript>',
+    ]);
+    expect(references(resumer, 3, 'start')).toEqual([place(resumer, 3, 'start'), place(resumer, 5, 'start'), place(lib, 4, 'start')].sort());
+    expect(refusal(resumer, 3, 'start')).toBe(
+      'label start is also named in interrupt actions BackToStart (lib.resume.xml), which resolves it in each script that uses it: a rename here does not change it'
+    );
+    expect(refusal(lib, 4, 'start')).toBe(
+      'label start is defined in the scripts that use interrupt actions BackToStart (order.resume.xml), which a rename here does not change'
+    );
+    scripts.removeFile(resumer);
+    // No script that uses it defines the label: the item's own places rename.
+    expect(refusal(lib, 4, 'start')).toBeUndefined();
+    scripts.removeFile(lib);
+  });
 });

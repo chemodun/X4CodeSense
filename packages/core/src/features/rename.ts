@@ -4,7 +4,8 @@
  * In one document: variables, labels, cues and interrupt library items, as the document's models relate
  * them. Across files, what a name in the text ties to another file: a Mission Director script
  * (`<mdscript name>`, `md.Script`), a cue or library (its name, its bare references in its own script,
- * `md.Script.Cue` anywhere), a variable of a cue written `md.Script.Cue.$x`, an interrupt library
+ * `md.Script.Cue` anywhere, and its bare names in a library of another script that its script splices
+ * in, instantiates or runs, which resolves them there), a variable of a cue written `md.Script.Cue.$x`, an interrupt library
  * item (its definition and every reference in any AI script), and an AI script name or order id (its
  * definitions and where calls name it; found, never renamed). The current document's occurrences come
  * from its analysis, those of other files from the index.
@@ -18,7 +19,9 @@
  * workspace) and outside the game's files and its DLCs', or it is refused. It is refused too when the script is
  * defined more than once, when a file changed since it was indexed, and when a variable is tied to
  * another file in a way no name in the text shows: set or read by a library of another file, or in a
- * table other scripts fill. Renaming only this file would break that tie without a word.
+ * table other scripts fill. Renaming only this file would break that tie without a word. So would a
+ * cue's bare name in a library other scripts use too, which resolves it in each of them, and a label an
+ * interrupt library item names, which resolves it in every script that uses the item: refused as well.
  */
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -26,7 +29,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Location, Range, type TextEdit, type WorkspaceEdit } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { isGameFile, type GameData } from '../gameData';
-import { relatedOccurrences, type NamedOccurrence } from '../names/namedItems';
+import { definitionKindOf, relatedOccurrences, type NamedOccurrence } from '../names/namedItems';
 import { scriptNamesIn } from '../project/calls';
 import { mdReferenceAt, mdReferencesOf } from '../project/mdReferences';
 import type { IndexedFileModel, IndexedLibraryKind, IndexedPosition, ScriptIndex } from '../project/scriptIndex';
@@ -75,6 +78,8 @@ interface Occurrences {
   there: Elsewhere[];
   /** Places in a patched target's text that were written in no file. */
   lost?: number;
+  /** Why a rename would change the name for other scripts too: a library that resolves it in each script that uses it. */
+  tied?: string;
 }
 
 function fileOf(uri: string): string | undefined {
@@ -134,15 +139,20 @@ function targetAt(analysis: DocumentAnalysis, offset: number, game: GameData | u
     if (named.kind === 'label') {
       return undefined;
     }
+    if (named.kind === 'cue' && named.external) {
+      // A bare name in a library: the cue of the one script that uses the library and defines it.
+      const resolving = resolvingScripts(named, analysis, game.index);
+      return resolving.length === 1 ? { kind: 'cue', script: resolving[0], cue: named.name } : undefined;
+    }
     if (named.kind === 'cue') {
-      const defined = !named.external && named.items.some((item) => item.definitions.length > 0);
+      const defined = named.items.some((item) => item.definitions.length > 0);
       return defined && script.name !== '' ? { kind: 'cue', script: script.name, cue: named.name } : undefined;
     }
     return { kind: named.kind, name: named.name };
   }
-  const scriptName = scriptNameAt(analysis, offset);
+  const scriptName = scriptNameTargetAt(analysis, offset);
   if (scriptName) {
-    return { kind: scriptName.kind === 'script' ? 'aiscript' : 'order', name: scriptName.name };
+    return scriptName;
   }
   const element = analysis.structure && elementWithStartTagAt(analysis.structure, offset);
   const attribute = element && attributeWithValueAt(element, offset);
@@ -166,6 +176,17 @@ function targetAt(analysis: DocumentAnalysis, offset: number, game: GameData | u
     : { kind: 'cue', script: reference.script, cue: reference.cue };
 }
 
+/** The AI script name or order id under the caret. */
+function scriptNameTargetAt(analysis: DocumentAnalysis, offset: number): { kind: 'aiscript' | 'order'; name: string } | undefined {
+  const scriptName = scriptNameAt(analysis, offset);
+  return scriptName && { kind: scriptName.kind === 'script' ? 'aiscript' : 'order', name: scriptName.name };
+}
+
+/** Why an AI script name or order id is found but never renamed. */
+function notRenamed(target: { kind: 'aiscript' | 'order'; name: string }): string {
+  return `${describeTarget(target)} is not renamed: the game and any extension may name it`;
+}
+
 /** The occurrences of a named item of a model: those related to its first definition or reference. */
 function modelItemOccurrences(model: IndexedFileModel, kind: NamedOccurrence['kind'], name: string): NamedOccurrence[] {
   const item = model.names.items.find((candidate) => candidate.kind === kind && candidate.name === name && candidate.scope === 'script');
@@ -178,14 +199,211 @@ function cueTable(tables: readonly VariableTable[], cue: string): VariableTable 
   return tables.find((table) => (table.kind === 'cue' || table.kind === 'library') && table.name === cue);
 }
 
+/** Whether a file is the analysed document's. */
+function currentFileTest(analysis: DocumentAnalysis, current = fileOf(analysis.document.uri)): (file: string) => boolean {
+  return (file) => current !== undefined && sameFile(file, current);
+}
+
+/** The names of the libraries of a Mission Director script an element sits in. */
+function librariesAround(element: XmlElement): string[] {
+  const names: string[] = [];
+  for (let current = element.parent; current; current = current.parent) {
+    const name = current.name === 'library' ? attributeNamed(current, 'name')?.value.trim() : undefined;
+    if (name) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/** The interrupt library item of an AI script an element sits in. */
+function interruptItemAround(element: XmlElement): { kind: IndexedLibraryKind; name: string } | undefined {
+  for (let current = element.parent; current; current = current.parent) {
+    const kind = definitionKindOf(current, 'name', 'aiscripts');
+    if (kind === 'actions' || kind === 'handler' || kind === 'conditions') {
+      const name = attributeNamed(current, 'name')?.value.trim();
+      return name ? { kind, name } : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The named occurrences of a file a test picks: from the analysis for the current document, else from the
+ * index's model of the file, seen with the game's keywords as the analysis sees them.
+ */
+function pickedOccurrences(
+  file: string,
+  picks: (occurrence: NamedOccurrence) => boolean,
+  analysis: DocumentAnalysis,
+  game: GameData,
+  index: ScriptIndex,
+  isCurrent: (file: string) => boolean
+): Pick<Occurrences, 'here' | 'there'> {
+  if (isCurrent(file)) {
+    return { here: (analysis.names?.occurrences ?? []).filter(picks), there: [] };
+  }
+  const model = index.fileModel(file);
+  if (!model) {
+    return { here: [], there: [] };
+  }
+  const there = model
+    .namesWith(game.properties)
+    .occurrences.filter(picks)
+    .map((occurrence) => ({
+      file: model.file,
+      ...model.positionAt(occurrence.start),
+      text: model.text.slice(occurrence.start, occurrence.end),
+    }));
+  return { here: [], there };
+}
+
+/**
+ * Bare names of a script's cue or label in a library of another file, which resolves them in each
+ * script that uses it (`external` names): what a message calls the library, its file, the scripts
+ * besides this one that use it, and the places.
+ */
+interface LibraryPlaces extends Pick<Occurrences, 'here' | 'there'> {
+  library: string;
+  file: string;
+  others: string[];
+}
+
+/** The bare names of a cue of a Mission Director script in the libraries of other scripts it splices in, instantiates or runs. */
+function cueLibraryPlaces(
+  script: string,
+  cue: string,
+  analysis: DocumentAnalysis,
+  game: GameData,
+  index: ScriptIndex,
+  isCurrent: (file: string) => boolean
+): LibraryPlaces[] {
+  const found: LibraryPlaces[] = [];
+  const refs = new Set(index.scripts('md', script).flatMap((entry) => [...entry.includes, ...entry.instantiates]));
+  for (const ref of refs) {
+    const parts = /^md\.(\w+)\.(\w+)$/.exec(ref);
+    if (!parts || parts[1] === script) {
+      continue;
+    }
+    const [, owner, library] = parts;
+    const picks = (occurrence: NamedOccurrence): boolean =>
+      occurrence.kind === 'cue' && occurrence.external && occurrence.name === cue && librariesAround(occurrence.element).includes(library);
+    for (const file of index.cueFiles(owner, library)) {
+      const places = pickedOccurrences(file, picks, analysis, game, index, isCurrent);
+      if (places.here.length + places.there.length > 0) {
+        const others = index.libraryUserNames(owner, library).filter((name) => name !== script);
+        found.push({ library: `library ${library} of ${owner}`, file, others, ...places });
+      }
+    }
+  }
+  return found;
+}
+
+/** The bare names of a label of an AI script in the interrupt library items it uses, which resolve them in whichever attention block runs. */
+function labelLibraryPlaces(
+  label: string,
+  analysis: DocumentAnalysis,
+  game: GameData,
+  index: ScriptIndex,
+  isCurrent: (file: string) => boolean
+): LibraryPlaces[] {
+  const used = new Map<string, { kind: IndexedLibraryKind; name: string }>();
+  for (const occurrence of analysis.names?.occurrences ?? []) {
+    const kind = occurrence.kind;
+    if (occurrence.role === 'reference' && (kind === 'actions' || kind === 'handler' || kind === 'conditions')) {
+      used.set(`${kind}:${occurrence.name}`, { kind, name: occurrence.name });
+    }
+  }
+  const found: LibraryPlaces[] = [];
+  for (const { kind, name } of used.values()) {
+    const picks = (occurrence: NamedOccurrence): boolean => {
+      const item = occurrence.kind === 'label' && occurrence.external && occurrence.name === label ? interruptItemAround(occurrence.element) : undefined;
+      return item?.kind === kind && item.name === name;
+    };
+    for (const item of index.libraryItems(kind, name)) {
+      const places = pickedOccurrences(item.position.file, picks, analysis, game, index, isCurrent);
+      if (places.here.length + places.there.length > 0) {
+        found.push({ library: `interrupt ${kind} ${name}`, file: item.position.file, others: [], ...places });
+      }
+    }
+  }
+  return found;
+}
+
+/** The scripts that use a library a bare cue name is written in and define a cue of that name: the library resolves the name in each. */
+function resolvingScripts(occurrence: NamedOccurrence, analysis: DocumentAnalysis, index: ScriptIndex): string[] {
+  const own = analysis.detection.script?.name;
+  if (!own) {
+    return [];
+  }
+  const found = new Set<string>();
+  for (const library of librariesAround(occurrence.element)) {
+    for (const user of index.libraryUserNames(own, library)) {
+      if (user !== '' && user !== own && index.cues(user, occurrence.name).length > 0) {
+        found.add(user);
+      }
+    }
+  }
+  return [...found].sort();
+}
+
+/** The files of the scripts that use an interrupt library item and define a label of the name. */
+function labelDefiners(label: string, item: { kind: IndexedLibraryKind; name: string }, analysis: DocumentAnalysis, index: ScriptIndex): string[] {
+  const isCurrent = currentFileTest(analysis);
+  const files = new Map<string, string>();
+  for (const reference of index.libraryReferences(item.kind, item.name)) {
+    files.set(path.resolve(reference.position.file).toLowerCase(), reference.position.file);
+  }
+  const found: string[] = [];
+  for (const file of files.values()) {
+    const names = isCurrent(file) ? analysis.names : index.fileModel(file)?.names;
+    if (names?.items.some((candidate) => candidate.kind === 'label' && candidate.name === label && candidate.definitions.length > 0)) {
+      found.push(path.basename(file));
+    }
+  }
+  return found.sort();
+}
+
+/**
+ * Why renaming the label or bare cue name under the caret would break a library that resolves it in the
+ * scripts that use it, or undefined. A label that an interrupt library item of the script names is not
+ * renamed: the item resolves it in every script that uses it, in whichever attention block runs; nor is
+ * that name in the item while a script that uses it defines the label. A bare cue name in a library is
+ * renamed with the cue of the one script that uses the library and defines it (`targetAt`), not when several do.
+ */
+function libraryTie(analysis: DocumentAnalysis, offset: number, game: GameData, index: ScriptIndex): string | undefined {
+  const named = namedItemAt(analysis, offset);
+  if (named?.kind === 'cue' && named.external) {
+    const resolving = resolvingScripts(named, analysis, index);
+    return resolving.length > 1
+      ? `cue ${named.name} is resolved in each script that uses the library and defines it (${resolving.join(', ')}), which a rename here does not change`
+      : undefined;
+  }
+  if (named?.kind !== 'label' || analysis.detection.script?.schema !== 'aiscripts') {
+    return undefined;
+  }
+  if (!named.external) {
+    const tied = labelLibraryPlaces(named.name, analysis, game, index, currentFileTest(analysis))[0];
+    return tied
+      ? `label ${named.name} is also named in ${tied.library} (${path.basename(tied.file)}), which resolves it in each script that uses it: a rename here does not change it`
+      : undefined;
+  }
+  const item = interruptItemAround(named.element);
+  const definers = item ? labelDefiners(named.name, item, analysis, index) : [];
+  return item && definers.length > 0
+    ? `label ${named.name} is defined in the scripts that use interrupt ${item.kind} ${item.name} (${definers.join(', ')}), which a rename here does not change`
+    : undefined;
+}
+
 /**
  * Every place the target is written: in the current document from its analysis, in other files from the
  * index. `current` is the file whose places the analysis gives, the analysed document's by default.
  */
 function occurrencesOf(target: Target, analysis: DocumentAnalysis, game: GameData, index: ScriptIndex, current = fileOf(analysis.document.uri)): Occurrences {
-  const isCurrent = (file: string): boolean => current !== undefined && sameFile(file, current);
+  const isCurrent = currentFileTest(analysis, current);
   const here: { start: number; end: number }[] = [];
   const there: Elsewhere[] = [];
+  let tied: string | undefined;
   const indexed = (position: IndexedPosition, text: string): void => {
     if (!isCurrent(position.file)) {
       there.push({ file: position.file, line: position.line, character: position.character, text });
@@ -255,6 +473,14 @@ function occurrencesOf(target: Target, analysis: DocumentAnalysis, game: GameDat
           indexed(reference.position, target.cue);
         }
       }
+      for (const places of cueLibraryPlaces(target.script, target.cue, analysis, game, index, isCurrent)) {
+        here.push(...places.here);
+        there.push(...places.there);
+        if (places.others.length > 0) {
+          const others = places.others.map((name) => name || 'a patch').join(', ');
+          tied ??= `${describeTarget(target)} is also named in ${places.library} (${path.basename(places.file)}), which other scripts use too (${others}): a rename would change it for them`;
+        }
+      }
       break;
     }
     case 'variable': {
@@ -304,7 +530,7 @@ function occurrencesOf(target: Target, analysis: DocumentAnalysis, game: GameDat
       }
     }
   }
-  return distinct(here, there);
+  return tied === undefined ? distinct(here, there) : { ...distinct(here, there), tied };
 }
 
 /** Each place once, in order. */
@@ -343,7 +569,7 @@ function describeTarget(target: Target): string {
 /** Why the occurrences in other files cannot all be edited, or undefined when they can. */
 function editRefusal(target: Target, occurrences: Occurrences, game: GameData, index: ScriptIndex, options: RenameOptions): string | undefined {
   if (target.kind === 'aiscript' || target.kind === 'order') {
-    return `${describeTarget(target)} is not renamed: the game and any extension may name it`;
+    return notRenamed(target);
   }
   const script = target.kind === 'script' || target.kind === 'cue' || target.kind === 'variable' ? target.script : undefined;
   const scripts = script === undefined ? [] : index.scripts('md', script);
@@ -352,6 +578,9 @@ function editRefusal(target: Target, occurrences: Occurrences, game: GameData, i
   }
   if (occurrences.lost) {
     return lostPlace(describeTarget(target));
+  }
+  if (occurrences.tied) {
+    return occurrences.tied;
   }
   return placesRefusal(describeTarget(target), occurrences.there, game, index, options);
 }
@@ -562,7 +791,7 @@ function patchOccurrences(target: Target, analysis: DocumentAnalysis, game: Game
       here.push(name);
     }
   }
-  return { ...distinct(here, there), lost };
+  return found.tied === undefined ? { ...distinct(here, there), lost } : { ...distinct(here, there), lost, tied: found.tied };
 }
 
 /** References from a patch document: of what its content names where it lands, or of a name in a path. */
@@ -631,22 +860,16 @@ function mirrorDocument(analysis: DocumentAnalysis): MirrorDocument | undefined 
   return file !== undefined && structure ? { file, text: analysis.document.getText(), structure } : undefined;
 }
 
-/** Documents of files by uri: the analysed one, else the file's text as the index reads it. */
+/**
+ * Documents of files by uri: the analysed one, else the file's text as the index keeps it for the path
+ * mirrors, which take their offsets from the same text.
+ */
 function documentsFor(analysis: DocumentAnalysis, index: ScriptIndex): (file: string) => TextDocument {
   const current = fileOf(analysis.document.uri);
-  const documents = new Map<string, TextDocument>();
-  return (file) => {
-    if (current !== undefined && sameFile(file, current)) {
-      return analysis.document;
-    }
-    const key = path.resolve(file).toLowerCase();
-    let document = documents.get(key);
-    if (!document) {
-      document = TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, index.currentText(file) ?? '');
-      documents.set(key, document);
-    }
-    return document;
-  };
+  return (file) =>
+    current !== undefined && sameFile(file, current)
+      ? analysis.document
+      : (index.documentOf(file) ?? TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, ''));
 }
 
 /**
@@ -739,6 +962,10 @@ function patchPrepareRenameAt(
   let range: Range | undefined;
   if (view) {
     const found = variableAt(view.analysis, view.offset)?.occurrence ?? namedItemAt(view.analysis, view.offset) ?? mdNameAt(view.analysis, view.offset, game);
+    const scriptName = found ? undefined : scriptNameTargetAt(view.analysis, view.offset);
+    if (scriptName) {
+      return { refused: notRenamed(scriptName) };
+    }
     range = found && rangeInPatch(view, rangeOf(view.analysis, found));
   } else {
     const inPath = pathTargetAt(analysis, offset, game);
@@ -775,13 +1002,22 @@ function ownReferencesAt(analysis: DocumentAnalysis, offset: number, game?: Game
     return variableReferences(variable.variable, analysis.document);
   }
   const named = namedItemAt(analysis, offset);
-  return named ? relatedOccurrences(named).map((occurrence) => Location.create(analysis.document.uri, rangeOf(analysis, occurrence))) : [];
+  if (!named) {
+    return [];
+  }
+  const own = relatedOccurrences(named).map((occurrence) => Location.create(analysis.document.uri, rangeOf(analysis, occurrence)));
+  // A label of the script: also where interrupt library items it uses name it.
+  const index = game?.index;
+  if (named.kind !== 'label' || named.external || !game || !index || analysis.detection.script?.schema !== 'aiscripts') {
+    return own;
+  }
+  return [...own, ...labelLibraryPlaces(named.name, analysis, game, index, currentFileTest(analysis)).flatMap((places) => locationsOf(analysis, places))];
 }
 
 /** Why a rename at the caret is not done, or undefined when it may go ahead. */
 function renameRefusal(analysis: DocumentAnalysis, offset: number, game: GameData | undefined, options: RenameOptions): string | undefined {
   const variable = variableAt(analysis, offset)?.variable;
-  const tie = variable && variableTie(variable, analysis, game?.index);
+  const tie = (variable && variableTie(variable, analysis, game?.index)) || (game?.index && libraryTie(analysis, offset, game, game.index));
   if (tie) {
     return tie;
   }
@@ -804,7 +1040,8 @@ export function prepareRenameAt(
   }
   const found = variableAt(analysis, offset)?.occurrence ?? namedItemAt(analysis, offset) ?? mdNameAt(analysis, offset, game);
   if (!found) {
-    return undefined;
+    const scriptName = scriptNameTargetAt(analysis, offset);
+    return scriptName && { refused: notRenamed(scriptName) };
   }
   const refused = renameRefusal(analysis, offset, game, options);
   if (refused) {

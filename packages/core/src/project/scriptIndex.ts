@@ -29,9 +29,12 @@
  * worked out for a file when first asked for, like the variables of a cue.
  */
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { findExtensions } from '../extensions/extensions';
 import { diskFiles, fileNames, subfolderNames, type FileSource } from '../files/fileSource';
 import { collectNames, referenceKindOf, type DocumentNames } from '../names/namedItems';
+import type { ScriptProperties } from '../properties/scriptProperties';
 import { detectDocument } from '../scripts/scriptMetadata';
 import type { ScriptSchema } from '../types';
 import { collectVariables, receivesValue, type DocumentVariables } from '../variables/variables';
@@ -574,6 +577,11 @@ export interface IndexedFileModel {
   positionAt(offset: number): { line: number; character: number };
   readonly variables: DocumentVariables;
   readonly names: DocumentNames;
+  /**
+   * The named items as an analysis with the script properties sees them: a bare name that is no keyword
+   * is a cue reference, external in a library. Without the properties, `names`.
+   */
+  namesWith(properties: ScriptProperties | undefined): DocumentNames;
 }
 
 /** The lookup key of what a reference names. */
@@ -615,8 +623,8 @@ export class ScriptIndex {
   private readonly texts = new Map<string, string>();
   /** Models of script files, worked out when first asked for. */
   private readonly models = new Map<string, IndexedFileModel | undefined>();
-  /** Scanned files for the patch support, by key, until they change. */
-  private readonly parsed = new Map<string, { text: string; structure: XmlStructure }>();
+  /** Scanned files for the patch support, by key, until they change; with the text as a document once asked for. */
+  private readonly parsed = new Map<string, { text: string; structure: XmlStructure; document?: TextDocument }>();
   private lookups: Lookups | undefined;
   /** References of every file by what they name, built when first asked for. */
   private referenceLookup: Map<string, IndexedReference[]> | undefined;
@@ -727,6 +735,7 @@ export class ScriptIndex {
     const schema = entry.schema;
     let variables: DocumentVariables | undefined;
     let names: DocumentNames | undefined;
+    let withKeywords: { properties: ScriptProperties; names: DocumentNames } | undefined;
     return {
       file: entry.file,
       schema,
@@ -738,11 +747,20 @@ export class ScriptIndex {
       get names(): DocumentNames {
         return (names ??= collectNames(source, schema, xsd, undefined));
       },
+      namesWith(properties: ScriptProperties | undefined): DocumentNames {
+        if (!properties) {
+          return this.names;
+        }
+        if (withKeywords?.properties !== properties) {
+          withKeywords = { properties, names: collectNames(source, schema, xsd, properties) };
+        }
+        return withKeywords.names;
+      },
     };
   }
 
   /** The files a cue or library of a Mission Director script is written in: the scripts of the name, and the patches that add it. */
-  private cueFiles(scriptName: string, cueName: string): string[] {
+  cueFiles(scriptName: string, cueName: string): string[] {
     const files = this.scripts('md', scriptName).map((script) => script.file);
     for (const cue of this.cues(scriptName, cueName)) {
       if (cue.patch !== undefined && !files.includes(cue.patch)) {
@@ -947,6 +965,16 @@ export class ScriptIndex {
     return parsed;
   }
 
+  /**
+   * The text `parsedFile` keeps as a document, for positions of places in it; kept with it, so its lines
+   * are counted once until the file changes. Undefined when the file cannot be read.
+   */
+  documentOf(file: string): TextDocument | undefined {
+    this.parsedFile(file);
+    const kept = this.parsed.get(keyOf(file));
+    return kept && (kept.document ??= TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, kept.text));
+  }
+
   private orderOf(source: string): number {
     return this.sourceOrder.get(source) ?? this.sourceOrder.size;
   }
@@ -1036,6 +1064,16 @@ export class ScriptIndex {
   isUsedByOtherScripts(scriptName: string, libraryName: string): boolean {
     const scripts = this.lookup().instantiators.get(`md.${scriptName}.${libraryName}`);
     return scripts !== undefined && [...scripts].some((name) => name !== scriptName);
+  }
+
+  /**
+   * The names of the Mission Director scripts that splice in, instantiate or run a library
+   * (`md.<Script>.<Library>`), sorted; a patch counts as '', the script it patches unknown here.
+   */
+  libraryUserNames(scriptName: string, libraryName: string): string[] {
+    const ref = `md.${scriptName}.${libraryName}`;
+    const { includers, instantiators } = this.lookup();
+    return [...new Set([...(includers.get(ref) ?? []), ...(instantiators.get(ref) ?? [])])].sort();
   }
 
   /**
