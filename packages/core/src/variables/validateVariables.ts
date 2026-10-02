@@ -19,8 +19,9 @@ function insidePatch(element: XmlElement): boolean {
  * A variable read in a script or cue table that nothing defines: probably a typo or a missing
  * `<param>`. Guarded reads (`@$x`, `$x?`, or under such a test) are fine, as are global, remote and
  * opaque tables, which other code fills, reads inside an AI script's interrupt library, which the
- * scripts that use it answer for, variables that libraries of other files set, and variables some
- * script writes into cues it gets as values.
+ * scripts that use it answer for, variables that libraries of other files set, variables some script
+ * writes into cues it gets as values, and reads after the cue includes a library chosen at run time
+ * (`<include_actions ref="$lib">`), which may have set them.
  */
 export function validateVariables(variables: DocumentVariables, document: TextDocument, source: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
@@ -37,7 +38,7 @@ export function validateVariables(variables: DocumentVariables, document: TextDo
         continue;
       }
       for (const reference of variable.references) {
-        if (reference.guarded || reference.external || insidePatch(reference.element)) {
+        if (reference.guarded || reference.external || insidePatch(reference.element) || reference.start >= (table.includesThroughValueAt ?? Infinity)) {
           continue;
         }
         const where = table.kind === 'script' ? 'this script' : `${table.kind} '${table.name}'`;

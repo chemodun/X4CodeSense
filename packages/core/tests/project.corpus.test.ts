@@ -93,8 +93,9 @@ describe.skipIf(!extracted)('script index on the corpus', { timeout: 300_000 }, 
     // On vanilla 9.00 with its DLCs and on the mods; lower, never raise. What is left in Mission Director
     // scripts of the game is mostly real: reads of variables only a commented-out block sets, a case typo
     // (`$feedbackvalue`), a `do_all` without its `counter`, the include of a library that does not exist.
-    // The extensions: parameters passed to an AI script that it never declares, and some typos.
-    expect(unset.md.game).toBeLessThanOrEqual(206);
+    // The extensions: parameters passed to an AI script that it never declares, and some typos. 206 before
+    // reads after the include of a library chosen at run time were left alone.
+    expect(unset.md.game).toBeLessThanOrEqual(198);
     expect(unset.aiscripts.extensions).toBeLessThanOrEqual(27);
     expect(unset.md.extensions).toBeLessThanOrEqual(9);
   });

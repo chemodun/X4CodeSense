@@ -16,10 +16,12 @@ It looks for `md` and `aiscripts` folders directly under each given path and one
 
 It checks each extension's `libraries` folder as well: a patch there (`<diff>`) is applied to the game's library file of the same name, after the patches and merge files of the extensions loaded before it, and counts as a patch. A merge file, whose root is the game file's (`<wares>` in `libraries/wares.xml`), is merged as the game merges it; one whose root is neither is reported, since the game skips it. Other files there are not reported as no scripts.
 
+The checks are those the X4CodeSense extension runs as you type, listed with their known limitations in [its README](https://github.com/chemodun/X4CodeSense/blob/main/client/README.md).
+
 Options:
 
 - `--game <folder>` - the installed game, the folder of `X4.exe`. Its files and those of its DLCs (the folders of its `extensions` whose names start with `ego_dlc_`) are read from their catalogs (`01.cat`, …, a DLC's `ext_01.cat`, …) where they lie: nothing is extracted, and the X Catalog Tool is not needed. The other folders in its `extensions`, the player's mods, are not part of the game: give them as paths to check or with `--extensions`. Used when `--unpacked` is not given. Also read from the `X4_GAME` environment variable.
-- `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd` and `common.xsd`, and scripts are validated against them. Also read from the `X4_UNPACKED` environment variable.
+- `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd`, `common.xsd` and `diff.xsd`, and scripts and patches are validated against them. Also read from the `X4_UNPACKED` environment variable.
 - `--extensions <folder>` - other extensions the checked ones refer to: their texts and scripts are read, they are not checked. May be given several times.
 - `--no-structure` - report unknown elements, attributes and values and text inside elements only, not the order and completeness of child elements.
 - `--no-type-guesses` - type variables only by what the scripts and the schemas state (`<param type>`, the value `set_value` sets, groups), not by guesses from the names and documentation of actions (`create_ship` a ship).

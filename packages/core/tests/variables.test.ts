@@ -145,6 +145,51 @@ describe('variable tables of a Mission Director script', () => {
     expect(undefinedReport(analysis)).toEqual(["18:31 Variable '$lib' is never set in cue 'Dyn'"]);
   });
 
+  it('does not report reads after the include of a library chosen at run time, also while the include is typed', () => {
+    const script = (include: string): string =>
+      md([
+        '    <cue name="Threads">',
+        '      <actions>',
+        '        <set_value name="$before" exact="$Name"/>',
+        `        ${include}`,
+        '        <set_value name="$after" exact="this.$Name + $Description"/>',
+        '      </actions>',
+        '      <cues>',
+        '        <cue name="Later">',
+        '          <actions>',
+        '            <set_value name="$later" exact="$Reward + this.$Own"/>',
+        '          </actions>',
+        '        </cue>',
+        '      </cues>',
+        '    </cue>',
+        '    <cue name="Other">',
+        '      <actions>',
+        '        <set_value name="$other" exact="$Name"/>',
+        '      </actions>',
+        '    </cue>',
+      ]);
+    const include = '<include_actions ref="$Thread.$NameLib"/>';
+    // The library may set the namespace's `$Name`, `$Description` and `$Reward` and the cue's own `this.$Name`, not
+    // what is read before it, the sub-cue's own `this.$Own`, or another cue's `$Name`.
+    expect(undefinedReport(analyze(script(include)))).toEqual([
+      "5:42 Variable '$Name' is never set in cue 'Threads'",
+      "6:31 Variable '$Thread' is never set in cue 'Threads'",
+      "12:60 Variable '$Own' is never set in cue 'Later'",
+      "19:41 Variable '$Name' is never set in cue 'Other'",
+    ]);
+    // A library named in the script is no value: the reads after its include stay reported.
+    expect(undefinedReport(analyze(script('<include_actions ref="Missing"/>')))).toContain("7:54 Variable '$Description' is never set in cue 'Threads'");
+    for (let cut = 0; cut < include.length; cut++) {
+      const typed = include.slice(0, cut);
+      const report = undefinedReport(analyze(script(typed)));
+      expect(report[0], typed).toBe("5:42 Variable '$Name' is never set in cue 'Threads'");
+      expect(
+        report.some((line) => line.includes("'$Description'")),
+        typed
+      ).toBe(!typed.includes('$'));
+    }
+  });
+
   it('tells guarded reads, table keys, value keys and removals apart', () => {
     const analysis = analyze(
       md([

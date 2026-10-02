@@ -63,6 +63,12 @@ export interface VariableTable {
    * script, or, with the script index, a library another script includes.
    */
   opaque?: boolean;
+  /**
+   * Where the cue first splices in a library chosen at run time (`<include_actions ref="$lib">`): the
+   * offset after that element. The library may set any variable here, so reads from there on may be of
+   * what it set.
+   */
+  includesThroughValueAt?: number;
 }
 
 export type OccurrenceKind = 'definition' | 'reference' | 'removal';
@@ -434,7 +440,7 @@ class Collector {
    * `<include_actions ref="Lib">` splices the library's actions into the including cue: both run in one
    * table. A library the script never uses by name (`include_actions`, `<cue ref>`, `run_actions`) is
    * used through a value (`ref="$lib"`) or by other scripts, which set what it reads; so is a library
-   * only such a library includes.
+   * only such a library includes. Where a cue includes a library through a value, the table notes it.
    */
   private linkIncludedLibraries(): void {
     if (this.schema !== 'md') {
@@ -446,8 +452,9 @@ class Collector {
       if (element.name !== 'include_actions' && element.name !== 'cue' && element.name !== 'run_actions') {
         continue;
       }
-      const ref = this.localName(attributeNamed(element, 'ref')?.value.trim());
-      if (ref === undefined || ref === '') {
+      const refAttribute = attributeNamed(element, 'ref');
+      const ref = this.localName(refAttribute?.value.trim());
+      if (!refAttribute || ref === undefined || ref === '') {
         continue;
       }
       const library = this.cuesByName.get(ref);
@@ -455,6 +462,11 @@ class Collector {
         if (element.name === 'cue') {
           // `<cue ref="md.Script.Library">`: another script's library fills this cue's variables.
           this.cueTable(element).opaque = true;
+        } else if (element.name === 'include_actions' && nameChainText(parsedValue(refAttribute).expression) === undefined) {
+          // `<include_actions ref="$Thread.$NameLib">`: whichever library that is sets its variables in the including cue.
+          for (const table of this.includingTables(element)) {
+            table.includesThroughValueAt = Math.min(table.includesThroughValueAt ?? element.end, element.end);
+          }
         }
         continue;
       }
@@ -665,14 +677,19 @@ class Collector {
       if (!remote || remote[1] === scriptName) {
         continue;
       }
-      const including = this.cueOf(element);
-      const tables = new Set([this.tableOf(element), ...(including ? [this.cueTable(including)] : [])]);
+      const tables = this.includingTables(element);
       for (const set of index.cueVariables(remote[1], remote[2])) {
         for (const table of tables) {
           this.addElsewhere(table, set.name, { position: set.position, via: `library ${remote[2]} of ${remote[1]}` });
         }
       }
     }
+  }
+
+  /** The tables a library spliced in at the element sets its variables in: the namespace's (`$x`) and the including cue's own (`this.$x`). */
+  private includingTables(element: XmlElement): Set<VariableTable> {
+    const including = this.cueOf(element);
+    return new Set([this.tableOf(element), ...(including ? [this.cueTable(including)] : [])]);
   }
 
   private addElsewhere(table: VariableTable, name: string, definition: ElsewhereDefinition): void {

@@ -57,7 +57,7 @@ VS Code colours XML attribute values as strings, so a whole expression is one co
 - cues and libraries, also in `md.Script.Cue`, labels and interrupt library items, where they are defined and where they are used;
 - numbers with their units (`5km`, `10s`), strings, `if`, `then`, `else`, and the operators and punctuation.
 
-In a patch, what an `add` or `replace` brings in is coloured as where it lands. The colours come from your theme, as for other languages. Plain values such as `operation="add"` keep the colour of XML strings.
+In a patch, what an `add` or `replace` brings in is coloured as where it lands. The colours come from your theme, as for other languages. Plain values such as `operation="add"`, and the paths of a patch's `sel` and `if`, keep the colour of XML strings.
 
 ### Quick fixes
 
@@ -132,10 +132,12 @@ A few things the game's files do not say are built in:
 - XPath in patches beyond what the game evaluates is reported as not understood, never as wrong.
 - A rename of a variable started in a script does not reach its uses in what patches bring in (started in the patch, it does); a variable written in a patch's path is renamed from the script or the patch's content, not from the path. A variable a library of another script uses through `include_actions` is not renamed: the rename is refused, with the reason.
 - In the side with the patch, text inside elements, which scripts do not have, is not written into the patch: a change of it is refused, with the reason. The order of attributes is not written either. A changed comment of the game's script becomes its removal and a new comment. What a patch brings in and then changes again with another of its operations is changed where that operation does, not from the side.
-- AI scripts, Mission Director scripts and their patches are checked. The patches of library files are applied and their paths checked, but what they bring in is not, since the game has no schemas for those files. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
+- AI scripts, Mission Director scripts and their patches are checked. The patches of library files are applied and their paths checked, but what they bring in is not: of the schemas in `libraries`, only those of scripts and patches are read, not those some library files have, such as `parameters.xsd`. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
 - Writing the changes of the side of a large library file, such as `wares.xml` after the DLCs' patches, into its patch takes up to about a second.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
 - A variable has a type only when everything that sets it in the script agrees on one: one set from another variable's property, by `do_for_each`, by a library's `return` or by other scripts has none, and neither has a variable of the global table or of a library other scripts fill. The elements of a list have no type.
+- A test of the class does not narrow the type for what follows: in `@player.target.isclass.npc and player.target.race`, `race` is reported, since `player.target` is an `object`, which has no `race`.
+- A variable that is read but never set is not reported where code the check does not follow may set it: `global.$x`, a cue of another script (`md.Script.Cue.$x`), a library the script never names or other scripts include, a variable some script writes into cues it gets as values (`$Cue.$x`), and what a cue reads after it includes a library chosen at run time (`<include_actions ref="$Thread.$NameLib"/>`).
 - Semantic highlighting needs the game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
 
 ## 🚀 Getting started
@@ -248,6 +250,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Fixed
   - In the diff of a patch, the file's document type declaration is kept, and the end tag of an element that gets its first child ends its line with the file's line break.
   - Text typed inside an element in the side with the patch was dropped without a word when the side was written; the change is now refused, with the reason.
+  - A variable read after an `include_actions` whose `ref` is a value, such as `$Thread.$NameLib`, was reported as never set, though the library chosen at run time may set it. Eight such findings in the game's own scripts are gone.
 
 ### [0.8.0] - 2026-10-01
 

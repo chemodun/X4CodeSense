@@ -7,7 +7,7 @@ Status: 0.x. The npm packages are on npm; the extension is on the [Visual Studio
 ## Layout
 
 - `packages/catalog` - `x4-catalog`, reads the game's catalogs (`.cat`/`.dat`) in place, without extracting them, and writes new ones. No dependencies.
-- `packages/core` - `x4-script-core`, the editor-independent analysis library: script detection, XML structure, expression language, types, scopes, symbols, diagnostics, and the `ReadText` calls of Lua files. No `vscode` imports.
+- `packages/core` - `x4-script-core`, the editor-independent analysis library: script detection, XML structure, expression language, types, scopes, symbols, diagnostics, and the `ReadText` calls of Lua files. No `vscode` imports. Its API is made for the server, the client and the checker, and changes with them.
 - `packages/server` - `x4-script-language-server`, the LSP server on top of the core.
 - `packages/cli` - `x4-script-check`, a command-line checker for CI and tools, on top of the core.
 - `client` - the `X4CodeSense` VS Code extension (publisher `X4DevTools`). It bundles the server and the core into `client/dist`.
@@ -37,7 +37,7 @@ npm test
 
 With both `X4_EXTRACTED` and `X4_GAME`, the files read from the catalogs are compared with the extracted ones of the same build.
 
-The corpus check times the analysis of the largest game file against a ceiling of 200 ms, and of patch documents against twice that. On a slower or busy machine, `X4_FILE_CEILING_MS` sets a higher ceiling; with all corpus files running at once, each shares the machine with the others.
+The corpus check times the analysis of the largest game file, and of a change typed into it as the editor analyses it, against a ceiling of 200 ms, and of patch documents against twice that. On a slower or busy machine, `X4_FILE_CEILING_MS` sets a higher ceiling; with all corpus files running at once, each shares the machine with the others.
 
 ## Releases
 
