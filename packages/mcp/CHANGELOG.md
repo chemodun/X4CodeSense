@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.1.1...x4-script-mcp@v0.2.0) (2026-10-03)
+
+
+### Features
+
+* the MCP server's tool hover tells what a place of a script is, as the editor's hover does ([ef599f2](https://github.com/chemodun/X4CodeSense/commit/ef599f22c7fc6940be41aa7696ed185025a7377e))
+
 ## [0.1.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.1.0...x4-script-mcp@v0.1.1) (2026-10-03)
 
 

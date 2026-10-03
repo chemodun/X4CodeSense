@@ -1,6 +1,6 @@
 {
   "name": "x4-script-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "MCP server for X4: Foundations scripts: checks, the elements and attributes of the game's schemas, expression types, scripts, cues and texts, for AI agents that write AI scripts and Mission Director scripts.",
   "mcpName": "io.github.chemodun/x4-script-mcp",
   "main": "out/main.js",
