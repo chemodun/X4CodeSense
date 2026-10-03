@@ -74,7 +74,7 @@ describe.skipIf(!extracted)('script index on the corpus', { timeout: 300_000 }, 
       const fromGame = entry.source === 'game' || entry.source.startsWith('ego_dlc');
       const analysis = analyzeText(readFileSync(entry.file, 'utf8'), { schemas: game.schemas, properties: game.properties, index });
       for (const diagnostic of analysis.diagnostics) {
-        const remote = diagnostic.code === 'cue-undefined' && /is known|has no cue/.test(diagnostic.message);
+        const remote = diagnostic.code === 'cue-undefined' && /is known|has no cue/.test(String(diagnostic.message));
         if (diagnostic.code === 'library-undefined' || remote) {
           const line = `${diagnostic.code}: ${diagnostic.message} (${path.basename(entry.file)})`;
           (fromGame ? found : inExtensions).push(line);

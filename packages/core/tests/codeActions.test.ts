@@ -306,7 +306,7 @@ describe('quick fixes that create what is missing', () => {
     expect(payout).toContain(
       '    </cue>\n    <library name="Payout">\n      <params>\n        <param name="Amount"/>\n      </params>\n      <actions>\n      </actions>\n    </library>\n'
     );
-    expect(analyze(payout).diagnostics.filter((diagnostic) => diagnostic.message.includes('Payout'))).toEqual([]);
+    expect(analyze(payout).diagnostics.filter((diagnostic) => String(diagnostic.message).includes('Payout'))).toEqual([]);
   });
 
   it('creates a cue of another script last in its cues, and never in a file of the game', () => {
@@ -391,7 +391,7 @@ describe('quick fixes in patch documents', () => {
     expect(fixes(value, 'patch-no-match', data)).toEqual(["Change to 'Later' *"]);
     const after = fixed(value, 'patch-no-match', "Change to 'Later'", data);
     expect(lineWith(after, 'instantiate')).toBe(`<add sel="//cue[@name='Later']" type="@instantiate">true</add>`);
-    expect(analyze(after, uri, patchContext).diagnostics.filter((diagnostic) => diagnostic.message.includes("'Later'"))).toEqual([]);
+    expect(analyze(after, uri, patchContext).diagnostics.filter((diagnostic) => String(diagnostic.message).includes("'Later'"))).toEqual([]);
     // A misspelt element name: the names of the file close to it, a letter too many closer than one changed.
     const name = analyze(text.replace(`<add sel="//cue[@name='Later']"`, `<add sel="//cuee[@name='Later']"`), uri, patchContext);
     expect(fixes(name, 'patch-no-match', data)).toEqual(["Change to 'cue' *", "Change to 'cues'"]);

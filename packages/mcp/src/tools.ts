@@ -61,6 +61,7 @@ const instructions = `X4CodeSense knows X4: Foundations scripts, Mission Directo
 - Before writing an element or attribute you are not sure of, ask describe_element; for what an expression yields and which properties it has, expression_type.
 - After writing a script or a patch (a <diff> file), run check on it and fix what it reports; with text, check what you are about to write first.
 - find, definition and references locate scripts, cues, libraries and interrupt handlers across the game and the extensions; text looks up {page, id} texts or searches them.
+Use these tools rather than searching the game's .xsd files, scriptproperties.xml or text files: they follow the schemas' types, groups and includes, and know the DLCs and the extensions too.
 Lines and columns count from 1.`;
 
 function json(value: unknown): CallToolResult {
@@ -514,22 +515,41 @@ function statusTool(workspace: Workspace, version: string | undefined): CallTool
   });
 }
 
+/** A call's arguments for the log: long texts shortened, `text` to check by its length. */
+function argumentsShown(args: Record<string, unknown>): string {
+  return JSON.stringify(args, (key, value: unknown) => {
+    if (key === 'text' && typeof value === 'string') {
+      return `(${value.length} characters)`;
+    }
+    return typeof value === 'string' && value.length > 120 ? `${value.slice(0, 119)}…` : value;
+  });
+}
+
 const scriptKind = z.enum(['md', 'aiscripts']).describe('md for Mission Director scripts, aiscripts for AI scripts.');
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 
 /** The server with its tools; every call first reads what changed in the extensions. */
 export function createServer(workspace: Workspace, version?: string): McpServer {
   const server = new McpServer({ name: 'x4-script-mcp', title: 'X4CodeSense', version: version ?? '0.0.0' }, { instructions });
-  /** Runs a tool on a current workspace; an error is reported to the agent, not thrown. */
-  const answer = async (body: () => CallToolResult): Promise<CallToolResult> => {
+  /**
+   * Runs a tool on a current workspace; an error is reported to the agent, not thrown. Each call is logged
+   * on standard error, which clients show as the server's log: what agents ask, and how it went.
+   */
+  const answer = async (tool: string, args: Record<string, unknown>, body: () => CallToolResult): Promise<CallToolResult> => {
     // What the watchers have to report is taken first: a file written just before the call.
     await new Promise((resolve) => setTimeout(resolve, watcherDelay));
+    const started = performance.now();
+    let result: CallToolResult;
     try {
       workspace.current();
-      return body();
+      result = body();
     } catch (error) {
-      return failure(`Failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+      result = failure(`Failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
     }
+    const size = result.content.reduce((sum, part) => sum + (part.type === 'text' ? part.text.length : 0), 0);
+    const outcome = result.isError ? `error: ${result.content[0]?.type === 'text' ? result.content[0].text.split('\n')[0] : ''}` : `${size} characters`;
+    console.error(`x4-script-mcp: ${tool} ${argumentsShown(args)} in ${Math.round(performance.now() - started)} ms: ${outcome}`);
+    return result;
   };
 
   server.registerTool(
@@ -537,7 +557,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
     {
       title: 'Check scripts',
       description:
-        'Checks X4 scripts and patches as the X4CodeSense editor and x4-script-check do: well-formedness, the game schemas, expressions, variables, names, cues, scripts and texts referred to. Returns the findings with their quick fixes (edits to apply), and counts.',
+        'Checks X4 scripts and patches as the X4CodeSense editor and x4-script-check do: well-formedness, the game schemas, expressions, variables, names, cues, scripts and texts referred to. Returns the findings with their quick fixes (edits to apply), and counts. Run it after every change to an md or aiscripts script or a patch, and fix what it reports; with text, check a draft before writing it.',
       inputSchema: {
         paths: z
           .array(z.string())
@@ -550,7 +570,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       },
       annotations: readOnly,
     },
-    ({ paths, text, severity }) => answer(() => checkTool(workspace, paths, text, severity ?? 'hint'))
+    (args) => answer('check', args, () => checkTool(workspace, args.paths, args.text, args.severity ?? 'hint'))
   );
 
   server.registerTool(
@@ -558,7 +578,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
     {
       title: 'Describe an element',
       description:
-        'An element of the Mission Director or AI script schema, from the game’s md.xsd or aiscripts.xsd: its documentation, its attributes (type, required, default, allowed values, whether the value is an expression) and the child elements it allows.',
+        'An element of the Mission Director or AI script schema, from the game’s md.xsd or aiscripts.xsd: its documentation, its attributes (type, required, default, allowed values, whether the value is an expression) and the child elements it allows. Use it before writing an element or attribute you are not sure of, instead of searching md.xsd, aiscripts.xsd or common.xsd: it follows their types, groups and includes.',
       inputSchema: {
         name: z.string().describe('The element name: set_value, find_ship, create_order, cue.'),
         script: scriptKind,
@@ -570,7 +590,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       },
       annotations: readOnly,
     },
-    ({ name, script, parent, attribute }) => answer(() => describeElementTool(workspace, name, script, parent, attribute))
+    (args) => answer('describe_element', args, () => describeElementTool(workspace, args.name, args.script, args.parent, args.attribute))
   );
 
   server.registerTool(
@@ -578,7 +598,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
     {
       title: 'Type of an expression',
       description:
-        'What a keyword or a property chain of the expression language yields, step by step, from the game’s scriptproperties.xml: player.ship, player.ship.sector, event.param; and the properties of the result with their types. Or a datatype’s properties. A variable has no type here, its type comes from the script around it: the step after it is matched against the properties of every datatype.',
+        'What a keyword or a property chain of the expression language yields, step by step, from the game’s scriptproperties.xml: player.ship, player.ship.sector, event.param; and the properties of the result with their types. Or a datatype’s properties. A variable has no type here, its type comes from the script around it: the step after it is matched against the properties of every datatype. Use it before writing a property chain you are not sure of, instead of searching scriptproperties.xml.',
       inputSchema: {
         expression: z.string().optional().describe('A keyword and its properties: player.ship.sector.'),
         datatype: z.string().optional().describe('Instead of an expression, a datatype: ship, sector, list, faction.'),
@@ -592,7 +612,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       },
       annotations: readOnly,
     },
-    ({ expression, datatype, script, filter }) => answer(() => expressionTypeTool(workspace, expression, datatype, script ?? 'md', filter))
+    (args) => answer('expression_type', args, () => expressionTypeTool(workspace, args.expression, args.datatype, args.script ?? 'md', args.filter))
   );
 
   server.registerTool(
@@ -600,14 +620,14 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
     {
       title: 'Find scripts and cues',
       description:
-        'Mission Director scripts, AI scripts, cues, libraries and interrupt library items (actions, handlers, conditions) of the game, its DLCs and the extensions, by name: whole names first, then those starting with the query, then those containing it; the extensions’ before the game’s among equals. A query with a dot matches qualified names: md.Setup.Start. When no name contains the query, a few that have its letters in order.',
+        'Mission Director scripts, AI scripts, cues, libraries and interrupt library items (actions, handlers, conditions) of the game, its DLCs and the extensions, by name: whole names first, then those starting with the query, then those containing it; the extensions’ before the game’s among equals. A query with a dot matches qualified names: md.Setup.Start. When no name contains the query, a few that have its letters in order. Use it instead of searching the files for a cue or script name.',
       inputSchema: {
         query: z.string().describe('A name or part of one.'),
         limit: z.number().int().min(1).max(500).optional().describe('The most names to return; 50 by default.'),
       },
       annotations: readOnly,
     },
-    ({ query, limit }) => answer(() => findTool(workspace, query, limit ?? 50))
+    (args) => answer('find', args, () => findTool(workspace, args.query, args.limit ?? 50))
   );
 
   const position = {
@@ -624,18 +644,18 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       inputSchema: position,
       annotations: readOnly,
     },
-    ({ file, line, column }) => answer(() => positionTool(workspace, file, line, column, 'definition'))
+    (args) => answer('definition', args, () => positionTool(workspace, args.file, args.line, args.column, 'definition'))
   );
   server.registerTool(
     'references',
     {
       title: 'Find references',
       description:
-        'Every place that names what is named at a place of a script, in the game, its DLCs and the extensions, as the editor finds them. Each place with its line of text.',
+        'Every place that names what is named at a place of a script, in the game, its DLCs and the extensions, as the editor finds them: who signals a cue, includes a library, runs a script. Each place with its line of text. Use it instead of searching the files for a name.',
       inputSchema: position,
       annotations: readOnly,
     },
-    ({ file, line, column }) => answer(() => positionTool(workspace, file, line, column, 'references'))
+    (args) => answer('references', args, () => positionTool(workspace, args.file, args.line, args.column, 'references'))
   );
 
   server.registerTool(
@@ -643,7 +663,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
     {
       title: 'Look up texts',
       description:
-        'Texts of the game and the extensions, as the game shows them, references resolved: {page, id} in a language; the texts of a page; or the texts that contain some words.',
+        'Texts of the game and the extensions, as the game shows them, references resolved: {page, id} in a language; the texts of a page; or the texts that contain some words. Use it instead of searching the t folders: for what a {page, id} says, or to find an existing text to reuse.',
       inputSchema: {
         page: z.number().int().optional().describe('The page id.'),
         id: z.number().int().optional().describe('The text id on the page; without it, the texts of the page.'),
@@ -653,7 +673,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       },
       annotations: readOnly,
     },
-    ({ page, id, search, language, limit }) => answer(() => textTool(workspace, page, id, search, language, limit ?? 20))
+    (args) => answer('text', args, () => textTool(workspace, args.page, args.id, args.search, args.language, args.limit ?? 20))
   );
 
   server.registerTool(
@@ -663,7 +683,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       description: 'What the server read: the game folder, the extension folders, how many scripts and texts, and the problems met reading them.',
       annotations: readOnly,
     },
-    () => answer(() => statusTool(workspace, version))
+    () => answer('status', {}, () => statusTool(workspace, version))
   );
 
   return server;

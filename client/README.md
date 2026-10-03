@@ -123,7 +123,30 @@ The extension offers an MCP server to the editor's AI agents, such as Copilot's 
 - **text** - a `{page, id}` text as the game shows it, a page's texts, or the texts holding some words;
 - **status** - what was read.
 
-VS Code starts it when an agent first uses it (**MCP: List Servers** shows it as **X4CodeSense**), and it reads the extensions' files again as the agent changes them. `x4CodeSense.mcpServer.enabled` turns it off.
+It reads the extensions' files again as the agent changes them. `x4CodeSense.mcpServer.enabled` turns it off.
+
+#### Using it in VS Code
+
+- **Where it is.** Run **MCP: List Servers** from the Command Palette: it lists **X4CodeSense**, with Start, Stop, Restart and Show Output. In the chat, the tools button (**Configure Tools**) lists its tools under **X4CodeSense**. It is not in the Extensions view's **MCP Servers - Installed**, which lists only the servers of `mcp.json` files and the gallery.
+- **Starting it.** VS Code starts it when an agent first needs its tools, or run **Start Server** on it in **MCP: List Servers**. Its output (**Show Output** there) then says "Discovered 8 tools". The first call reads the game files and the extensions, some seconds for a large workspace; later calls take milliseconds. Each call is logged in that output: the tool, its arguments, the time and the size of the answer.
+- **After an update** of the extension, run **Developer: Reload Window** if the server or its setting does not show.
+- **Getting the agent to use it.** Agents use the tools they are told about. Say so in the request ("check it with X4CodeSense"), name a tool with `#` (`#mcp_x4codesense_describe_element`), or, best, add to your Copilot instructions (`.github/copilot-instructions.md`, or a file in `.github/instructions/`) a section such as:
+
+  ```markdown
+  ## X4CodeSense tools (MCP)
+
+  For MD scripts and AIScripts, ask the X4CodeSense MCP tools before reading or searching the game files:
+  `describe_element` for an element's attributes, types and allowed values (instead of md.xsd, aiscripts.xsd, common.xsd);
+  `expression_type` for what an expression yields and its properties (instead of scriptproperties.xml);
+  `find`, `definition` and `references` for scripts and cues; `text` for texts.
+  After writing or changing a script or a patch, run `check` on it and fix what it reports.
+  ```
+
+  Instructions that tell the agent to search the XSD files themselves win over the tools: change those. Small models, which Copilot's **Auto** model selection may pick, often keep to their own file search; a stronger model, chosen in the chat, uses the tools.
+
+#### Other agents
+
+VS Code's MCP server gallery may list the same server, `io.github.chemodun/x4-script-mcp`: with this extension there is no need to add it from there, which would run a second copy.
 
 Other agents, such as Claude Code, Cursor or Claude Desktop, run it from npm as [x4-script-mcp](https://www.npmjs.com/package/x4-script-mcp), or as `dist\x4-script-mcp.js` in the extension's folder with Node.js 22 or later; it takes the game and the extensions as the checker does:
 
@@ -260,6 +283,14 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [0.10.1] - unreleased
+
+- Changed
+  - The MCP server's tools say when to use them, instead of searching the game's schemas, `scriptproperties.xml` and text files, and to check every script changed: agents pick tools by their descriptions.
+  - Each call of the MCP server is logged in its output (**MCP: List Servers**, **Show Output**): the tool, its arguments, the time and the size of the answer.
+  - The MCP server is in the MCP Registry, as `io.github.chemodun/x4-script-mcp`, for other editors and agents; with this extension there is no need to add it from VS Code's MCP server gallery.
+  - The README tells where the MCP server is in VS Code, how to start it, and how to get an agent to use it.
 
 ### [0.10.0] - 2026-10-03
 

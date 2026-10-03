@@ -71,7 +71,9 @@ describe('parsed values kept from one analysis of a document to the next', () =>
       const afresh = analyzeText(text, context);
       expect(cached.diagnostics, text).toEqual(afresh.diagnostics);
       expect(semanticTokens(cached, game), text).toEqual(semanticTokens(afresh, game));
-      messages.push(cached.diagnostics.filter((diagnostic) => diagnostic.code === 'expression-unknown-property').map((diagnostic) => diagnostic.message));
+      messages.push(
+        cached.diagnostics.filter((diagnostic) => diagnostic.code === 'expression-unknown-property').map((diagnostic) => String(diagnostic.message))
+      );
     }
     expect(messages.slice(-3)).toEqual([
       [

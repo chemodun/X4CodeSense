@@ -1,0 +1,51 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chemodun/x4-script-mcp",
+  "title": "X4CodeSense",
+  "description": "X4: Foundations scripts: checks, schema elements, expression types, scripts, cues and texts.",
+  "repository": {
+    "url": "https://github.com/chemodun/X4CodeSense",
+    "source": "github",
+    "subfolder": "packages/mcp"
+  },
+  "websiteUrl": "https://github.com/chemodun/X4CodeSense/tree/main/packages/mcp",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "x4-script-mcp",
+      "version": "0.1.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--extensions",
+          "description": "An extension, or a folder of extensions, whose scripts and texts are read: those you write and those they refer to. Default: the current folder.",
+          "format": "filepath",
+          "isRequired": false,
+          "isRepeated": true
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "X4_GAME",
+          "description": "The installed game, the folder of X4.exe; its files are read from the catalogs.",
+          "format": "filepath",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "X4_UNPACKED",
+          "description": "The extracted game files, the folder holding libraries, md and aiscripts; used instead of X4_GAME.",
+          "format": "filepath",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

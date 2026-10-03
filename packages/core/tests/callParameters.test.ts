@@ -310,7 +310,7 @@ describe('call parameters', () => {
     const own = quickFixes(md, md.diagnostics, game).find((fix) => fix.title === "Add the parameter 'Mine' to library 'md.Caller.Local'");
     const ownText = TextDocument.applyEdits(md.document, own?.edit?.changes?.[md.document.uri] ?? []);
     expect(ownText).toContain('        <param name="Own"/>\n        <param name="Mine"/>\n      </params>');
-    expect(caller(ownText, 'md/caller.xml').diagnostics.filter((diagnostic) => diagnostic.message.startsWith("'Mine'"))).toEqual([]);
+    expect(caller(ownText, 'md/caller.xml').diagnostics.filter((diagnostic) => String(diagnostic.message).startsWith("'Mine'"))).toEqual([]);
 
     // Scripts of the game are not changed.
     expect(fixesOf(ai, { ...game, folder })).toEqual([]);

@@ -320,7 +320,7 @@ describe('AI script names and order ids', () => {
   describe('while typing', () => {
     it('reports no name before its quote is closed', () => {
       const typing = callerText.replace('<run_script name="$script"/>', '<run_script name="\'nothin');
-      const messages = analyzeText(typing, { schemas: game.schemas, index }).diagnostics.map((diagnostic) => diagnostic.message);
+      const messages = analyzeText(typing, { schemas: game.schemas, index }).diagnostics.map((diagnostic) => String(diagnostic.message));
       expect(messages).toContain("No AI script 'nothing' is known");
       expect(messages.filter((message) => message.includes("'nothin'"))).toEqual([]);
       for (let end = 0; end <= callerText.length; end += 7) {

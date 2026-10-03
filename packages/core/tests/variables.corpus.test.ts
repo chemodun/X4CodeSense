@@ -54,7 +54,7 @@ describe.skipIf(!extracted)('variables on the vanilla corpus', () => {
         for (const diagnostic of analysis.diagnostics) {
           if (diagnostic.code === 'variable-undefined') {
             undefinedReads++;
-            const name = /'(\$\w+)'/.exec(diagnostic.message)?.[1] ?? '?';
+            const name = /'(\$\w+)'/.exec(String(diagnostic.message))?.[1] ?? '?';
             byName.set(name, (byName.get(name) ?? 0) + 1);
           }
         }

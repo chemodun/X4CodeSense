@@ -26,6 +26,7 @@
   "scripts": {
     "build": "tsc -b && npm run bundle -w client",
     "typecheck": "tsc -b",
+    "typecheck:tests": "tsc -p packages/catalog/tests && tsc -p packages/core/tests && tsc -p packages/server/tests && tsc -p packages/cli/tests && tsc -p packages/mcp/tests && tsc -p client/tests",
     "watch": "tsc -b -w",
     "watch:bundle": "npm run watch -w client",
     "lint": "eslint .",

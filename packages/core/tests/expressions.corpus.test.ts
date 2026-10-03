@@ -156,7 +156,7 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
         validateCallParameters: false,
       });
       for (const diagnostic of analysis.diagnostics) {
-        if (String(diagnostic.code).startsWith('expression-unknown-property') && typedMessage.test(diagnostic.message)) {
+        if (String(diagnostic.code).startsWith('expression-unknown-property') && typedMessage.test(String(diagnostic.message))) {
           found.add(`${kind} ${path.basename(file)}: ${diagnostic.code}: ${diagnostic.message}`);
         } else if (kind === 'game' && String(diagnostic.code).startsWith('expression-')) {
           others.add(`${diagnostic.code}: ${diagnostic.message} (${path.basename(file)})`);

@@ -17,6 +17,7 @@ import {
   ScriptIndex,
   type DocumentAnalysis,
   type GameData,
+  type RenameOptions,
 } from '../src';
 
 const project = fileURLToPath(new URL('./fixtures/project', import.meta.url));
@@ -98,7 +99,7 @@ describe('variables across scripts', () => {
   const unset = (file: string, withIndex = true): string[] =>
     analyse(file, withIndex)
       .diagnostics.filter((diagnostic) => diagnostic.code === 'variable-undefined')
-      .map((diagnostic) => diagnostic.message);
+      .map((diagnostic) => String(diagnostic.message));
 
   it('indexes the variables interrupt library items set, with the schemas', () => {
     expect(withVariables.libraryItems('actions', 'CheckTarget')[0].variables).toEqual([
@@ -209,7 +210,7 @@ describe('variables across scripts', () => {
     const report = (text: string, withIndex = true): string[] =>
       analyzeText(text, { schemas: game.schemas, properties: game.properties, ...(withIndex ? { index: scripts } : {}) })
         .diagnostics.filter((diagnostic) => diagnostic.code === 'variable-undefined')
-        .map((diagnostic) => diagnostic.message);
+        .map((diagnostic) => String(diagnostic.message));
     // Included libraries read what their includers set, and nothing uses Unused; another script instantiates Instantiated.
     expect(report(libs)).toEqual(["Variable '$typo' is never set in library 'Instantiated'"]);
     expect(report(user)).toEqual(["Variable '$nothing' is never set in cue 'A'"]);
@@ -374,7 +375,7 @@ describe('references and rename across scripts', () => {
       )
       .sort();
   };
-  const refusal = (file: string, line: number, needle: string, renameOptions = options): string | undefined => {
+  const refusal = (file: string, line: number, needle: string, renameOptions: RenameOptions = options): string | undefined => {
     const { analysis, offset } = at(file, line, needle);
     const prepared = prepareRenameAt(analysis, offset, withIndex, renameOptions);
     return prepared && 'refused' in prepared ? prepared.refused : undefined;

@@ -179,7 +179,9 @@ beforeAll(async () => {
     }
   });
   connection.onRequest(WorkDoneProgressCreateRequest.type, ({ token }) => {
-    connection.onProgress(WorkDoneProgress.type, token, (value) => progress.push(value.kind === 'end' ? 'end' : `${value.kind}: ${value.message}`));
+    connection.onProgress(WorkDoneProgress.type, token, (value) => {
+      progress.push(value.kind === 'end' ? 'end' : `${value.kind}: ${value.message}`);
+    });
   });
   connection.onRequest(SemanticTokensRefreshRequest.type, () => {
     semanticTokensRefreshes++;
@@ -533,7 +535,7 @@ describe('typing in expressions', () => {
     ];
     const text = lines.join('\n');
     const unknown = (params: PublishDiagnosticsParams): string[] =>
-      params.diagnostics.filter((diagnostic) => diagnostic.code === 'expression-unknown-property').map((diagnostic) => diagnostic.message);
+      params.diagnostics.filter((diagnostic) => diagnostic.code === 'expression-unknown-property').map((diagnostic) => String(diagnostic.message));
     const asShip = ["'entity' has no property 'frob' ($s is a ship, set by set_value at line 5)"];
     await statusWhere((status) => status.state === 'ready' && status.gameFolder === unpacked);
     expect(unknown(await open(uri, text))).toEqual(asShip);

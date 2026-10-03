@@ -416,6 +416,31 @@ describe('x4-script-mcp options', { timeout: 30_000 }, () => {
     }
   });
 
+  it('logs each call on standard error, a text to check by its length', async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [bundle, '--unpacked', unpacked, '--extensions', extensions],
+      env: getDefaultEnvironment(),
+      stderr: 'pipe',
+    });
+    let log = '';
+    transport.stderr?.on('data', (chunk: Buffer) => {
+      log += chunk.toString();
+    });
+    const logged = new Client({ name: 'x4-script-mcp-test', version: '0' });
+    await logged.connect(transport);
+    try {
+      await callOn(logged, 'describe_element', { name: 'cue', script: 'md' });
+      await callOn(logged, 'describe_element', { name: 'nothing', script: 'md' });
+      await callOn(logged, 'check', { paths: [caller], text: callerText });
+      expect(log).toMatch(/x4-script-mcp: describe_element \{"name":"cue","script":"md"\} in \d+ ms: \d+ characters/);
+      expect(log).toMatch(/x4-script-mcp: describe_element \{"name":"nothing","script":"md"\} in \d+ ms: error: md\.xsd declares no element <nothing>/);
+      expect(log).toContain(`"text":"(${callerText.length} characters)"`);
+    } finally {
+      await logged.close();
+    }
+  });
+
   it('reports a game folder that is not one, and keeps answering', async () => {
     const wrong = await connect(['--game', extensions, '--extensions', extensions]);
     try {

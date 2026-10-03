@@ -20,7 +20,9 @@ claude mcp add x4 -- npx -y x4-script-mcp --game "C:\Games\X4 Foundations" --ext
 }
 ```
 
-The second is the configuration of Claude Desktop, Cursor and others that take one in that form. It needs Node.js 22 or later.
+The second is the configuration of Claude Desktop, Cursor and others that take one in that form. It needs Node.js 22 or later. It is also in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.chemodun/x4-script-mcp`, which catalogs such as VS Code's MCP server gallery read; with the X4CodeSense extension installed there is no need to add it from there, which would run a second copy.
+
+Agents use the tools they are told about: say in your agent's instructions (`CLAUDE.md`, `.github/copilot-instructions.md`, `AGENTS.md`) to ask `describe_element` and `expression_type` before writing an element or an expression, rather than searching the game's `.xsd` files and `scriptproperties.xml`, and to run `check` after every change to a script. Each call is logged on standard error, which clients show as the server's log: the tool, its arguments, the time and the size of the answer.
 
 Options:
 
