@@ -1,6 +1,6 @@
 {
   "name": "x4-script-check",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Command line checker for X4: Foundations scripts (AI scripts and Mission Director scripts).",
   "main": "out/cli.js",
   "bin": {

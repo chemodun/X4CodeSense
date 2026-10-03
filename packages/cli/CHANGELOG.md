@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.5.1...x4-script-check@v0.6.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* x4-script-check exits with 0 when the only findings are information or hints; pass --fail-on hint for the old behaviour. The command id x4CodeSense.selectGameFolder is now x4CodeSense.selectExtractedFiles; keybindings made for the old id have to be made again.
+
+### Bug Fixes
+
+* x4-script-check fails on warnings by default; the command to select the extracted files has an id after its title ([056a9a4](https://github.com/chemodun/X4CodeSense/commit/056a9a4e6b6154ca8eee8ebccecc38abedc802a5))
+
 ## [0.5.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.5.0...x4-script-check@v0.5.1) (2026-10-03)
 
 

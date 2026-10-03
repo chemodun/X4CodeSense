@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.11.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.10.1...x4codesense@v0.11.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* x4-script-check exits with 0 when the only findings are information or hints; pass --fail-on hint for the old behaviour. The command id x4CodeSense.selectGameFolder is now x4CodeSense.selectExtractedFiles; keybindings made for the old id have to be made again.
+
+### Features
+
+* the MCP server's tool hover tells what a place of a script is, as the editor's hover does ([ef599f2](https://github.com/chemodun/X4CodeSense/commit/ef599f22c7fc6940be41aa7696ed185025a7377e))
+
+
+### Bug Fixes
+
+* x4-script-check fails on warnings by default; the command to select the extracted files has an id after its title ([056a9a4](https://github.com/chemodun/X4CodeSense/commit/056a9a4e6b6154ca8eee8ebccecc38abedc802a5))
+
+
+### Documentation
+
+* the changelog of 0.11.0 dated for its release ([dd7be16](https://github.com/chemodun/X4CodeSense/commit/dd7be169aadb6544ba7855624baca498b463adf8))
+
 ## [0.10.1](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.10.0...x4codesense@v0.10.1) (2026-10-03)
 
 
