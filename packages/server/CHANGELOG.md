@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.2](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.9.1...x4-script-language-server@v0.9.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* agents told when to use the MCP tools, each call logged, the server in the MCP Registry; the tests type-checked ([0476e6d](https://github.com/chemodun/X4CodeSense/commit/0476e6d625265b000644070a471b3ad732f6dbe6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.10.0 to 0.10.1
+
 ## [0.9.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.9.0...x4-script-language-server@v0.9.1) (2026-10-03)
 
 

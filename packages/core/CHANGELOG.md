@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.10.0...x4-script-core@v0.10.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* a bare name after a table, a chain that stops inside a property name, and properties read under @ or ? are reported ([d71e25c](https://github.com/chemodun/X4CodeSense/commit/d71e25c347d1d850e480986c4d5d3ccc7a621824))
+* agents told when to use the MCP tools, each call logged, the server in the MCP Registry; the tests type-checked ([0476e6d](https://github.com/chemodun/X4CodeSense/commit/0476e6d625265b000644070a471b3ad732f6dbe6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-catalog bumped from 0.1.0 to 0.1.1
+
 ## [0.10.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.9.0...x4-script-core@v0.10.0) (2026-10-03)
 
 
