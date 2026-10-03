@@ -100,7 +100,7 @@ While a script or a patch is active, the status bar shows the type and name of t
 
 [size=125][u]Command line and CI[/u][/size]
 
-The same checks run outside VS Code with [url=https://www.npmjs.com/package/x4-script-check]x4-script-check[/url], which prints each finding with its severity and quick fixes: as text, as JSON for tools, as annotations of the files in GitHub Actions, or as SARIF for GitHub code scanning. With [b]--fix[/b] it first applies the preferred fixes, as [b]Apply all preferred fixes in this file[/b] does in the editor.
+The same checks run outside VS Code with [url=https://www.npmjs.com/package/x4-script-check]x4-script-check[/url], which prints each finding with its severity and quick fixes: as text, as JSON for tools, as annotations of the files in GitHub Actions, or as SARIF for GitHub code scanning. With [b]--fix[/b] it first applies the preferred fixes, as [b]Apply all preferred fixes in this file[/b] does in the editor. Errors and warnings fail it with exit code 1; information and hints are reported and pass, unless [b]--fail-on info[/b] or [b]--fail-on hint[/b] says otherwise.
 
 [code=powershell]
 npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
@@ -308,6 +308,18 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=130][u]🛠 Changelog[/u][/size]
 
+[size=125][u][0.11.0] - unreleased[/u][/size]
+[list]
+[*] Changed, before 1.0.0 makes them stable
+[list]
+[*] x4-script-check fails only on errors and warnings by default (`--fail-on warning`): information, such as a property a guessed type lacks or arguments a format does not show, and hints are reported and pass. [b]--fail-on info[/b] or [b]--fail-on hint[/b] gives the old behaviour.
+[*] The command [b]X4CodeSense: Select the Extracted Game Files...[/b] has the id `x4CodeSense.selectExtractedFiles`, after its title, instead of `x4CodeSense.selectGameFolder`: [b]x4CodeSense.gameFolder[/b] is the installed game's setting, which another command sets. A keybinding made for the old id has to be made again.
+[/list]
+[*] Fixed
+[list]
+[*] The [b]--fix[/b] line of [b]x4-script-check --help[/b] was out of line with the other options.
+[/list]
+[/list]
 [size=125][u][0.10.1] - 2026-10-03[/u][/size]
 [list]
 [*] Fixed
