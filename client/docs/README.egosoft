@@ -122,6 +122,7 @@ The extension offers an MCP server to the editor's AI agents, such as Copilot's 
 [*] [b]describe_element[/b] - an element of the schemas: its attributes with their types and allowed values, the children it allows;
 [*] [b]expression_type[/b] - what [b]player.ship.sector[/b] yields, step by step, and the properties of the result; or a datatype's properties;
 [*] [b]find[/b], [b]definition[/b], [b]references[/b] - scripts, cues, libraries and interrupt handlers of the game, its DLCs and the extensions;
+[*] [b]hover[/b] - what the editor's hover shows at a place of a script: an element's documentation, a property's type, a variable's type and where it is set, a cue's place, a text;
 [*] [b]text[/b] - a [b]{page, id}[/b] text as the game shows it, a page's texts, or the texts holding some words;
 [*] [b]status[/b] - what was read.
 [/list]
@@ -130,7 +131,7 @@ It reads the extensions' files again as the agent changes them. [b]x4CodeSense.m
 [size=120][u]Using it in VS Code[/u][/size]
 [list]
 [*] [b]Where it is.[/b] Run [b]MCP: List Servers[/b] from the Command Palette: it lists [b]X4CodeSense[/b], with Start, Stop, Restart and Show Output. In the chat, the tools button ([b]Configure Tools[/b]) lists its tools under [b]X4CodeSense[/b]. It is not in the Extensions view's [b]MCP Servers - Installed[/b], which lists only the servers of [b]mcp.json[/b] files and the gallery.
-[*] [b]Starting it.[/b] VS Code starts it when an agent first needs its tools, or run [b]Start Server[/b] on it in [b]MCP: List Servers[/b]. Its output ([b]Show Output[/b] there) then says "Discovered 8 tools". The first call reads the game files and the extensions, some seconds for a large workspace; later calls take milliseconds. Each call is logged in that output: the tool, its arguments, the time and the size of the answer.
+[*] [b]Starting it.[/b] VS Code starts it when an agent first needs its tools, or run [b]Start Server[/b] on it in [b]MCP: List Servers[/b]. Its output ([b]Show Output[/b] there) then says "Discovered 9 tools". The first call reads the game files and the extensions, some seconds for a large workspace; later calls take milliseconds. Each call is logged in that output: the tool, its arguments, the time and the size of the answer.
 [*] [b]After an update[/b] of the extension, run [b]Developer: Reload Window[/b] if the server or its setting does not show.
 [*] [b]Getting the agent to use it.[/b] Agents use the tools they are told about. Say so in the request ("check it with X4CodeSense"), name a tool with [b]#[/b] (`#mcp_x4codesense_describe_element`), or, best, add to your Copilot instructions (`.github/copilot-instructions.md`, or a file in `.github/instructions/`) a section such as:
 [/list]
@@ -140,7 +141,7 @@ It reads the extensions' files again as the agent changes them. [b]x4CodeSense.m
   For MD scripts and AIScripts, ask the X4CodeSense MCP tools before reading or searching the game files:
   [b]describe_element[/b] for an element's attributes, types and allowed values (instead of md.xsd, aiscripts.xsd, common.xsd);
   [b]expression_type[/b] for what an expression yields and its properties (instead of scriptproperties.xml);
-  `find`, [b]definition[/b] and [b]references[/b] for scripts and cues; [b]text[/b] for texts.
+  `find`, [b]definition[/b] and [b]references[/b] for scripts and cues; [b]hover[/b] for what a place of a script is; [b]text[/b] for texts.
   After writing or changing a script or a patch, run [b]check[/b] on it and fix what it reports.
   [/code]
 
@@ -310,6 +311,10 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 
 [size=125][u][0.11.0] - unreleased[/u][/size]
 [list]
+[*] Added
+[list]
+[*] The MCP server's tool `hover`: what the editor's hover shows at a line and column of a script or patch, for an agent that reads an existing script, the game's included.
+[/list]
 [*] Changed, before 1.0.0 makes them stable
 [list]
 [*] x4-script-check fails only on errors and warnings by default (`--fail-on warning`): information, such as a property a guessed type lacks or arguments a format does not show, and hints are reported and pass. [b]--fail-on info[/b] or [b]--fail-on hint[/b] gives the old behaviour.
