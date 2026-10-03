@@ -10,7 +10,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { Location, Range, SymbolKind, type WorkspaceSymbol } from 'vscode-languageserver-types';
-import type { IndexedPosition, ScriptIndex } from '../project/scriptIndex';
+import type { IndexedLibraryKind, IndexedPosition, ScriptIndex } from '../project/scriptIndex';
 import { isInside } from './project';
 
 export interface WorkspaceSymbolOptions {
@@ -20,10 +20,15 @@ export interface WorkspaceSymbolOptions {
   preferredFolders?: readonly string[];
 }
 
-interface Candidate {
+/** What a symbol of the index names. */
+export type IndexSymbolKind = 'mdscript' | 'aiscript' | 'cue' | 'library' | IndexedLibraryKind;
+
+/** A name of the index, as Go to Symbol in Workspace finds it. */
+export interface IndexSymbol {
   name: string;
   /** The name as written elsewhere to reach it: `md.Setup.Start`. */
   qualified: string;
+  what: IndexSymbolKind;
   kind: SymbolKind;
   container: string;
   position: IndexedPosition;
@@ -52,8 +57,8 @@ function matchRank(text: string, query: string): number | undefined {
   return 3;
 }
 
-function candidates(index: ScriptIndex): Candidate[] {
-  const result: Candidate[] = [];
+function candidates(index: ScriptIndex): IndexSymbol[] {
+  const result: IndexSymbol[] = [];
   // Per file, not per name: a source is looked up by a normalised path.
   const sources = new Map<string, string>();
   const sourceOf = (file: string): string => {
@@ -68,7 +73,14 @@ function candidates(index: ScriptIndex): Candidate[] {
     if (entry.kind === 'script' && entry.name !== '') {
       const source = sourceOf(entry.file);
       const script = entry.schema === 'md' ? `md.${entry.name}` : entry.name;
-      result.push({ name: entry.name, qualified: script, kind: SymbolKind.Module, container: source, position: entry.namePosition ?? entry.position });
+      result.push({
+        name: entry.name,
+        qualified: script,
+        what: entry.schema === 'md' ? 'mdscript' : 'aiscript',
+        kind: SymbolKind.Module,
+        container: source,
+        position: entry.namePosition ?? entry.position,
+      });
       const own = `${script} (${source})`;
       const byPatch = new Map<string, string>();
       for (const cue of entry.schema === 'md' ? index.cuesOf(entry) : []) {
@@ -80,6 +92,7 @@ function candidates(index: ScriptIndex): Candidate[] {
         result.push({
           name: cue.name,
           qualified: `${script}.${cue.name}`,
+          what: cue.kind,
           kind: cue.kind === 'cue' ? SymbolKind.Event : SymbolKind.Function,
           container,
           position: cue.namePosition,
@@ -96,6 +109,7 @@ function candidates(index: ScriptIndex): Candidate[] {
       result.push({
         name: item.name,
         qualified: `${target.name}.${item.name}`,
+        what: item.kind,
         kind: item.kind === 'handler' ? SymbolKind.Event : SymbolKind.Function,
         container: `${target.name} (${where})`,
         position: item.namePosition,
@@ -107,6 +121,19 @@ function candidates(index: ScriptIndex): Candidate[] {
 
 /** The symbols of the index that match the query, the best first; every symbol for an empty query, up to the limit. */
 export function workspaceSymbols(index: ScriptIndex, query: string, options: WorkspaceSymbolOptions = {}): WorkspaceSymbol[] {
+  return findSymbols(index, query, options).map((symbol) => {
+    const { line, character, file } = symbol.position;
+    return {
+      name: symbol.name,
+      kind: symbol.kind,
+      location: Location.create(pathToFileURL(file).toString(), Range.create(line, character, line, character + symbol.name.length)),
+      containerName: symbol.container,
+    };
+  });
+}
+
+/** The names of the index that match the query, the best first, as `workspaceSymbols` gives them. */
+export function findSymbols(index: ScriptIndex, query: string, options: WorkspaceSymbolOptions = {}): IndexSymbol[] {
   const wanted = query.trim().toLowerCase();
   const qualified = wanted.includes('.');
   const folders = options.preferredFolders ?? [];
@@ -122,7 +149,7 @@ export function workspaceSymbols(index: ScriptIndex, query: string, options: Wor
   };
   // Grouped by rank, preference and name length, so only the groups that make the limit are sorted:
   // a short query matches most of the 25,000 names of the game and its DLCs.
-  const groups = new Map<number, Candidate[]>();
+  const groups = new Map<number, IndexSymbol[]>();
   for (const candidate of candidates(index)) {
     const rank = wanted === '' ? 3 : matchRank(qualified ? candidate.qualified : candidate.name, wanted);
     if (rank !== undefined) {
@@ -136,9 +163,9 @@ export function workspaceSymbols(index: ScriptIndex, query: string, options: Wor
     }
   }
   const limit = options.limit ?? 256;
-  const chosen: Candidate[] = [];
+  const chosen: IndexSymbol[] = [];
   for (const key of [...groups.keys()].sort((a, b) => a - b)) {
-    const group = (groups.get(key) as Candidate[]).sort(
+    const group = (groups.get(key) as IndexSymbol[]).sort(
       (a, b) =>
         // A script before the cues called like it.
         Number(b.kind === SymbolKind.Module) - Number(a.kind === SymbolKind.Module) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
@@ -148,13 +175,5 @@ export function workspaceSymbols(index: ScriptIndex, query: string, options: Wor
       break;
     }
   }
-  return chosen.map((candidate) => {
-    const { line, character, file } = candidate.position;
-    return {
-      name: candidate.name,
-      kind: candidate.kind,
-      location: Location.create(pathToFileURL(file).toString(), Range.create(line, character, line, character + candidate.name.length)),
-      containerName: candidate.container,
-    };
-  });
+  return chosen;
 }

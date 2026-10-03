@@ -68,3 +68,4 @@ export * from './features/symbols';
 export * from './features/workspaceSymbols';
 export * from './features/codeActions';
 export * from './features/semanticTokens';
+export * from './check/check';

@@ -112,6 +112,25 @@ The extension brings the checker along, so it also runs without npm, with Node.j
 node "$env:USERPROFILE\.vscode\extensions\x4devtools.x4codesense-<version>\dist\x4-script-check.js" --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" path\to\your\extension
 ```
 
+### AI agents
+
+The extension offers an MCP server to the editor's AI agents, such as Copilot's agent mode, on the game files and extensions set in the settings. An agent that writes a script asks it rather than guessing:
+
+- **check** - the problems of scripts and patches with their quick fixes, also of a text before it is written;
+- **describe_element** - an element of the schemas: its attributes with their types and allowed values, the children it allows;
+- **expression_type** - what `player.ship.sector` yields, step by step, and the properties of the result; or a datatype's properties;
+- **find**, **definition**, **references** - scripts, cues, libraries and interrupt handlers of the game, its DLCs and the extensions;
+- **text** - a `{page, id}` text as the game shows it, a page's texts, or the texts holding some words;
+- **status** - what was read.
+
+VS Code starts it when an agent first uses it (**MCP: List Servers** shows it as **X4CodeSense**), and it reads the extensions' files again as the agent changes them. `x4CodeSense.mcpServer.enabled` turns it off.
+
+Other agents, such as Claude Code, Cursor or Claude Desktop, run it from npm as [x4-script-mcp](https://www.npmjs.com/package/x4-script-mcp), or as `dist\x4-script-mcp.js` in the extension's folder with Node.js 22 or later; it takes the game and the extensions as the checker does:
+
+```powershell
+claude mcp add x4 -- npx -y x4-script-mcp --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" --extensions path\to\your\extensions
+```
+
 ## 📚 Where its knowledge comes from
 
 X4CodeSense has no list of its own of what the game holds: no elements, properties, wares, factions, ships or macros. It reads them from the game files, extracted or straight from the catalogs of the installed game, and from the extensions, so it follows the game version and the DLCs you have:
@@ -208,6 +227,8 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
   - _default_: `true`
 - `x4CodeSense.diagnosticMode` - which scripts the Problems panel lists problems of: `openFilesOnly`, the scripts open in the editor, or `workspace`, also every other script and patch in the workspace folders, as they are on disk. Checking them all takes a few seconds for a hundred scripts, once after the scripts are indexed and again in the background when something they refer to changes.
   - _default_: `openFilesOnly`
+- `x4CodeSense.mcpServer.enabled` - offer the X4CodeSense MCP server to the editor's AI agents, on the game files and extensions set above (see **AI agents**). VS Code starts it when an agent first uses it.
+  - _default_: `true`
 - `x4CodeSense.debug` - verbose logging in the X4CodeSense output channel.
   - _default_: `false`
 - `x4CodeSense.trace.server` - trace the communication between VS Code and the language server: `off`, `messages` or `verbose`.
@@ -239,6 +260,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [0.10.0] - 2026-10-03
+
+- Added
+  - An MCP server for AI agents, offered to the editor's (Copilot's agent mode) on the game files and extensions set here, and on npm as [x4-script-mcp](https://www.npmjs.com/package/x4-script-mcp) for other agents: tools that check scripts and patches with their quick fixes, describe an element of the schemas with its attributes and values, resolve an expression such as `player.ship.sector` step by step with the properties of the result, find scripts, cues and libraries, go to definition and find references, and look up and search texts. It reads the extensions' files again as the agent changes them. `x4CodeSense.mcpServer.enabled` turns it off.
 
 ### [0.9.0] - 2026-10-03
 

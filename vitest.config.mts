@@ -11,7 +11,7 @@ export default defineConfig({
   },
   test: {
     // Each package a project named as the package, with the alias above.
-    projects: ['packages/catalog', 'packages/core', 'packages/server', 'packages/cli', 'client'].map((root) => ({
+    projects: ['packages/catalog', 'packages/core', 'packages/server', 'packages/cli', 'packages/mcp', 'client'].map((root) => ({
       extends: true,
       test: { root, name: (JSON.parse(readFileSync(here(`./${root}/package.json`), 'utf8')) as { name: string }).name },
     })),

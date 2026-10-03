@@ -24,6 +24,7 @@ import {
   type ScriptSchema,
   type ServerStatus,
 } from 'x4-script-core';
+import { registerMcpServer } from './mcpServer';
 import { PatchLayout } from './patchLayout';
 import { PatchedSides, patchedScheme } from './patchSides';
 import {
@@ -193,6 +194,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('x4CodeSense.writeSideIntoPatch', writeSideIntoPatch),
     vscode.commands.registerCommand('x4CodeSense.showMenu', showMenu)
   );
+
+  context.subscriptions.push(...registerMcpServer(context));
 
   context.globalState.setKeysForSync([neverOfferKey]);
   void offerOldSettings(context, languageClient.outputChannel);

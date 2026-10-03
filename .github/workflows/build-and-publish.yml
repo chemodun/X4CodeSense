@@ -99,7 +99,7 @@ jobs:
         run: npx --yes @vscode/vsce@4 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
 
   npm-package:
-    if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-catalog@') || startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@')) }}
+    if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-catalog@') || startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@') || startsWith(github.event.release.tag_name, 'x4-script-mcp@')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -133,6 +133,7 @@ jobs:
             x4-script-core) WORKSPACE=packages/core ;;
             x4-script-language-server) WORKSPACE=packages/server ;;
             x4-script-check) WORKSPACE=packages/cli ;;
+            x4-script-mcp) WORKSPACE=packages/mcp ;;
             *) echo "::error::Unknown component in tag ${TAG}"; exit 1 ;;
           esac
           NAME="$(node -p "require('./${WORKSPACE}/package.json').name")"

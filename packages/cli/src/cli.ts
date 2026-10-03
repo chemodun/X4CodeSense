@@ -6,36 +6,27 @@ import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   analyzeDocument,
-  bundledExtensionsOf,
+  checkFile,
+  codeOf,
+  collectScriptFolders,
   diagnosticDescriptions,
   diskFiles,
-  fileNames,
+  fileFindingDescriptions,
   fixAll,
   isInstalledGame,
   loadGameData,
+  messageOf,
   openInstalledGame,
   quickFixes,
-  scriptSchemas,
-  schemaFolderName,
-  subfolderNames,
+  severities,
+  xmlFilesOf,
   type AnalysisContext,
-  type DocumentAnalysis,
+  type CheckedFolder,
   type FileSource,
+  type Finding,
   type GameData,
-  type ScriptSchema,
+  type Severity,
 } from 'x4-script-core';
-
-type Diagnostic = DocumentAnalysis['diagnostics'][number];
-
-interface ScriptFolder {
-  folder: string;
-  /** The scripts it holds; none for an extension's `libraries`, which holds patches and merge files of the game's library files. */
-  schema?: ScriptSchema;
-}
-
-/** The severities of findings, the most severe first, as the text output and `--fail-on` name them. */
-const severities = ['error', 'warning', 'info', 'hint'] as const;
-type Severity = (typeof severities)[number];
 
 const formats = ['text', 'json', 'github', 'sarif'] as const;
 type Format = (typeof formats)[number];
@@ -44,23 +35,6 @@ type Format = (typeof formats)[number];
 interface Range {
   start: { line: number; character: number };
   end: { line: number; character: number };
-}
-
-interface Fix {
-  title: string;
-  /** The fix an editor would apply on its own: the only one, or clearly the best. */
-  preferred: boolean;
-  edits: { range: Range; newText: string }[];
-}
-
-interface Finding {
-  file: string;
-  /** Absent for findings about the whole file. */
-  range?: Range;
-  severity: Severity;
-  code: string;
-  message: string;
-  fixes: Fix[];
 }
 
 /** A fix `--fix` applied, with the problem it fixed. */
@@ -201,120 +175,17 @@ function parseOptions(argv: string[]): Options {
   return options;
 }
 
-/** Orders names the same way on every system, so the output does too. */
-function inOrder(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function subfolders(files: FileSource, folder: string): string[] {
-  return subfolderNames(files, folder)
-    .sort(inOrder)
-    .map((name) => path.join(folder, name));
-}
-
-/**
- * Finds script folders under a root: `<root>/md`, `<root>/aiscripts` and the same one level deeper,
- * so a single extension and a folder full of extensions both work; also the patches of other
- * extensions an extension keeps in `extensions/<folder>/md` and `.../aiscripts`, and the `libraries`
- * of each extension. The game folder stands for the game and its DLCs: an installed game's `extensions`
- * holds the player's mods as well, and the game's own `libraries` is what the extensions' patch.
- */
-function collectScriptFolders(root: string, files: FileSource, game: GameData | undefined): ScriptFolder[] {
-  const result: ScriptFolder[] = [];
-  const isGame = game !== undefined && path.relative(root, path.resolve(game.folder)) === '';
-  const candidates: string[] = isGame ? [root, ...[...bundledExtensionsOf(game.folder, files)].sort(inOrder)] : [root, ...subfolders(files, root)];
-  // Not those in `extensions/<folder>`: nothing tells that the game reads them.
-  const withLibraries = new Set(candidates.filter((candidate) => !isGame || candidate !== root));
-  for (const candidate of [...candidates]) {
-    if (!isGame || candidate !== root) {
-      candidates.push(...subfolders(files, path.join(candidate, 'extensions')));
-    }
-  }
-  for (const candidate of candidates) {
-    for (const schema of scriptSchemas) {
-      const folder = path.join(candidate, schemaFolderName[schema]);
-      if (files.isDirectory(folder)) {
-        result.push({ folder, schema });
-      }
-    }
-    const libraries = path.join(candidate, 'libraries');
-    if (withLibraries.has(candidate) && files.isDirectory(libraries)) {
-      result.push({ folder: libraries });
-    }
-  }
-  return result;
-}
-
-/** Findings about the whole file first, then by position. */
-function byPosition(a: Finding, b: Finding): number {
-  const first = a.range?.start ?? { line: -1, character: -1 };
-  const second = b.range?.start ?? { line: -1, character: -1 };
-  return first.line - second.line || first.character - second.character;
-}
-
-function checkFile(file: string, schema: ScriptSchema | undefined, context: AnalysisContext, game: GameData | undefined, counters: Counters): Finding[] {
-  counters.files++;
-  const document = TextDocument.create(pathToFileURL(file).toString(), 'xml', 0, (game?.files ?? diskFiles).readText(file));
-  const analysis = analyzeDocument(document, context);
-  const detection = analysis.detection;
-  const findings: Finding[] = [];
-  const aboutFile = (code: string, message: string): void => {
-    findings.push({ file, severity: 'error', code, message, fixes: [] });
-  };
-  if (detection.script) {
-    counters.scripts++;
-    if (detection.script.schema !== schema) {
-      aboutFile('script-in-wrong-folder', `is a ${detection.script.schema} script but lies in the ${schema ? schemaFolderName[schema] : 'libraries'} folder`);
-    } else if (detection.script.name === '') {
-      aboutFile('script-without-name', 'root element has no name attribute');
-    }
-  } else if (detection.isDiff) {
-    counters.patches++;
-  } else if (schema) {
-    // In a script folder only: in `libraries` such a file is a merge file, which its analysis checks with the game.
-    const root = detection.rootElement ? `root element <${detection.rootElement}>` : 'no root element';
-    aboutFile('not-a-script', `not recognised as a script or a patch (${root})`);
-  }
-  // A fix that creates what is missing in another file is the editor's: a finding lists the edits of its own file.
-  const actions = (analysis.diagnostics.length === 0 ? [] : quickFixes(analysis, analysis.diagnostics, game)).filter((action) =>
-    Object.keys(action.edit?.changes ?? {}).every((uri) => uri === document.uri)
-  );
-  for (const diagnostic of analysis.diagnostics) {
-    const fixes = actions
-      .filter((action) => action.diagnostics?.includes(diagnostic))
-      .map((action) => ({ title: action.title, preferred: action.isPreferred === true, edits: action.edit?.changes?.[document.uri] ?? [] }));
-    findings.push({
-      file,
-      range: diagnostic.range,
-      severity: severities[(diagnostic.severity ?? 1) - 1],
-      code: codeOf(diagnostic),
-      message: messageOf(diagnostic),
-      fixes,
-    });
-  }
-  return findings.sort(byPosition);
-}
-
-function codeOf(diagnostic: Diagnostic): string {
-  return diagnostic.code === undefined ? '' : String(diagnostic.code);
-}
-
-function messageOf(diagnostic: Diagnostic): string {
-  return typeof diagnostic.message === 'string' ? diagnostic.message : diagnostic.message.value;
-}
-
-/** The XML files of a script folder, in the order of their names. */
-function xmlFilesOf(files: FileSource, folder: string): string[] {
-  return fileNames(files, folder)
-    .filter((name) => name.toLowerCase().endsWith('.xml'))
-    .sort(inOrder)
-    .map((name) => path.join(folder, name));
-}
-
-function checkFolder(scriptFolder: ScriptFolder, context: AnalysisContext, game: GameData | undefined, counters: Counters): Finding[] {
+function checkFolder(scriptFolder: CheckedFolder, context: AnalysisContext, game: GameData | undefined, counters: Counters): Finding[] {
   const findings: Finding[] = [];
   for (const file of xmlFilesOf(game?.files ?? diskFiles, scriptFolder.folder)) {
-    findings.push(...checkFile(file, scriptFolder.schema, context, game, counters));
+    const checked = checkFile(file, scriptFolder.kind, context, game);
+    counters.files++;
+    if (checked.kind === 'script') {
+      counters.scripts++;
+    } else if (checked.kind === 'patch') {
+      counters.patches++;
+    }
+    findings.push(...checked.findings);
   }
   return findings;
 }
@@ -510,14 +381,7 @@ function jsonReport(
   return JSON.stringify(report, null, 2);
 }
 
-/** What the checker's own findings about whole files report. */
-const checkerDescriptions: Readonly<Record<string, string>> = {
-  'script-in-wrong-folder': 'A Mission Director script in an aiscripts folder, or an AI script in an md folder.',
-  'script-without-name': 'A script whose root element has no name.',
-  'not-a-script': 'An XML file in a script folder that is no script and no patch.',
-};
-
-const descriptions: ReadonlyMap<string, string> = new Map([...Object.entries(diagnosticDescriptions), ...Object.entries(checkerDescriptions)]);
+const descriptions: ReadonlyMap<string, string> = new Map([...Object.entries(diagnosticDescriptions), ...Object.entries(fileFindingDescriptions)]);
 
 const sarifLevels: Record<Severity, string> = { error: 'error', warning: 'warning', info: 'note', hint: 'note' };
 
@@ -668,7 +532,7 @@ async function main(argv: string[]): Promise<number> {
       context.properties = game.properties;
     }
   }
-  const scriptFolders: ScriptFolder[] = [];
+  const scriptFolders: CheckedFolder[] = [];
   // A folder given twice, or inside another given folder, is checked once.
   const collected = new Set<string>();
   for (const root of options.roots) {

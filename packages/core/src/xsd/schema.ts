@@ -537,6 +537,11 @@ export class XsdSchema {
     return [...this.globalElements.keys()];
   }
 
+  /** Names of every element declared, global or nested, in file order. */
+  get elementNames(): string[] {
+    return [...this.elementNodesByName.keys()];
+  }
+
   /** Declaration of a global element, the document root. */
   root(name: string): XsdElement | undefined {
     const node = this.globalElements.get(name);

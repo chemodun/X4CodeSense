@@ -26,6 +26,7 @@
     "packages/core": { "release-type": "node", "component": "x4-script-core" },
     "packages/server": { "release-type": "node", "component": "x4-script-language-server" },
     "packages/cli": { "release-type": "node", "component": "x4-script-check" },
+    "packages/mcp": { "release-type": "node", "component": "x4-script-mcp" },
     "client": { "release-type": "node", "component": "x4codesense", "exclude-paths": ["client/docs"] }
   }
 }

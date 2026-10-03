@@ -8,7 +8,8 @@ const watch = process.argv.includes('--watch');
 /**
  * The bundles resolve the workspace packages from their TypeScript sources, so a bundle never depends
  * on a previous `tsc -b` run and source maps point at the .ts files. The checker comes along, so the
- * scripts can be checked from a command line with the installed extension alone.
+ * scripts can be checked from a command line with the installed extension alone, and the MCP server the
+ * extension offers to the editor's agents.
  * @type {import('esbuild').BuildOptions}
  */
 const buildOptions = {
@@ -16,6 +17,7 @@ const buildOptions = {
     { in: 'src/extension.ts', out: 'extension' },
     { in: '../packages/server/src/server.ts', out: 'server' },
     { in: '../packages/cli/src/cli.ts', out: 'x4-script-check' },
+    { in: '../packages/mcp/src/main.ts', out: 'x4-script-mcp' },
   ],
   bundle: true,
   outdir: 'dist',
@@ -31,9 +33,10 @@ const buildOptions = {
     'x4-script-core': path.resolve(__dirname, '../packages/core/src/index.ts'),
     'x4-catalog': path.resolve(__dirname, '../packages/catalog/src/index.ts'),
   },
-  // The checker's version, which its own package.json gives when installed from npm.
+  // The checker's and the MCP server's versions, which their own package.json gives when installed from npm.
   define: {
     X4_SCRIPT_CHECK_VERSION: JSON.stringify(require('../packages/cli/package.json').version),
+    X4_SCRIPT_MCP_VERSION: JSON.stringify(require('../packages/mcp/package.json').version),
   },
 };
 

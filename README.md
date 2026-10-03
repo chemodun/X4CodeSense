@@ -10,7 +10,8 @@ Status: 0.x. The npm packages are on npm; the extension is on the [Visual Studio
 - `packages/core` - `x4-script-core`, the editor-independent analysis library: script detection, XML structure, expression language, types, scopes, symbols, diagnostics, and the `ReadText` calls of Lua files. No `vscode` imports. Its API is made for the server, the client and the checker, and changes with them.
 - `packages/server` - `x4-script-language-server`, the LSP server on top of the core.
 - `packages/cli` - `x4-script-check`, a command-line checker for CI and tools, on top of the core.
-- `client` - the `X4CodeSense` VS Code extension (publisher `X4DevTools`). It bundles the server and the core into `client/dist`.
+- `packages/mcp` - `x4-script-mcp`, an MCP server for AI agents that write scripts: checks, the schemas' elements, expression types, scripts, cues and texts, on top of the core.
+- `client` - the `X4CodeSense` VS Code extension (publisher `X4DevTools`). It bundles the server, the checker, the MCP server and the core into `client/dist`, and offers the MCP server to VS Code's agents.
 
 ## Development
 
@@ -41,10 +42,10 @@ The corpus check times the analysis of the largest game file, and of a change ty
 
 ## Releases
 
-`release-please` keeps one release pull request open on `main`: the next versions and the changelogs of the five packages, from the conventional commits since their last release. They share one pull request because they depend on each other at exact versions, and it updates `package-lock.json` with them. Merging it tags each package that changed (`x4-script-core@v0.1.0`, `x4codesense@v0.1.0`) and creates its GitHub release, which starts the _Build and Publish_ workflow:
+`release-please` keeps one release pull request open on `main`: the next versions and the changelogs of the six packages, from the conventional commits since their last release. They share one pull request because they depend on each other at exact versions, and it updates `package-lock.json` with them. Merging it tags each package that changed (`x4-script-core@v0.1.0`, `x4codesense@v0.1.0`) and creates its GitHub release, which starts the _Build and Publish_ workflow:
 
 - `x4codesense`: the `.vsix` is built, attached to the release and, with the `VT_API_KEY` secret, scanned by VirusTotal. With the repository variable `PUBLISH_TO_MARKETPLACE` set to `true`, the same `.vsix` is then published to the Visual Studio Marketplace as `X4DevTools`. That job runs in the `marketplace` environment and signs in to Microsoft Entra ID, whose app registration trusts that environment, so no Marketplace token is kept either.
-- `x4-catalog`, `x4-script-core`, `x4-script-language-server`, `x4-script-check`: built, tested and sent to npm by trusted publishing. No npm token is kept in the repository: npm accepts the upload because the package is bound to this repository and its `build-and-publish.yml`, and adds a provenance statement. The version is published directly. A package that is not on npm yet is skipped with a warning: its first version is published by hand, which creates the package the binding is set on.
+- `x4-catalog`, `x4-script-core`, `x4-script-language-server`, `x4-script-check`, `x4-script-mcp`: built, tested and sent to npm by trusted publishing. No npm token is kept in the repository: npm accepts the upload because the package is bound to this repository and its `build-and-publish.yml`, and adds a provenance statement. The version is published directly. A package that is not on npm yet is skipped with a warning: its first version is published by hand, which creates the package the binding is set on.
 
 ## Lineage and credits
 

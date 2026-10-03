@@ -1,0 +1,52 @@
+{
+  "name": "x4-script-mcp",
+  "version": "0.0.0",
+  "description": "MCP server for X4: Foundations scripts: checks, the elements and attributes of the game's schemas, expression types, scripts, cues and texts, for AI agents that write AI scripts and Mission Director scripts.",
+  "main": "out/main.js",
+  "bin": {
+    "x4-script-mcp": "out/main.js"
+  },
+  "files": [
+    "out/**/*.js",
+    "out/**/*.d.ts",
+    "out/**/*.map",
+    "README.md"
+  ],
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Chem O'Dun",
+    "email": "chemodun@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chemodun/X4CodeSense.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/chemodun/X4CodeSense#readme",
+  "bugs": {
+    "url": "https://github.com/chemodun/X4CodeSense/issues"
+  },
+  "keywords": [
+    "x4",
+    "x4-foundations",
+    "egosoft",
+    "modding",
+    "mission-director",
+    "aiscript",
+    "xml",
+    "mcp",
+    "model-context-protocol"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "vscode-languageserver-textdocument": "^1.0.15",
+    "x4-script-core": "0.9.0",
+    "zod": "^4.6.5"
+  }
+}

@@ -50,10 +50,17 @@
     "workspaceContains:**/aiscripts/*.xml",
     "onFileSystem:x4codesense-patch",
     "onFileSystem:x4codesense-patched",
-    "onFileSystem:x4codesense-game"
+    "onFileSystem:x4codesense-game",
+    "onMcpServerDefinitionProvider:x4CodeSense.mcpServer"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "x4CodeSense.mcpServer",
+        "label": "X4CodeSense"
+      }
+    ],
     "commands": [
       {
         "command": "x4CodeSense.restartServer",
@@ -206,6 +213,11 @@
           ],
           "default": "openFilesOnly",
           "description": "Which scripts the Problems panel shows problems of: only the open ones, or every script in the workspace folders."
+        },
+        "x4CodeSense.mcpServer.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer the X4CodeSense MCP server to the editor's AI agents, such as Copilot's agent mode: tools that check scripts and tell the elements, attributes, expression types, scripts, cues and texts of the game files and extensions set here. The editor starts it when an agent first uses it."
         },
         "x4CodeSense.debug": {
           "type": "boolean",
