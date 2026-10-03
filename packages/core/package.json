@@ -1,6 +1,6 @@
 {
   "name": "x4-script-core",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Editor-independent analysis of X4: Foundations scripts (AI scripts and Mission Director scripts).",
   "main": "out/index.js",
   "types": "out/index.d.ts",
@@ -44,7 +44,7 @@
   "dependencies": {
     "vscode-languageserver-textdocument": "^1.0.15",
     "vscode-languageserver-types": "^3.18.4",
-    "x4-catalog": "0.1.0"
+    "x4-catalog": "0.1.1"
   },
   "devDependencies": {
     "@types/sax": "^1.2.7",
