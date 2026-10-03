@@ -14,7 +14,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 [*] Validation against the game's XSD schemas: unknown elements and attributes, elements in the wrong place or missing, missing required attributes, invalid attribute values. Text inside an element, which the schemas allow nowhere in scripts, is a warning: a stray `>`, an attribute typed after its tag was closed.
 [*] Expressions, parsed as the game parses them: syntax errors, [b]@[/b] combined with `?`, text references that are not [b]{page, id}[/b] literals, [b]%d[/b] in format strings.
 [*] Formats, [b]'%s of %s'.[$a, $b][/b] and `{page, id}.[…]`: fewer arguments than the placeholders take is a warning; arguments no placeholder takes, which are not shown, are reported as information.
-[*] Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`) and, in AI scripts, a chain head that is no keyword. Also on a variable whose type the script tells, [b]$ship.frobnicate[/b] after `<set_value name="$ship" exact="player.ship"/>`, unless under [b]@[/b] or tested with `?`, where the game gives null or false. Where the type is only guessed from the action that sets the variable (`<create_ship name="$ship">`), the finding is information of its own code, `expression-unknown-property-guessed`, and says so: "(if $ship is a ship, as guessed from create_ship at line 12)". Its quick fix is offered, never applied on its own.
+[*] Property chains, checked against `scriptproperties.xml`: a property the type at hand does not have (`player.ship.frobnicate`), a chain that stops inside a property name (`$table.keys` for `keys.list`, with quick fixes to complete it) and, in AI scripts, a chain head that is no keyword. A table's keys are read with [b]$[/b] or braces (`$table.$name`, `$table.{'name'}`), so a bare name after a table is reported. Also on a variable whose type the script tells, [b]$ship.frobnicate[/b] after `<set_value name="$ship" exact="player.ship"/>`, also under [b]@[/b] or tested with `?`, where the game gives null or false. Where the type is only guessed from the action that sets the variable (`<create_ship name="$ship">`), the finding is information of its own code, `expression-unknown-property-guessed`, and says so: "(if $ship is a ship, as guessed from create_ship at line 12)". Its quick fix is offered, never applied on its own.
 [*] Names, checked across the game, its DLCs and your extensions: labels, cues and libraries, interrupt library items, `md.Script.Cue`, and text references that no file defines; names defined twice.
 [*] Variables that are read but never set, following the cue namespace rules of the Mission Director.
 [*] Parameters a call passes that the script, order or library it names does not declare: a [b]<param name="…">[/b] of `run_script`, `create_order`, `run_actions`, a [b]cue[/b] with [b]ref[/b] and the like. Parameters a call leaves out are not reported; the game takes them as null.
@@ -308,8 +308,14 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [h2][b]🛠 Changelog[/b][/h2]
 
-[h2][0.10.1] - unreleased[/h2]
+[h2][0.10.1] - 2026-10-03[/h2]
 [list]
+[*] Fixed
+[list]
+[*] A bare name after a table, `$table.frobnicate`, was taken as the value of a key and never reported. A table's keys are read with [b]$[/b] or braces, [b]$table.$name[/b] or `$table.{'name'}`: a bare name is now reported as a property the table does not have. Two of vanilla's own, [b]$TextTable.objective[/b] in [b]gm_escort.xml[/b] and [b]gm_patrol.xml[/b] for `$TextTable.$objective`, show up with it.
+[*] A chain that stops inside a property name, [b]$table.keys[/b] for [b]keys.list[/b] or `keys.count`, passed without a finding and gives nothing in the game. It is reported, with the names it may be, and quick fixes complete it to each.
+[*] A property a variable's type does not have was not reported under [b]@[/b] or tested with `?`, where the game gives null or false instead of an error; the script still reads what the type does not have, so it is reported there too. In vanilla this shows [b]not @$localtarget.pilot.command[/b] in [b]order.move.recon.xml[/b] (for `command.value`), [b]@$refobject.issuperhighway[/b] on a controllable, [b]@$leaderpilot.escortgroup[/b] on an entity, and two debug texts on a guessed order.
+[/list]
 [*] Changed
 [list]
 [*] The MCP server's tools say when to use them, instead of searching the game's schemas, [b]scriptproperties.xml[/b] and text files, and to check every script changed: agents pick tools by their descriptions.
