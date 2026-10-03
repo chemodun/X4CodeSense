@@ -120,6 +120,7 @@ The extension offers an MCP server to the editor's AI agents, such as Copilot's 
 - **describe_element** - an element of the schemas: its attributes with their types and allowed values, the children it allows;
 - **expression_type** - what `player.ship.sector` yields, step by step, and the properties of the result; or a datatype's properties;
 - **find**, **definition**, **references** - scripts, cues, libraries and interrupt handlers of the game, its DLCs and the extensions;
+- **hover** - what the editor's hover shows at a place of a script: an element's documentation, a property's type, a variable's type and where it is set, a cue's place, a text;
 - **text** - a `{page, id}` text as the game shows it, a page's texts, or the texts holding some words;
 - **status** - what was read.
 
@@ -128,7 +129,7 @@ It reads the extensions' files again as the agent changes them. `x4CodeSense.mcp
 #### Using it in VS Code
 
 - **Where it is.** Run **MCP: List Servers** from the Command Palette: it lists **X4CodeSense**, with Start, Stop, Restart and Show Output. In the chat, the tools button (**Configure Tools**) lists its tools under **X4CodeSense**. It is not in the Extensions view's **MCP Servers - Installed**, which lists only the servers of `mcp.json` files and the gallery.
-- **Starting it.** VS Code starts it when an agent first needs its tools, or run **Start Server** on it in **MCP: List Servers**. Its output (**Show Output** there) then says "Discovered 8 tools". The first call reads the game files and the extensions, some seconds for a large workspace; later calls take milliseconds. Each call is logged in that output: the tool, its arguments, the time and the size of the answer.
+- **Starting it.** VS Code starts it when an agent first needs its tools, or run **Start Server** on it in **MCP: List Servers**. Its output (**Show Output** there) then says "Discovered 9 tools". The first call reads the game files and the extensions, some seconds for a large workspace; later calls take milliseconds. Each call is logged in that output: the tool, its arguments, the time and the size of the answer.
 - **After an update** of the extension, run **Developer: Reload Window** if the server or its setting does not show.
 - **Getting the agent to use it.** Agents use the tools they are told about. Say so in the request ("check it with X4CodeSense"), name a tool with `#` (`#mcp_x4codesense_describe_element`), or, best, add to your Copilot instructions (`.github/copilot-instructions.md`, or a file in `.github/instructions/`) a section such as:
 
@@ -138,7 +139,7 @@ It reads the extensions' files again as the agent changes them. `x4CodeSense.mcp
   For MD scripts and AIScripts, ask the X4CodeSense MCP tools before reading or searching the game files:
   `describe_element` for an element's attributes, types and allowed values (instead of md.xsd, aiscripts.xsd, common.xsd);
   `expression_type` for what an expression yields and its properties (instead of scriptproperties.xml);
-  `find`, `definition` and `references` for scripts and cues; `text` for texts.
+  `find`, `definition` and `references` for scripts and cues; `hover` for what a place of a script is; `text` for texts.
   After writing or changing a script or a patch, run `check` on it and fix what it reports.
   ```
 
@@ -286,6 +287,8 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ### [0.11.0] - unreleased
 
+- Added
+  - The MCP server's tool `hover`: what the editor's hover shows at a line and column of a script or patch, for an agent that reads an existing script, the game's included.
 - Changed, before 1.0.0 makes them stable
   - x4-script-check fails only on errors and warnings by default (`--fail-on warning`): information, such as a property a guessed type lacks or arguments a format does not show, and hints are reported and pass. `--fail-on info` or `--fail-on hint` gives the old behaviour.
   - The command **X4CodeSense: Select the Extracted Game Files...** has the id `x4CodeSense.selectExtractedFiles`, after its title, instead of `x4CodeSense.selectGameFolder`: `x4CodeSense.gameFolder` is the installed game's setting, which another command sets. A keybinding made for the old id has to be made again.

@@ -145,7 +145,17 @@ afterAll(async () => {
 describe('x4-script-mcp', { timeout: 30_000 }, () => {
   it('offers its tools, all read only', async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name)).toEqual(['check', 'describe_element', 'expression_type', 'find', 'definition', 'references', 'text', 'status']);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'check',
+      'describe_element',
+      'expression_type',
+      'find',
+      'definition',
+      'references',
+      'hover',
+      'text',
+      'status',
+    ]);
     expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
     expect(client.getInstructions()).toContain('describe_element');
   });
@@ -318,10 +328,43 @@ describe('x4-script-mcp', { timeout: 30_000 }, () => {
       expect(definition.definition[0].text).toContain('name="ship"');
     });
 
+    it('describes a place as the editor’s hover does, with the range it covers', async () => {
+      const element = await call<Record<string, unknown>>('hover', { file: caller, line: 6, column: 10 });
+      expect(element).toEqual({
+        hover: '**\\<signal\\_cue\\_instantly\\>**\n\nRequired attributes: `cue`\n\n*Defined in md.xsd*',
+        line: 6,
+        column: 10,
+        endLine: 6,
+        endColumn: 30,
+      });
+      const property = await call<Record<string, unknown>>('hover', { file: caller, line: 7, column: 49 });
+      expect(property).toMatchObject({ line: 7, column: 48, endColumn: 52 });
+      expect(property.hover).toContain('**player.ship**');
+      expect(property.hover).toContain('Type: `ship`');
+      const cue = await call<Record<string, unknown>>('hover', { file: caller, line: 6, column: 48 });
+      expect(cue.hover).toBe('**Wanted** *(cue of Target)*\n\nIn target.xml of `mod_a`, line 4');
+    });
+
+    it('describes a text reference, and a place of a script still being typed', async () => {
+      const typing = path.join(path.dirname(caller), 'typing.xml');
+      writeFileSync(typing, '<mdscript name="Typing">\n  <cues>\n    <cue name="A">\n      <actions>\n        <debug_text text="{1001, 4} + player.');
+      try {
+        const text = await call<Record<string, unknown>>('hover', { file: typing, line: 5, column: 30 });
+        expect(text.hover).toContain('Hull and Shield');
+        expect(text).toMatchObject({ line: 5, column: 27 });
+        const keyword = await call<Record<string, unknown>>('hover', { file: typing, line: 5, column: 41 });
+        expect(keyword.hover).toContain('**player**');
+      } finally {
+        rmSync(typing, { force: true });
+      }
+    });
+
     it('says so when nothing is named at the place', async () => {
       const nothing = await call<{ definition: Place[]; note: string }>('definition', { file: caller, line: 1, column: 1 });
       expect(nothing.definition).toEqual([]);
       expect(nothing.note).toContain('line 1, column 1');
+      const noHover = await call<{ hover?: string; note: string }>('hover', { file: caller, line: 1, column: 1 });
+      expect(noHover).toEqual({ note: 'Nothing at line 1, column 1 has a description known here.' });
     });
   });
 

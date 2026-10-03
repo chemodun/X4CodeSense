@@ -17,6 +17,7 @@ import {
   enumerationsOf,
   findSymbols,
   folderOfFile,
+  hoverAt,
   isExpressionAttribute,
   isGameFile,
   missingTextMessage,
@@ -26,6 +27,7 @@ import {
   severities,
   xmlFilesOf,
   type ChainOwner,
+  type DocumentAnalysis,
   type FileFolder,
   type Finding,
   type GameData,
@@ -60,7 +62,7 @@ const noGame = 'No game files: the server was started without --unpacked or --ga
 const instructions = `X4CodeSense knows X4: Foundations scripts, Mission Director scripts (md) and AI scripts (aiscripts), from the game's own files: the schemas md.xsd and aiscripts.xsd, scriptproperties.xml with the keywords, datatypes and properties of expressions, the texts, and every script of the game, its DLCs and the extensions it was given.
 - Before writing an element or attribute you are not sure of, ask describe_element; for what an expression yields and which properties it has, expression_type.
 - After writing a script or a patch (a <diff> file), run check on it and fix what it reports; with text, check what you are about to write first.
-- find, definition and references locate scripts, cues, libraries and interrupt handlers across the game and the extensions; text looks up {page, id} texts or searches them.
+- find, definition and references locate scripts, cues, libraries and interrupt handlers across the game and the extensions; hover tells what a place of a script is, as the editor's hover does; text looks up {page, id} texts or searches them.
 Use these tools rather than searching the game's .xsd files, scriptproperties.xml or text files: they follow the schemas' types, groups and includes, and know the DLCs and the extensions too.
 Lines and columns count from 1.`;
 
@@ -391,13 +393,13 @@ function findTool(workspace: Workspace, query: string, limit: number): CallToolR
   return json(containing.length > 0 || found.length === 0 ? names : { note: `No name contains '${query}'; these have its letters in order.`, names });
 }
 
-function positionTool(workspace: Workspace, file: string, line: number, column: number, wanted: 'definition' | 'references'): CallToolResult {
-  const game = workspace.game;
+/** The analysis of a file and the offset of a 1-based line and column in it, or the failure to report. */
+function analysedAt(workspace: Workspace, file: string, line: number, column: number): { analysis: DocumentAnalysis; offset: number } | CallToolResult {
   const resolved = path.resolve(file);
   workspace.touch([resolved]);
   let text: string;
   try {
-    text = (game?.files ?? diskFiles).readText(resolved);
+    text = (workspace.game?.files ?? diskFiles).readText(resolved);
   } catch {
     return failure(`Not found: ${resolved}`);
   }
@@ -406,7 +408,16 @@ function positionTool(workspace: Workspace, file: string, line: number, column: 
     return failure(`${resolved} has ${document.lineCount} lines.`);
   }
   const offset = document.offsetAt({ line: line - 1, character: column - 1 });
-  const analysis = analyzeDocument(document, workspace.context);
+  return { analysis: analyzeDocument(document, workspace.context), offset };
+}
+
+function positionTool(workspace: Workspace, file: string, line: number, column: number, wanted: 'definition' | 'references'): CallToolResult {
+  const game = workspace.game;
+  const at = analysedAt(workspace, file, line, column);
+  if ('content' in at) {
+    return at;
+  }
+  const { analysis, offset } = at;
   const language = workspace.options.language;
   const found = wanted === 'definition' ? definitionAt(analysis, offset, game, { language }) : referencesAt(analysis, offset, game);
   const lines = new Lines(game);
@@ -418,6 +429,24 @@ function positionTool(workspace: Workspace, file: string, line: number, column: 
       ? { note: `Nothing at line ${line}, column ${column} has a ${wanted === 'definition' ? 'definition' : 'reference'} known here.` }
       : {}),
   });
+}
+
+/** The Markdown of a hover's contents, in any of the forms the protocol allows. */
+function markdownOf(contents: NonNullable<ReturnType<typeof hoverAt>>['contents']): string {
+  const parts = Array.isArray(contents) ? contents : [contents];
+  return parts.map((part) => (typeof part === 'string' ? part : 'kind' in part ? part.value : `\`\`\`${part.language}\n${part.value}\n\`\`\``)).join('\n\n');
+}
+
+function hoverTool(workspace: Workspace, file: string, line: number, column: number): CallToolResult {
+  const at = analysedAt(workspace, file, line, column);
+  if ('content' in at) {
+    return at;
+  }
+  const found = hoverAt(at.analysis, at.offset, workspace.game, { language: workspace.options.language });
+  if (!found) {
+    return json({ note: `Nothing at line ${line}, column ${column} has a description known here.` });
+  }
+  return json({ hover: markdownOf(found.contents), ...(found.range ? placeOf(found.range) : {}) });
 }
 
 function textTool(
@@ -656,6 +685,17 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       annotations: readOnly,
     },
     (args) => answer('references', args, () => positionTool(workspace, args.file, args.line, args.column, 'references'))
+  );
+  server.registerTool(
+    'hover',
+    {
+      title: 'Describe a place',
+      description:
+        'What the editor’s hover shows for a place of a script or patch: an element or attribute with its documentation from the schema, a step of a property chain with its type and description from scriptproperties.xml, a variable with its type and where the type comes from, a cue or script with where it is defined, a {page, id} text as the game shows it. Use it to understand a line of an existing script, the game’s included, instead of looking each part up in the schemas, scriptproperties.xml or the t folders.',
+      inputSchema: position,
+      annotations: readOnly,
+    },
+    (args) => answer('hover', args, () => hoverTool(workspace, args.file, args.line, args.column))
   );
 
   server.registerTool(
