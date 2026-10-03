@@ -125,7 +125,30 @@ The extension offers an MCP server to the editor's AI agents, such as Copilot's 
 [*] [b]text[/b] - a [b]{page, id}[/b] text as the game shows it, a page's texts, or the texts holding some words;
 [*] [b]status[/b] - what was read.
 [/list]
-VS Code starts it when an agent first uses it ([b]MCP: List Servers[/b] shows it as [b]X4CodeSense[/b]), and it reads the extensions' files again as the agent changes them. [b]x4CodeSense.mcpServer.enabled[/b] turns it off.
+It reads the extensions' files again as the agent changes them. [b]x4CodeSense.mcpServer.enabled[/b] turns it off.
+
+[size=3][u]Using it in VS Code[/u][/size]
+[list]
+[*] [b]Where it is.[/b] Run [b]MCP: List Servers[/b] from the Command Palette: it lists [b]X4CodeSense[/b], with Start, Stop, Restart and Show Output. In the chat, the tools button ([b]Configure Tools[/b]) lists its tools under [b]X4CodeSense[/b]. It is not in the Extensions view's [b]MCP Servers - Installed[/b], which lists only the servers of [b]mcp.json[/b] files and the gallery.
+[*] [b]Starting it.[/b] VS Code starts it when an agent first needs its tools, or run [b]Start Server[/b] on it in [b]MCP: List Servers[/b]. Its output ([b]Show Output[/b] there) then says "Discovered 8 tools". The first call reads the game files and the extensions, some seconds for a large workspace; later calls take milliseconds. Each call is logged in that output: the tool, its arguments, the time and the size of the answer.
+[*] [b]After an update[/b] of the extension, run [b]Developer: Reload Window[/b] if the server or its setting does not show.
+[*] [b]Getting the agent to use it.[/b] Agents use the tools they are told about. Say so in the request ("check it with X4CodeSense"), name a tool with [b]#[/b] (`#mcp_x4codesense_describe_element`), or, best, add to your Copilot instructions (`.github/copilot-instructions.md`, or a file in `.github/instructions/`) a section such as:
+[/list]
+  [code]
+  ## X4CodeSense tools (MCP)
+
+  For MD scripts and AIScripts, ask the X4CodeSense MCP tools before reading or searching the game files:
+  [b]describe_element[/b] for an element's attributes, types and allowed values (instead of md.xsd, aiscripts.xsd, common.xsd);
+  [b]expression_type[/b] for what an expression yields and its properties (instead of scriptproperties.xml);
+  `find`, [b]definition[/b] and [b]references[/b] for scripts and cues; [b]text[/b] for texts.
+  After writing or changing a script or a patch, run [b]check[/b] on it and fix what it reports.
+  [/code]
+
+  Instructions that tell the agent to search the XSD files themselves win over the tools: change those. Small models, which Copilot's [b]Auto[/b] model selection may pick, often keep to their own file search; a stronger model, chosen in the chat, uses the tools.
+
+[size=3][u]Other agents[/u][/size]
+
+VS Code's MCP server gallery may list the same server, `io.github.chemodun/x4-script-mcp`: with this extension there is no need to add it from there, which would run a second copy.
 
 Other agents, such as Claude Code, Cursor or Claude Desktop, run it from npm as [url=https://www.npmjs.com/package/x4-script-mcp]x4-script-mcp[/url], or as [b]dist\x4-script-mcp.js[/b] in the extension's folder with Node.js 22 or later; it takes the game and the extensions as the checker does:
 
@@ -285,6 +308,16 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=3][u][b]🛠 Changelog[/b][/u][/size]
 
+[size=3][u][i][0.10.1] - unreleased[/i][/u][/size]
+[list]
+[*] Changed
+[list]
+[*] The MCP server's tools say when to use them, instead of searching the game's schemas, [b]scriptproperties.xml[/b] and text files, and to check every script changed: agents pick tools by their descriptions.
+[*] Each call of the MCP server is logged in its output ([b]MCP: List Servers[/b], [b]Show Output[/b]): the tool, its arguments, the time and the size of the answer.
+[*] The MCP server is in the MCP Registry, as `io.github.chemodun/x4-script-mcp`, for other editors and agents; with this extension there is no need to add it from VS Code's MCP server gallery.
+[*] The README tells where the MCP server is in VS Code, how to start it, and how to get an agent to use it.
+[/list]
+[/list]
 [size=3][u][i][0.10.0] - 2026-10-03[/i][/u][/size]
 [list]
 [*] Added
