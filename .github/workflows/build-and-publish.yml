@@ -156,19 +156,40 @@ jobs:
 
       # The MCP Registry lists the server for MCP catalogs, VS Code's among them: it checks that the npm
       # package of server.json's version names it in `mcpName`, and the workflow's identity that the
-      # repository's owner owns the namespace io.github.chemodun. The npm index may lag a little behind.
+      # repository's owner owns the namespace io.github.chemodun. The npm index lags behind a publish, for
+      # 0.1.1 by more than two minutes: the step waits until npm lists the version, then tries the registry
+      # a few times more. A version the registry has already is left alone, so a rerun of the job passes.
       - name: Publish to the MCP Registry
         if: ${{ startsWith(github.event.release.tag_name, 'x4-script-mcp@') }}
         working-directory: packages/mcp
         run: |
-          curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
-          ./mcp-publisher login github-oidc
-          for attempt in 1 2 3 4; do
-            if ./mcp-publisher publish server.json; then
-              echo "::notice::$(node -p "require('./server.json').name")@$(node -p "require('./server.json').version") is in the MCP Registry"
-              exit 0
+          NAME="$(node -p "require('./server.json').name")"
+          VERSION="$(node -p "require('./server.json').version")"
+          PACKAGE="$(node -p "require('./server.json').packages[0].identifier")"
+          if [ "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.modelcontextprotocol.io/v0.1/servers/${NAME/\//%2F}/versions/${VERSION}")" = 200 ]; then
+            echo "::notice::${NAME}@${VERSION} is in the MCP Registry already"
+            exit 0
+          fi
+          listed() {
+            curl -s "https://registry.npmjs.org/${PACKAGE}" | node -e "let s='';process.stdin.on('data',(d)=>(s+=d)).on('end',()=>{try{process.exit(JSON.parse(s).versions?.['${VERSION}']?0:1)}catch{process.exit(1)}})"
+          }
+          for attempt in $(seq 1 20); do
+            if listed; then
+              break
+            fi
+            if [ "${attempt}" = 20 ]; then
+              echo "::error::${PACKAGE}@${VERSION} is not listed on npm after 10 minutes"
+              exit 1
             fi
             sleep 30
+          done
+          curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          for attempt in 1 2 3 4 5; do
+            if ./mcp-publisher login github-oidc && ./mcp-publisher publish server.json; then
+              echo "::notice::${NAME}@${VERSION} is in the MCP Registry"
+              exit 0
+            fi
+            sleep 60
           done
           echo "::error::Publishing to the MCP Registry failed"
           exit 1
