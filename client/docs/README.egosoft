@@ -114,6 +114,25 @@ The extension brings the checker along, so it also runs without npm, with Node.j
 node "$env:USERPROFILE\.vscode\extensions\x4devtools.x4codesense-<version>\dist\x4-script-check.js" --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" path\to\your\extension
 [/code]
 
+[size=125][u]AI agents[/u][/size]
+
+The extension offers an MCP server to the editor's AI agents, such as Copilot's agent mode, on the game files and extensions set in the settings. An agent that writes a script asks it rather than guessing:
+[list]
+[*] [b]check[/b] - the problems of scripts and patches with their quick fixes, also of a text before it is written;
+[*] [b]describe_element[/b] - an element of the schemas: its attributes with their types and allowed values, the children it allows;
+[*] [b]expression_type[/b] - what [b]player.ship.sector[/b] yields, step by step, and the properties of the result; or a datatype's properties;
+[*] [b]find[/b], [b]definition[/b], [b]references[/b] - scripts, cues, libraries and interrupt handlers of the game, its DLCs and the extensions;
+[*] [b]text[/b] - a [b]{page, id}[/b] text as the game shows it, a page's texts, or the texts holding some words;
+[*] [b]status[/b] - what was read.
+[/list]
+VS Code starts it when an agent first uses it ([b]MCP: List Servers[/b] shows it as [b]X4CodeSense[/b]), and it reads the extensions' files again as the agent changes them. [b]x4CodeSense.mcpServer.enabled[/b] turns it off.
+
+Other agents, such as Claude Code, Cursor or Claude Desktop, run it from npm as [url=https://www.npmjs.com/package/x4-script-mcp]x4-script-mcp[/url], or as [b]dist\x4-script-mcp.js[/b] in the extension's folder with Node.js 22 or later; it takes the game and the extensions as the checker does:
+
+[code=powershell]
+claude mcp add x4 -- npx -y x4-script-mcp --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" --extensions path\to\your\extensions
+[/code]
+
 [size=130][u]📚 Where its knowledge comes from[/u][/size]
 
 X4CodeSense has no list of its own of what the game holds: no elements, properties, wares, factions, ships or macros. It reads them from the game files, extracted or straight from the catalogs of the installed game, and from the extensions, so it follows the game version and the DLCs you have:
@@ -226,6 +245,10 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
 [list]
 [*] [i]default[/i]: [b]openFilesOnly[/b]
 [/list]
+[*] [b]x4CodeSense.mcpServer.enabled[/b] - offer the X4CodeSense MCP server to the editor's AI agents, on the game files and extensions set above (see [b]AI agents[/b]). VS Code starts it when an agent first uses it.
+[list]
+[*] [i]default[/i]: [b]true[/b]
+[/list]
 [*] [b]x4CodeSense.debug[/b] - verbose logging in the X4CodeSense output channel.
 [list]
 [*] [i]default[/i]: [b]false[/b]
@@ -262,6 +285,13 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=130][u]🛠 Changelog[/u][/size]
 
+[size=125][u][0.10.0] - 2026-10-03[/u][/size]
+[list]
+[*] Added
+[list]
+[*] An MCP server for AI agents, offered to the editor's (Copilot's agent mode) on the game files and extensions set here, and on npm as [url=https://www.npmjs.com/package/x4-script-mcp]x4-script-mcp[/url] for other agents: tools that check scripts and patches with their quick fixes, describe an element of the schemas with its attributes and values, resolve an expression such as [b]player.ship.sector[/b] step by step with the properties of the result, find scripts, cues and libraries, go to definition and find references, and look up and search texts. It reads the extensions' files again as the agent changes them. [b]x4CodeSense.mcpServer.enabled[/b] turns it off.
+[/list]
+[/list]
 [size=125][u][0.9.0] - 2026-10-03[/u][/size]
 [list]
 [*] Added
