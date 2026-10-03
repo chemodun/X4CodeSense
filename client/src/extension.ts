@@ -45,7 +45,7 @@ const neverOfferKey = 'x4CodeSense.neverOfferOldSettings';
 
 /** The commands the status bar's tooltip may run. */
 const tooltipCommands = [
-  'x4CodeSense.selectGameFolder',
+  'x4CodeSense.selectExtractedFiles',
   'x4CodeSense.selectInstalledGame',
   'x4CodeSense.selectDiagnosticMode',
   'x4CodeSense.showOutput',
@@ -180,7 +180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('x4CodeSense.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)
     ),
-    vscode.commands.registerCommand('x4CodeSense.selectGameFolder', selectGameFolder),
+    vscode.commands.registerCommand('x4CodeSense.selectExtractedFiles', selectExtractedFiles),
     vscode.commands.registerCommand('x4CodeSense.selectInstalledGame', selectInstalledGame),
     vscode.commands.registerCommand('x4CodeSense.selectDiagnosticMode', selectDiagnosticMode),
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -358,11 +358,11 @@ function tooltip(info: DocumentInfoResult, inGame: boolean): vscode.MarkdownStri
     lines.push('$(sync~spin) Reading the game files.');
   } else if (status.gameFolder === undefined) {
     lines.push(
-      '$(warning) The game files are not set, so scripts are only checked for well-formedness. Select [the extracted game files](command:x4CodeSense.selectGameFolder) or [the installed game](command:x4CodeSense.selectInstalledGame).'
+      '$(warning) The game files are not set, so scripts are only checked for well-formedness. Select [the extracted game files](command:x4CodeSense.selectExtractedFiles) or [the installed game](command:x4CodeSense.selectInstalledGame).'
     );
   } else if (status.schemas.length === 0) {
     lines.push(
-      `$(warning) The game files hold no schemas, so scripts are only checked for well-formedness. Select [other extracted game files](command:x4CodeSense.selectGameFolder) or [another installed game](command:x4CodeSense.selectInstalledGame) instead of \`${status.gameFolder}\``
+      `$(warning) The game files hold no schemas, so scripts are only checked for well-formedness. Select [other extracted game files](command:x4CodeSense.selectExtractedFiles) or [another installed game](command:x4CodeSense.selectInstalledGame) instead of \`${status.gameFolder}\``
     );
   } else {
     const properties = status.properties ? 'script properties' : 'no script properties';
@@ -422,7 +422,7 @@ async function showMenu(): Promise<void> {
     {
       label: '$(folder-opened) Select the Extracted Game Files...',
       description: gameSettingShown('unpackedFileLocation'),
-      command: 'x4CodeSense.selectGameFolder',
+      command: 'x4CodeSense.selectExtractedFiles',
     },
     {
       label: '$(folder-library) Select the Installed Game...',
@@ -496,7 +496,7 @@ function gameSettingShown(key: 'unpackedFileLocation' | 'gameFolder'): string {
 }
 
 /** Asks for the folder of the extracted game files and sets it where the setting is set: the workspace, else the user settings. */
-async function selectGameFolder(): Promise<void> {
+async function selectExtractedFiles(): Promise<void> {
   const configuration = vscode.workspace.getConfiguration('x4CodeSense');
   const current = configuration.get<string>('unpackedFileLocation', '').trim();
   const picked = await vscode.window.showOpenDialog({

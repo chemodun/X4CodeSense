@@ -553,6 +553,20 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     }
   });
 
+  it('passes on information by default, and fails on it when asked', async () => {
+    const script = path.join(extension, 'md', 'Unused.xml');
+    const line = `        <debug_text text="'%s'.[1, 2]"/>`;
+    const text = `<mdscript name="Unused">\n  <cues>\n    <cue name="A">\n      <actions>\n${line}\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n`;
+    await withFile(script, text, async () => {
+      const result = await run('--unpacked', unpacked, extension);
+      expect(result.code).toBe(0);
+      expect(lines(result)).toContain(
+        `${script}:5:${line.indexOf('2]') + 1}: info: The format takes 1 argument: this one is not shown [format-arguments-unused]`
+      );
+      expect((await run('--unpacked', unpacked, '--fail-on', 'info', extension)).code).toBe(1);
+    });
+  });
+
   it('reads other extensions for references without checking them', async () => {
     const dependency = path.join(workDir, 'dependencies', 'dep_mod');
     mkdirSync(path.join(dependency, 'aiscripts'), { recursive: true });

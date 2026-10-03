@@ -98,7 +98,7 @@ While a script or a patch is active, the status bar shows the type and name of t
 
 ### Command line and CI
 
-The same checks run outside VS Code with [x4-script-check](https://www.npmjs.com/package/x4-script-check), which prints each finding with its severity and quick fixes: as text, as JSON for tools, as annotations of the files in GitHub Actions, or as SARIF for GitHub code scanning. With `--fix` it first applies the preferred fixes, as **Apply all preferred fixes in this file** does in the editor.
+The same checks run outside VS Code with [x4-script-check](https://www.npmjs.com/package/x4-script-check), which prints each finding with its severity and quick fixes: as text, as JSON for tools, as annotations of the files in GitHub Actions, or as SARIF for GitHub code scanning. With `--fix` it first applies the preferred fixes, as **Apply all preferred fixes in this file** does in the editor. Errors and warnings fail it with exit code 1; information and hints are reported and pass, unless `--fail-on info` or `--fail-on hint` says otherwise.
 
 ```powershell
 npx x4-script-check --unpacked C:\X4\extracted path\to\your\extension
@@ -283,6 +283,14 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [0.11.0] - unreleased
+
+- Changed, before 1.0.0 makes them stable
+  - x4-script-check fails only on errors and warnings by default (`--fail-on warning`): information, such as a property a guessed type lacks or arguments a format does not show, and hints are reported and pass. `--fail-on info` or `--fail-on hint` gives the old behaviour.
+  - The command **X4CodeSense: Select the Extracted Game Files...** has the id `x4CodeSense.selectExtractedFiles`, after its title, instead of `x4CodeSense.selectGameFolder`: `x4CodeSense.gameFolder` is the installed game's setting, which another command sets. A keybinding made for the old id has to be made again.
+- Fixed
+  - The `--fix` line of `x4-script-check --help` was out of line with the other options.
 
 ### [0.10.1] - 2026-10-03
 

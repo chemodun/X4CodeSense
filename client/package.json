@@ -68,7 +68,7 @@
         "category": "X4CodeSense"
       },
       {
-        "command": "x4CodeSense.selectGameFolder",
+        "command": "x4CodeSense.selectExtractedFiles",
         "title": "Select the Extracted Game Files...",
         "category": "X4CodeSense"
       },

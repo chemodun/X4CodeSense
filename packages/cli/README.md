@@ -28,7 +28,7 @@ Options:
 - `--no-type-guesses` - type variables only by what the scripts and the schemas state (`<param type>`, the value `set_value` sets, groups), not by guesses from the names and documentation of actions (`create_ship` a ship).
 - `--fix` - apply the preferred quick fixes to the files first, then report what is left, see below.
 - `--format <format>` - `text` (default), `json`, `github` or `sarif`, see below.
-- `--fail-on <severity>` - the least severe finding that fails the check: `error`, `warning`, `info` or `hint`. The default, `hint`, fails on any finding; with `--fail-on error`, warnings are reported and the exit code is 0.
+- `--fail-on <severity>` - the least severe finding that fails the check: `error`, `warning`, `info` or `hint`. The default, `warning`, fails on errors and warnings: information (a property a guessed type lacks, arguments a format does not show) and hints are reported and pass. With `--fail-on info` or `hint` they fail too; with `--fail-on error`, warnings are reported and the exit code is 0.
 - `-h`, `--help` - usage.
 
 ## Text

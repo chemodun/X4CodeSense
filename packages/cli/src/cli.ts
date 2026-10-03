@@ -92,7 +92,7 @@ Options:
   --no-structure        do not check the order and completeness of child elements
   --no-type-guesses     type variables only by what the scripts and the schemas state, not by
                         guesses from the names and documentation of actions (create_ship: a ship)
-  --fix               apply the preferred quick fixes to the files first, as the editor's fix
+  --fix                 apply the preferred quick fixes to the files first, as the editor's fix
                         all does, then report what is left
   --format <format>     text: a line per finding, file:line:column: severity: message [code], and
                         a line per quick fix (default)
@@ -100,7 +100,7 @@ Options:
                         github: workflow commands that annotate the files in GitHub Actions
                         sarif: SARIF 2.1.0, for GitHub code scanning and other tools
   --fail-on <severity>  the least severe finding that fails the check: error, warning, info or
-                        hint (default: hint, so any finding)
+                        hint (default: warning, so information and hints are reported and pass)
   -h, --help            show this help
 
 Exit code 1 when there are findings as severe as --fail-on or more, 2 on a usage error.`;
@@ -123,7 +123,7 @@ function oneOf<T extends string>(option: string, value: string, allowed: readonl
 }
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = { roots: [], extensions: [], structure: true, typeGuesses: true, fix: false, format: 'text', failOn: 'hint', help: false };
+  const options: Options = { roots: [], extensions: [], structure: true, typeGuesses: true, fix: false, format: 'text', failOn: 'warning', help: false };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const equals = argument.startsWith('--') ? argument.indexOf('=') : -1;
