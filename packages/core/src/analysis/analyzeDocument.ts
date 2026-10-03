@@ -53,7 +53,7 @@ export interface AnalysisContext {
   guessVariableTypes?: boolean;
   /**
    * With `validateVariables` and `properties`, report properties a variable's type does not have
-   * (`$ship.foo` where the script sets `$ship` to a ship), except under `@` or tested with `?`: a warning
+   * (`$ship.foo` where the script sets `$ship` to a ship), also under `@` or tested with `?`: a warning
    * where the script or the schema states the type, information (`expression-unknown-property-guessed`)
    * where it is guessed. Defaults to true.
    */

@@ -7,7 +7,8 @@
  * or script, a label, an interrupt library item, a variable, a parameter of a call, an AI script or order a
  * call names) is changed to the known names closest in spelling. The known names are those completion
  * offers at the start of the name, so a fix offers what completion would, in a patch document as where
- * the content lands; a variable is offered only when something sets it.
+ * the content lands; a variable is offered only when something sets it. A chain that stops inside a
+ * property name, `$table.keys`, is completed to each property it may be, `$table.keys.list`.
  *
  * What nothing defines can also be created: a cue or library, a label, a parameter where the call's
  * target declares its parameters, in another file when it is defined there (see `createFixes.ts`). Tags
@@ -22,6 +23,7 @@ import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { CodeActionKind, CompletionItemKind, InsertTextFormat, Range, type CodeAction, type Diagnostic, type TextEdit } from 'vscode-languageserver-types';
 import { diagnosticSource, type DocumentAnalysis } from '../analysis/analyzeDocument';
 import { positionContext, schemaOf } from '../analysis/positionContext';
+import type { PropertyEndings } from '../expressions/validateExpressions';
 import type { GameData } from '../gameData';
 import { elementWithStartTagAt, type XmlAttribute, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { completionAt } from './completion';
@@ -224,12 +226,35 @@ function spellingFixes(
   });
 }
 
+/**
+ * Completes a chain that stops inside a property name to each property it may be, `$table.keys` to
+ * `$table.keys.list`, by the endings the analysis's own diagnostic holds; undefined for other diagnostics.
+ */
+function endingFixes(analysis: DocumentAnalysis, diagnostic: Diagnostic, code: string, start: number, end: number): Fix[] | undefined {
+  const key = keyOf(diagnostic);
+  const own = analysis.diagnostics.find((candidate) => keyOf(candidate) === key);
+  const endings = (own?.data as PropertyEndings | undefined)?.endings;
+  if (!endings) {
+    return undefined;
+  }
+  const written = analysis.document.getText().slice(start, end);
+  return endings.map((ending) => ({
+    title: `Change to '${written}${ending}'`,
+    edits: [{ start: end, end, text: ending }],
+    preferred: endings.length === 1 && !guesses.has(code),
+  }));
+}
+
 function fixesFor(analysis: DocumentAnalysis, structure: XmlStructure, diagnostic: Diagnostic, game: GameData | undefined): Fix[] {
   const code = String(diagnostic.code);
   const start = analysis.document.offsetAt(diagnostic.range.start);
   const end = analysis.document.offsetAt(diagnostic.range.end);
   if (code === 'missing-required-attribute') {
     return requiredAttributeFixes(analysis, structure, start, game);
+  }
+  const endings = endingFixes(analysis, diagnostic, code, start, end);
+  if (endings) {
+    return endings;
   }
   const kinds = misspellable.get(code);
   if (kinds) {

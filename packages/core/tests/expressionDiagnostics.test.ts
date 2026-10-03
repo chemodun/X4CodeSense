@@ -207,6 +207,49 @@ describe('unknown keywords and properties', () => {
       expect(reportTyped(`${set}<set_value name="$x" exact="$s.speed + $s.cargo.{$w}.count + $s.isclass.ship"/>`)).toEqual([]);
     });
 
+    describe('on a table, whose keys are read with $ or braces only', () => {
+      const table = '<set_value name="$t" exact="table[]"/>\n      ';
+      const because = '($t is a table, set by set_value at line 4)';
+
+      it('reports a bare name, which is no key and no property', () => {
+        expect(reportTyped(`${table}<set_value name="$x" exact="$t.frobnicate"/>`)).toEqual([
+          `5:38-48 2 expression-unknown-property: 'table' has no property 'frobnicate' ${because}`,
+        ]);
+        expect(reportTyped(`${table}<set_value name="$x" exact="$t.keys.frobnicate"/>`)).toEqual([
+          `5:38-42 2 expression-unknown-property: 'table' has no property 'keys' ${because}`,
+        ]);
+      });
+
+      it('reports a chain that stops inside a property name, with the properties it may be', () => {
+        expect(reportTyped(`${table}<set_value name="$x" exact="$t.keys"/>`)).toEqual([
+          `5:38-42 2 expression-unknown-property: 'table' has no property 'keys', only keys.count, keys.list, keys.sorted, keys.random and keys.last ${because}`,
+        ]);
+        expect(reportTyped(`${table}<set_value name="$x" exact="$t.keys + 1"/>`)).toEqual([expect.stringContaining("has no property 'keys', only keys.count")]);
+      });
+
+      it('reports such a chain and a bare name under @ or tested with ? as well', () => {
+        expect(reportTyped(`${table}<set_value name="$x" exact="@$t.keys"/>`)).toEqual([
+          expect.stringMatching(/^5:39-43 2 expression-unknown-property: .*'keys', only/),
+        ]);
+        expect(reportTyped(`${table}<do_if value="$t.keys?"/>`)).toEqual([expect.stringMatching(/^5:\d+-\d+ 2 expression-unknown-property: .*'keys', only/)]);
+        expect(reportTyped(`${table}<set_value name="$x" exact="@$t.frobnicate"/>`)).toEqual([
+          expect.stringMatching(/^5:39-49 2 expression-unknown-property: 'table' has no property 'frobnicate'/),
+        ]);
+      });
+
+      it('accepts its properties and its keys', () => {
+        for (const value of ['$t.keys.list', '$t.keys.count', '$t.keys.{1}', '$t.$key', "$t.{'key'}", '$t.{$k}.name', '@$t.keys.list']) {
+          expect(reportTyped(`${table}<set_value name="$x" exact="${value}"/>`), value).toEqual([]);
+        }
+        expect(reportTyped(`${table}<do_if value="$t.keys.count?"/>`)).toEqual([]);
+      });
+
+      it('reports nothing of the type while the name after keys is still to be typed', () => {
+        expect(reportTyped(`${table}<set_value name="$x" exact="$t.keys."/>`)).toEqual([]);
+        expect(reportTyped(`${table}<set_value name="$x" exact="$t.keys.\n    </actions>`)).toEqual([]);
+      });
+    });
+
     it('types a value cast to a unit', () => {
       expect(reportTyped('<set_value name="$t" exact="(1 + 1)s"/>\n      <set_value name="$x" exact="$t.frobnicate"/>')).toEqual([
         "5:38-48 2 expression-unknown-property: 'time' has no property 'frobnicate' ($t is a time, set by set_value at line 4)",
@@ -218,10 +261,11 @@ describe('unknown keywords and properties', () => {
       expect(reportTyped(`${set}<set_value name="$x" exact="$s.pilot."/>`)).toEqual([]);
     });
 
-    it('leaves alone chains under @ or tested with ?, where the game gives null or false', () => {
-      expect(reportTyped(`${set}<set_value name="$x" exact="@$s.frobnicate"/>`)).toEqual([]);
-      expect(reportTyped(`${set}<set_value name="$x" exact="@($s.frobnicate + 1)"/>`)).toEqual([]);
-      expect(reportTyped(`${set}<do_if value="$s.frobnicate?"/>`)).toEqual([]);
+    it('reports chains under @ or tested with ? too: the game gives null or false, and the script still reads what the type lacks', () => {
+      const warned = expect.stringMatching(/ 2 expression-unknown-property: 'ship' has no property 'frobnicate' /);
+      expect(reportTyped(`${set}<set_value name="$x" exact="@$s.frobnicate"/>`)).toEqual([warned]);
+      expect(reportTyped(`${set}<set_value name="$x" exact="@($s.frobnicate + 1)"/>`)).toEqual([warned]);
+      expect(reportTyped(`${set}<do_if value="$s.frobnicate?"/>`)).toEqual([warned]);
     });
 
     it('resolves on the type without reporting unless asked, and without guesses when told so', () => {

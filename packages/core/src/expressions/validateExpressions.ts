@@ -10,6 +10,7 @@ import { isChainNode, resolvedChainOf, type ChainNode } from './astChain';
 import { parsedValue } from './attributeExpression';
 import { formatArgumentCount, formatPlaceholders } from './formats';
 import { walkExpression, type Expression } from './parser';
+import type { ResolvedChain } from './propertyChain';
 
 export type ExpressionDiagnosticCode =
   | 'expression-syntax'
@@ -40,7 +41,8 @@ export interface ExpressionValidationOptions {
   variables?: DocumentVariables;
   /**
    * With `variables`, also report properties a variable's type does not have (`$ship.foo` where `$ship` is a
-   * ship), except under `@` or tested with `?`, where the game gives null or false instead of an error. A
+   * ship), also under `@` or tested with `?`: the game gives null or false there instead of an error, and
+   * the script still reads what the type does not have. A
    * type the script or the schema states gives a warning; a guessed one information of its own code,
    * `expression-unknown-property-guessed`, whose message says the type is a guess. Without, chains are
    * resolved on the types, and what they lack is not reported.
@@ -65,6 +67,54 @@ export function describeVariableType(name: string, type: VariableType, document:
   }
   const how = type.source === 'param type' ? 'declared by its param' : `set by ${element}`;
   return `${name} is ${article} ${type.name}, ${how} at ${at}`;
+}
+
+/**
+ * The `data` of a diagnostic on a chain that stops inside a property name, `$table.keys`: what completes it
+ * to a property (`.count`, `.list`), for its quick fixes.
+ */
+export interface PropertyEndings {
+  endings: string[];
+}
+
+/**
+ * Where the chain stops at step `index` inside a property name that goes on with a name, `$table.keys` of
+ * `keys.count` and `keys.list`: the first step of that property, the names it may be (those of the
+ * properties that fit as well beside it), and the endings that complete them without a placeholder. A
+ * chain that stops before a placeholder, `haslicence.<licencetype>` of
+ * `haslicence.<licencetype>.{$faction}`, uses the first part of the name and is not reported.
+ */
+function stoppedInside(resolved: ResolvedChain, index: number): { first: number; names: string[]; endings: string[] } | undefined {
+  const property = resolved.steps[index].property;
+  if (!property) {
+    return undefined;
+  }
+  let first = index;
+  while (first > 1 && resolved.steps[first - 1].property === property && index - first + 1 < property.segments.length) {
+    first--;
+  }
+  const covered = index - first + 1;
+  if (covered >= property.segments.length || property.segments[covered].kind !== 'literal') {
+    return undefined;
+  }
+  const names: string[] = [];
+  const endings: string[] = [];
+  for (const candidate of [property, ...(resolved.steps[index].candidates ?? [])]) {
+    if (names.includes(candidate.name) || candidate.segments[covered]?.kind !== 'literal') {
+      continue;
+    }
+    names.push(candidate.name);
+    const rest = candidate.segments.slice(covered);
+    if (rest.every((segment) => segment.kind === 'literal')) {
+      endings.push(rest.map((segment) => `.${segment.text}`).join(''));
+    }
+  }
+  return { first, names, endings };
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function listed(names: readonly string[]): string {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 /**
@@ -120,15 +170,20 @@ export function validateExpressions(
         message: string,
         start: number,
         end: number,
-        severity: DiagnosticSeverity
+        severity: DiagnosticSeverity,
+        data?: PropertyEndings
       ): void => {
-        diagnostics.push({
+        const diagnostic: Diagnostic = {
           range: Range.create(document.positionAt(offsetInValue(attribute, start)), document.positionAt(offsetInValue(attribute, end))),
           message,
           severity,
           code,
           source,
-        });
+        };
+        if (data) {
+          diagnostic.data = data;
+        }
+        diagnostics.push(diagnostic);
       };
       const parsed = parsedValue(attribute);
       for (const error of parsed.errors) {
@@ -199,13 +254,14 @@ export function validateExpressions(
 
       const variables = options.variables;
       const stepTypes = variables ? stepTypesIn(variables, element, properties) : undefined;
-      const checkChain = (outer: ChainNode, guarded: boolean): void => {
+      const checkChain = (outer: ChainNode): void => {
         const { head, steps, resolved } = resolvedChainOf(outer, text, properties, schema, stepTypes);
         checkHead(head, resolved.steps[0].keyword !== undefined);
         let typedFrom = -1;
         for (let index = 1; index < steps.length; index++) {
-          if (steps[index].text === '') {
-            // The name after a dot still to be typed: the syntax error says so.
+          if (steps[index].text === '' || steps[index + 1]?.text === '') {
+            // The name after a dot still to be typed: the syntax error says so, and the name before it may
+            // start a longer one (`$table.keys.` of `keys.list`).
             break;
           }
           if (resolved.steps[index - 1].fromVariable) {
@@ -213,7 +269,8 @@ export function validateExpressions(
           }
           const owner = resolved.owners[index];
           const step = resolved.steps[index];
-          if (owner.kind === 'unknown' || step.property || step.candidates || step.fromVariable) {
+          const stopped = index === steps.length - 1 ? stoppedInside(resolved, index) : undefined;
+          if (owner.kind === 'unknown' || ((step.property || step.candidates || step.fromVariable) && !stopped)) {
             continue;
           }
           if (owner.kind === 'keyword' && owner.keyword.imported) {
@@ -225,38 +282,39 @@ export function validateExpressions(
             break;
           }
           const variableType = typedFrom >= 0 ? variables?.typeAt(element, steps, typedFrom) : undefined;
-          if (typedFrom >= 0 && (!options.typedProperties || guarded || !variableType)) {
+          if (typedFrom >= 0 && (!options.typedProperties || !variableType)) {
             break;
           }
           const ownerName = owner.kind === 'keyword' ? owner.keyword.name : owner.datatype.name;
           const because = variableType ? ` (${describeVariableType(steps[typedFrom].text, variableType, document, options.origin)})` : '';
           const guessed = variableType?.guessed === true;
+          const first = stopped ? stopped.first : index;
+          const name = text.slice(steps[first].start, steps[index].end);
+          const only = stopped ? `, only ${listed(stopped.names)}` : '';
           report(
             guessed ? 'expression-unknown-property-guessed' : 'expression-unknown-property',
-            `'${ownerName}' has no property '${steps[index].text}'${because}`,
-            steps[index].start,
+            `'${ownerName}' has no property '${name}'${only}${because}`,
+            steps[first].start,
             steps[index].end,
-            guessed ? DiagnosticSeverity.Information : DiagnosticSeverity.Warning
+            guessed ? DiagnosticSeverity.Information : DiagnosticSeverity.Warning,
+            stopped && stopped.endings.length > 0 ? { endings: stopped.endings } : undefined
           );
           break;
         }
       };
 
-      /**
-       * Visits a node; `chainObject` is true when the node is the object of a chain node above it, `guarded`
-       * when it is under `@` or tested with `?`.
-       */
-      const visit = (node: Expression, chainObject: boolean, guarded = false): void => {
+      /** Visits a node; `chainObject` is true when the node is the object of a chain node above it. */
+      const visit = (node: Expression, chainObject: boolean): void => {
         if (isChainNode(node)) {
           if (!chainObject) {
-            checkChain(node, guarded);
+            checkChain(node);
           }
-          visit(node.object, true, guarded);
+          visit(node.object, true);
           if (node.kind === 'dynamic') {
-            visit(node.key, false, guarded);
+            visit(node.key, false);
           } else if (node.kind === 'args') {
             for (const argument of node.args) {
-              visit(argument, false, guarded);
+              visit(argument, false);
             }
           }
           return;
@@ -269,46 +327,42 @@ export function validateExpressions(
         }
         switch (node.kind) {
           case 'textref':
-            visit(node.page, false, guarded);
-            visit(node.id, false, guarded);
+            visit(node.page, false);
+            visit(node.id, false);
             break;
           case 'list':
             for (const item of node.items) {
-              visit(item, false, guarded);
+              visit(item, false);
             }
             break;
           case 'table':
             for (const entry of node.entries) {
-              visit(entry.key, false, guarded);
-              visit(entry.value, false, guarded);
+              visit(entry.key, false);
+              visit(entry.value, false);
             }
             break;
           case 'call':
             for (const argument of node.args) {
-              visit(argument, false, guarded);
+              visit(argument, false);
             }
             break;
           case 'unary':
-            visit(node.operand, false, guarded || node.operator === '@');
-            break;
           case 'exists':
-            visit(node.operand, false, true);
-            break;
           case 'cast':
-            visit(node.operand, false, guarded);
+            visit(node.operand, false);
             break;
           case 'group':
-            visit(node.expression, false, guarded);
+            visit(node.expression, false);
             break;
           case 'binary':
-            visit(node.left, false, guarded);
-            visit(node.right, false, guarded);
+            visit(node.left, false);
+            visit(node.right, false);
             break;
           case 'conditional':
-            visit(node.condition, false, guarded);
-            visit(node.then, false, guarded);
+            visit(node.condition, false);
+            visit(node.then, false);
             if (node.else) {
-              visit(node.else, false, guarded);
+              visit(node.else, false);
             }
             break;
           default:

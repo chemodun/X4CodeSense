@@ -70,6 +70,9 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
   const knownVanillaFindings = [
     "expression-unknown-property: 'boolean' has no property 'isventuremodule' (x4ep1_mentor_subscription.xml)",
     "expression-unknown-property: 'controllable' has no property 'destination' (order.trade.routine.xml)",
+    // `not @$localtarget.pilot.command or $localtarget.pilot.command.value …`: `command` alone is no property,
+    // only `command.value` and the others; under `@` it is null, so the test is always true.
+    "expression-unknown-property: 'entity' has no property 'command', only command.value, command.param and command.param2 (order.move.recon.xml)",
     "expression-unknown-property: 'this' has no property 'id' (move.attack.object.capital.steering.xml)",
   ];
 
@@ -127,10 +130,23 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
     // until a bare name stopped fitting a placeholder of a datatype. A gap of the file or a slip of the script.
     "dlc story_yaki.xml: expression-unknown-property: 'group' has no property 'operational' ($SecretServiceStationDockingAreas is a group, set by find_dockingbay at line 719)",
     "game boarding.pod.return.xml: expression-unknown-property-guessed: 'dockingbay' has no property 'component' (if $dock is a dockingbay, as guessed from find_dockingbay at line 47)",
+    // Vanilla's slip: `$TextTable.objective` for `$TextTable.$objective`, the key the same file sets and reads
+    // elsewhere. A table's keys are read with `$` or braces; a bare name was taken for its `{$key}` until it
+    // stopped fitting a placeholder that is a whole property name.
+    "game gm_escort.xml: expression-unknown-property: 'table' has no property 'objective' ($TextTable is a table, set by param at line 182)",
+    "game gm_patrol.xml: expression-unknown-property: 'table' has no property 'objective' ($TextTable is a table, set by param at line 186)",
     "game lib.find.sectors.inrange.xml: expression-unknown-property: 'controllable' has no property 'destination' ($refobject is a controllable, set by param at line 4)",
+    // The ones below are read under `@` (reported there too since a property the type lacks is still read):
+    // `@$refobject.issuperhighway`, a property of zones, used as a test of the type.
+    "game lib.find.sectors.inrange.xml: expression-unknown-property: 'controllable' has no property 'issuperhighway' ($refobject is a controllable, set by param at line 4)",
     "game mainmenu.xml: expression-unknown-property: 'buildmodule' has no property 'neededsequenceresources' ($BuildModule is a buildmodule, set by set_value at line 92)",
     "game move.generic.xml: expression-unknown-property: 'object' has no property 'islocalhighway' ($destination is an object, declared by its param at line 13)",
     "game move.generic.xml: expression-unknown-property: 'object' has no property 'istempzone' ($destination is an object, declared by its param at line 13)",
+    // `@$leaderpilot.escortgroup.indexof.{…}`, three times: scriptproperties.xml gives no datatype `escortgroup`.
+    "game order.fight.escort.xml: expression-unknown-property: 'entity' has no property 'escortgroup' ($leaderpilot is an entity, set by set_value at line 352)",
+    // `@$TradeOrder.available` and `@$TradeOrder.tradedeal` in debug texts, on an order guessed from create_trade_order.
+    "game rml_barterwares.xml: expression-unknown-property-guessed: 'order' has no property 'available' (if $TradeOrder is an order, as guessed from create_trade_order at line 1143)",
+    "game rml_barterwares.xml: expression-unknown-property-guessed: 'order' has no property 'tradedeal' (if $TradeOrder is an order, as guessed from create_trade_order at line 1143)",
     // The mod's slip: `$LocModules.macro.{$C}` for `$LocModules.{$C}.macro`, which the same line writes next.
     "mods deadairdynamicuniverse.xml: expression-unknown-property: 'constructionsequence' has no property 'macro' ($LocModules is a constructionsequence, set by set_value at line 9457)",
   ];

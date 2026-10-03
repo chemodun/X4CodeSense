@@ -55,6 +55,15 @@
     <property name="{$numeric}" result="Element at the index (1-based)" />
     <property name="random" result="A random element" />
   </datatype>
+  <datatype name="table">
+    <property name="keys.count" result="Number of keys in the table" type="integer" />
+    <property name="keys.list" result="List of all keys in the table" type="list" />
+    <property name="keys.sorted" result="List of all keys in the table, sorted by their associated values" type="list" />
+    <property name="keys.random" result="A random key in the table" />
+    <property name="keys.{$numeric}" result="The $numeric-th key in the table (1-based)" />
+    <property name="keys.last" result="The last key in the table" />
+    <property name="{$key}" result="Value associated with the table key" />
+  </datatype>
   <datatype name="enum" />
   <datatype name="class" type="enum" />
   <datatype name="ware" type="enum" />

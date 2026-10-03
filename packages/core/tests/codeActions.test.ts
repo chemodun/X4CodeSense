@@ -234,6 +234,22 @@ describe('quick fixes for names', () => {
     expect(fixAll(analysis, game)?.title).toBe('Apply all preferred fixes in this file (1)');
   });
 
+  it('completes a chain that stops inside a property name to each property it may be, none preferred', () => {
+    const analysis = analyze(md('<set_value name="$t" exact="table[]" />\n        <debug_text text="$t.keys" />'));
+    expect(fixes(analysis, 'expression-unknown-property')).toEqual([
+      "Change to 'keys.count'",
+      "Change to 'keys.list'",
+      "Change to 'keys.sorted'",
+      "Change to 'keys.random'",
+      "Change to 'keys.last'",
+    ]);
+    expect(lineWith(fixed(analysis, 'expression-unknown-property', "Change to 'keys.list'"), 'debug_text')).toBe('<debug_text text="$t.keys.list" />');
+    expect(fixAll(analysis, game)).toBeUndefined();
+    // A bare name after a table is no key: it is changed like any property the type lacks.
+    const bare = analyze(md('<set_value name="$t" exact="table[]" />\n        <debug_text text="$t.kyes.list" />'));
+    expect(fixes(bare, 'expression-unknown-property')).toEqual(["Change to 'keys' *"]);
+  });
+
   it('offers only variables that are set', () => {
     const read = analyze(md('<debug_text text="$count" />\n        <debug_text text="$count + $cuont" />'));
     expect(read.diagnostics.filter((diagnostic) => diagnostic.code === 'variable-undefined')).toHaveLength(3);

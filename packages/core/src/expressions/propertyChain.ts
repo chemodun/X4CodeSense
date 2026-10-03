@@ -284,7 +284,8 @@ function literalDatatype(step: ChainStep, properties: ScriptProperties): ScriptD
  * datatype, as the game's scripts write them (`project.agr_fields_sunrise`, `stat.population`); a bare
  * name is no number, string, list or object, so `cargo.frob` is no `cargo.{$numeric}`. Strict matches
  * are tried first, so `dock.container` is the `dock` property followed by `container`, not
- * `dock.{$docksize}`.
+ * `dock.{$docksize}`. A placeholder that is a whole property name, a table's `{$key}`, takes no bare
+ * name even then (see `matchLength`).
  */
 export function segmentMatches(segment: PropertySegment, step: ChainStep, properties: ScriptProperties, schema: ScriptSchema, lenient = false): boolean {
   switch (segment.kind) {
@@ -330,7 +331,10 @@ function isConcreteValue(value: ScriptProperty): boolean {
 /**
  * Number of steps from `from` a property covers, or -1 when it does not match there. With `prefix`, a
  * chain that ends before the pattern does still matches (`faction.player.haslicence.{$licence}` uses the
- * first part of `haslicence.<licencetype>.{$faction}`).
+ * first part of `haslicence.<licencetype>.{$faction}`). A bare name fits a placeholder leniently only
+ * inside a longer name, `stat.{$statid}.value`: a placeholder that is the whole name is read with `$` or
+ * braces only, so the value of a table's key is `$table.$key` or `$table.{'key'}`, and `$table.key` is
+ * no property of a table.
  */
 function matchLength(
   property: ScriptProperty,
@@ -347,8 +351,9 @@ function matchLength(
     return -1;
   }
   const count = Math.min(segments.length, available);
+  const bare = lenient && segments.length > 1;
   for (let index = 0; index < count; index++) {
-    if (!segmentMatches(segments[index], steps[from + index], properties, schema, lenient)) {
+    if (!segmentMatches(segments[index], steps[from + index], properties, schema, bare)) {
       return -1;
     }
   }
