@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.9.0...x4-script-core@v0.10.0) (2026-10-03)
+
+
+### Features
+
+* x4-script-mcp, an MCP server for AI agents that write scripts, offered by the extension to VS Code's agents ([e7ede0e](https://github.com/chemodun/X4CodeSense/commit/e7ede0e070167ee1d79459f8b1146173bb3f2e42))
+
 ## [0.9.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.8.0...x4-script-core@v0.9.0) (2026-10-02)
 
 
