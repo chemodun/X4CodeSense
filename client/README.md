@@ -285,7 +285,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [0.11.0] - unreleased
+### [0.11.0] - 2026-10-04
 
 - Added
   - The MCP server's tool `hover`: what the editor's hover shows at a line and column of a script or patch, for an agent that reads an existing script, the game's included.
