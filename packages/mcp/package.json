@@ -1,6 +1,6 @@
 {
   "name": "x4-script-mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "MCP server for X4: Foundations scripts: checks, the elements and attributes of the game's schemas, expression types, scripts, cues and texts, for AI agents that write AI scripts and Mission Director scripts.",
   "main": "out/main.js",
   "bin": {
@@ -46,7 +46,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.0",
     "vscode-languageserver-textdocument": "^1.0.15",
-    "x4-script-core": "0.9.0",
+    "x4-script-core": "0.10.0",
     "zod": "^4.6.5"
   }
 }
