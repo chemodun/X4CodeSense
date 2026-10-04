@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.2.0...x4-script-mcp@v0.3.0) (2026-10-04)
+
+
+### Features
+
+* X4CodeSense: Start MCP Server serves the tools over HTTP for agents outside VS Code's agent mode ([8960fb2](https://github.com/chemodun/X4CodeSense/commit/8960fb24647184ac533b2fe00abfc3d33270d6d3))
+
 ## [0.2.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.1.1...x4-script-mcp@v0.2.0) (2026-10-03)
 
 
