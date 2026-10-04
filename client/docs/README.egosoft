@@ -128,11 +128,14 @@ The extension offers an MCP server to the editor's AI agents, such as Copilot's 
 [/list]
 It reads the extensions' files again as the agent changes them. [b]x4CodeSense.mcpServer.enabled[/b] turns it off.
 
+VS Code gives the servers of extensions only to its own agent mode. For other agents, such as a Copilot CLI session in VS Code's chat, Claude Code or Codex, [b]X4CodeSense: Start MCP Server[/b] serves the same tools at a URL (see [b]Other agents[/b]).
+
 [size=120][u]Using it in VS Code[/u][/size]
 [list]
 [*] [b]Where it is.[/b] Run [b]MCP: List Servers[/b] from the Command Palette: it lists [b]X4CodeSense[/b], with Start, Stop, Restart and Show Output. In the chat, the tools button ([b]Configure Tools[/b]) lists its tools under [b]X4CodeSense[/b]. It is not in the Extensions view's [b]MCP Servers - Installed[/b], which lists only the servers of [b]mcp.json[/b] files and the gallery.
 [*] [b]Starting it.[/b] VS Code starts it when an agent first needs its tools, or run [b]Start Server[/b] on it in [b]MCP: List Servers[/b]. Its output ([b]Show Output[/b] there) then says "Discovered 9 tools". The first call reads the game files and the extensions, some seconds for a large workspace; later calls take milliseconds. Each call is logged in that output: the tool, its arguments, the time and the size of the answer.
 [*] [b]After an update[/b] of the extension, run [b]Developer: Reload Window[/b] if the server or its setting does not show.
+[*] [b]A Copilot CLI session.[/b] When the chat runs a Copilot CLI session, [b]MCP: List Servers[/b] lists that session's servers, such as `github-mcp-server`, and X4CodeSense only under [b]Show locally configured servers...[/b]: the session does not get it. Start the server for other agents and give the session its URL (see [b]Other agents[/b]).
 [*] [b]Getting the agent to use it.[/b] Agents use the tools they are told about. Say so in the request ("check it with X4CodeSense"), name a tool with [b]#[/b] (`#mcp_x4codesense_describe_element`), or, best, add to your Copilot instructions (`.github/copilot-instructions.md`, or a file in `.github/instructions/`) a section such as:
 [/list]
   [code=markdown]
@@ -151,7 +154,22 @@ It reads the extensions' files again as the agent changes them. [b]x4CodeSense.m
 
 VS Code's MCP server gallery may list the same server, `io.github.chemodun/x4-script-mcp`: with this extension there is no need to add it from there, which would run a second copy.
 
-Other agents, such as Claude Code, Cursor or Claude Desktop, run it from npm as [url=https://www.npmjs.com/package/x4-script-mcp]x4-script-mcp[/url], or as [b]dist\x4-script-mcp.js[/b] in the extension's folder with Node.js 22 or later; it takes the game and the extensions as the checker does:
+[b]X4CodeSense: Start MCP Server[/b], in the Command Palette and in the menu of the status bar item, starts the server at `http://127.0.0.1:47400/mcp`, on the game files and extensions set in this window. It reads them at once, so the first call is quick, and starts again when those settings change. [b]X4 MCP[/b] in the status bar shows that it runs and opens the menu, with [b]Stop MCP Server[/b] and [b]Copy MCP Server URL[/b]; closing the window stops it too. It serves only clients on this machine. [b]x4CodeSense.mcpServer.port[/b] sets the port: a second window needs one of its own, else its start fails with "port 47400 on 127.0.0.1 is in use".
+
+Give the agent the URL once:
+[list]
+[*] [b]Copilot CLI[/b], also its sessions in VS Code's chat: in `~/.copilot/mcp-config.json`,
+[/list]
+  [code=json]
+  { "mcpServers": { "x4": { "type": "http", "url": "http://127.0.0.1:47400/mcp", "tools": ["*"] } } }
+  [/code]
+[list]
+[*] [b]Claude Code[/b]: [b]claude mcp add --transport http x4 http://127.0.0.1:47400/mcp[/b]
+[*] [b]Others[/b]: as a Streamable HTTP server at that URL.
+[/list]
+The agent reaches the tools while the server runs: start it before the session that uses them.
+
+Without VS Code, agents such as Claude Code, Cursor or Claude Desktop run it from npm as [url=https://www.npmjs.com/package/x4-script-mcp]x4-script-mcp[/url], or as [b]dist\x4-script-mcp.js[/b] in the extension's folder with Node.js 22 or later; it takes the game and the extensions as the checker does:
 
 [code=powershell]
 claude mcp add x4 -- npx -y x4-script-mcp --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" --extensions path\to\your\extensions
@@ -273,6 +291,10 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
 [list]
 [*] [i]default[/i]: [b]true[/b]
 [/list]
+[*] [b]x4CodeSense.mcpServer.port[/b] - the port of the server for other agents that [b]X4CodeSense: Start MCP Server[/b] starts, at `http://127.0.0.1:<port>/mcp`.
+[list]
+[*] [i]default[/i]: [b]47400[/b]
+[/list]
 [*] [b]x4CodeSense.debug[/b] - verbose logging in the X4CodeSense output channel.
 [list]
 [*] [i]default[/i]: [b]false[/b]
@@ -293,6 +315,8 @@ All of them but [b]Write Changes into the Patch[/b], which belongs to the side w
 [*] [b]X4CodeSense: Edit This Patch Above What It Changes[/b] - in a patch: the patch above that diff, the side with the patch editable.
 [*] [b]X4CodeSense: Write Changes into the Patch[/b] - in the side with the patch: saves it, which writes its changes into the patch.
 [*] [b]X4CodeSense: Open the File This Patch Changes[/b] - in a patch.
+[*] [b]X4CodeSense: Start MCP Server[/b] - serves the MCP server's tools at [b]http://127.0.0.1:47400/mcp[/b] for agents outside VS Code's agent mode (see [b]Other agents[/b]).
+[*] [b]X4CodeSense: Stop MCP Server[/b], [b]Copy MCP Server URL[/b], [b]Show MCP Server Output[/b] - while it runs; its output logs each call.
 [*] [b]X4CodeSense: Show Output[/b] - the language server's log, with the problems met reading the game files.
 [*] [b]X4CodeSense: Open Settings[/b]
 [*] [b]X4CodeSense: Restart Language Server[/b] - reads the game files and the scripts again, for example after the game was updated or an extension outside the workspace changed.
@@ -309,6 +333,14 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [/list]
 [size=130][u]🛠 Changelog[/u][/size]
 
+[size=125][u][0.12.0] - 2026-10-04[/u][/size]
+[list]
+[*] Added
+[list]
+[*] [b]X4CodeSense: Start MCP Server[/b] serves the MCP server's tools at [b]http://127.0.0.1:47400/mcp[/b] for agents that VS Code does not give the servers of extensions, such as Copilot CLI sessions in its chat, Claude Code or Codex. [b]X4 MCP[/b] in the status bar while it runs; Stop, Copy URL and its output in the menu and the Command Palette; [b]x4CodeSense.mcpServer.port[/b] for the port.
+[*] x4-script-mcp `--port`: Streamable HTTP on 127.0.0.1, several clients on one reading of the game files.
+[/list]
+[/list]
 [size=125][u][0.11.0] - 2026-10-04[/u][/size]
 [list]
 [*] Added
