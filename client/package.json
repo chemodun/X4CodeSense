@@ -120,6 +120,29 @@
         "command": "x4CodeSense.showMenu",
         "title": "Show Menu",
         "category": "X4CodeSense"
+      },
+      {
+        "command": "x4CodeSense.startMcpServer",
+        "title": "Start MCP Server",
+        "category": "X4CodeSense",
+        "icon": "$(radio-tower)"
+      },
+      {
+        "command": "x4CodeSense.stopMcpServer",
+        "title": "Stop MCP Server",
+        "category": "X4CodeSense",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "x4CodeSense.copyMcpServerUrl",
+        "title": "Copy MCP Server URL",
+        "category": "X4CodeSense",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "x4CodeSense.showMcpServerOutput",
+        "title": "Show MCP Server Output",
+        "category": "X4CodeSense"
       }
     ],
     "menus": {
@@ -143,6 +166,18 @@
         {
           "command": "x4CodeSense.showMenu",
           "when": "false"
+        },
+        {
+          "command": "x4CodeSense.startMcpServer",
+          "when": "x4CodeSense.mcpHttpServer != running && x4CodeSense.mcpHttpServer != starting"
+        },
+        {
+          "command": "x4CodeSense.stopMcpServer",
+          "when": "x4CodeSense.mcpHttpServer == running || x4CodeSense.mcpHttpServer == starting"
+        },
+        {
+          "command": "x4CodeSense.copyMcpServerUrl",
+          "when": "x4CodeSense.mcpHttpServer == running"
         }
       ],
       "editor/title": [
@@ -217,7 +252,14 @@
         "x4CodeSense.mcpServer.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Offer the X4CodeSense MCP server to the editor's AI agents, such as Copilot's agent mode: tools that check scripts and tell the elements, attributes, expression types, scripts, cues and texts of the game files and extensions set here. The editor starts it when an agent first uses it."
+          "description": "Offer the X4CodeSense MCP server to the editor's AI agents, such as Copilot's agent mode: tools that check scripts and tell the elements, attributes, expression types, scripts, cues and texts of the game files and extensions set here. The editor starts it when an agent first uses it. For agents outside the editor's agent mode, see **X4CodeSense: Start MCP Server**."
+        },
+        "x4CodeSense.mcpServer.port": {
+          "type": "integer",
+          "default": 47400,
+          "minimum": 1,
+          "maximum": 65535,
+          "markdownDescription": "The port of the MCP server that **X4CodeSense: Start MCP Server** starts at `http://127.0.0.1:<port>/mcp`, for agents that are given its URL: Copilot CLI sessions, Claude Code, Codex. Only clients on this machine are served."
         },
         "x4CodeSense.debug": {
           "type": "boolean",

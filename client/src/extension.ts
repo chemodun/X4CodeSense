@@ -24,6 +24,7 @@ import {
   type ScriptSchema,
   type ServerStatus,
 } from 'x4-script-core';
+import { registerMcpHttpServer, type McpHttpServer } from './mcpHttpServer';
 import { registerMcpServer } from './mcpServer';
 import { PatchLayout } from './patchLayout';
 import { PatchedSides, patchedScheme } from './patchSides';
@@ -54,12 +55,17 @@ const tooltipCommands = [
   'x4CodeSense.openPatchTarget',
   'x4CodeSense.comparePatch',
   'x4CodeSense.editPatchWithResult',
+  'x4CodeSense.startMcpServer',
+  'x4CodeSense.stopMcpServer',
+  'x4CodeSense.copyMcpServerUrl',
 ];
 
 const shortSchemaName: Record<ScriptSchema, string> = { md: 'MD', aiscripts: 'AI' };
 
 let client: LanguageClient | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
+/** The MCP server over HTTP that the commands start and stop. */
+let mcpHttpServer: McpHttpServer | undefined;
 /** What the server last said it does and has read; undefined while it starts. */
 let serverStatus: ServerStatus | undefined;
 /** What the server said of the active document. */
@@ -196,6 +202,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(...registerMcpServer(context));
+  const mcpHttp = registerMcpHttpServer(context);
+  mcpHttpServer = mcpHttp.server;
+  // Shown while the server runs, whatever the active document: a process of its own that is easily forgotten.
+  const mcpItem = vscode.window.createStatusBarItem('x4CodeSense.mcpServer', vscode.StatusBarAlignment.Right, 99);
+  mcpItem.name = 'X4CodeSense MCP Server';
+  mcpItem.command = 'x4CodeSense.showMenu';
+  context.subscriptions.push(
+    ...mcpHttp.disposables,
+    mcpItem,
+    mcpHttp.server.onDidChange((state) => {
+      if (state.state === 'stopped') {
+        mcpItem.hide();
+      } else {
+        mcpItem.text = state.state === 'starting' ? '$(sync~spin) X4 MCP' : '$(radio-tower) X4 MCP';
+        mcpItem.tooltip = state.state === 'starting' ? 'The X4CodeSense MCP server is starting' : `The X4CodeSense MCP server runs at ${state.url}`;
+        mcpItem.show();
+      }
+      void updateStatusBar();
+    })
+  );
 
   context.globalState.setKeysForSync([neverOfferKey]);
   void offerOldSettings(context, languageClient.outputChannel);
@@ -393,6 +419,17 @@ function tooltip(info: DocumentInfoResult, inGame: boolean): vscode.MarkdownStri
     );
   }
   lines.push('', `Problems are shown for ${diagnosticModeShown[diagnosticMode()]} · [Change](command:x4CodeSense.selectDiagnosticMode)`);
+  const mcp = mcpHttpServer?.state;
+  if (mcp?.state === 'running') {
+    lines.push(
+      '',
+      `$(radio-tower) MCP server for other agents at \`${mcp.url}\` · [Copy URL](command:x4CodeSense.copyMcpServerUrl) · [Stop](command:x4CodeSense.stopMcpServer)`
+    );
+  } else if (mcp?.state === 'starting') {
+    lines.push('', '$(sync~spin) The MCP server for other agents is starting.');
+  } else {
+    lines.push('', 'MCP server for other agents, such as Copilot CLI or Claude Code: [Start](command:x4CodeSense.startMcpServer)');
+  }
   lines.push(
     '',
     '---',
@@ -434,6 +471,13 @@ async function showMenu(): Promise<void> {
       description: diagnosticModeShown[diagnosticMode()],
       command: 'x4CodeSense.selectDiagnosticMode',
     },
+    ...(mcpHttpServer?.state.state === 'stopped'
+      ? [{ label: '$(radio-tower) Start MCP Server', description: `${mcpHttpServer.url}, for other agents`, command: 'x4CodeSense.startMcpServer' }]
+      : [
+          { label: '$(debug-stop) Stop MCP Server', description: mcpHttpServer?.url, command: 'x4CodeSense.stopMcpServer' },
+          { label: '$(copy) Copy MCP Server URL', command: 'x4CodeSense.copyMcpServerUrl' },
+          { label: '$(output) Show MCP Server Output', command: 'x4CodeSense.showMcpServerOutput' },
+        ]),
     { label: '$(output) Show Output', command: 'x4CodeSense.showOutput' },
     { label: '$(settings-gear) Open Settings', command: 'x4CodeSense.openSettings' },
     { label: '$(debug-restart) Restart Language Server', description: 'reads the game files and the scripts again', command: 'x4CodeSense.restartServer' }

@@ -33,7 +33,7 @@ function extensionFolders(configuration: vscode.WorkspaceConfiguration): string[
 }
 
 /** The server's arguments from the extension's settings. */
-function serverArguments(): string[] {
+export function serverArguments(): string[] {
   const configuration = vscode.workspace.getConfiguration('x4CodeSense');
   const args: string[] = [];
   const unpacked = textSetting(configuration, 'unpackedFileLocation');

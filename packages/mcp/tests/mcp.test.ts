@@ -5,7 +5,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { build } from 'esbuild';
-import { execFile } from 'node:child_process';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { request as httpRequest } from 'node:http';
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -513,5 +515,92 @@ describe('x4-script-mcp options', { timeout: 30_000 }, () => {
     expect(help.code).toBe(0);
     expect(help.stdout).toContain('--extensions <folder>');
     expect((await run('--language', 'en')).code).toBe(2);
+    expect((await run('--port', 'http')).code).toBe(2);
+  });
+});
+
+describe('x4-script-mcp over HTTP', { timeout: 30_000 }, () => {
+  let server: ChildProcess;
+  let url: string;
+  /** What the server wrote on standard error. */
+  let log = '';
+
+  beforeAll(async () => {
+    server = spawn(process.execPath, [bundle, '--port', '0', '--unpacked', unpacked, '--extensions', extensions], { stdio: ['ignore', 'ignore', 'pipe'] });
+    url = await new Promise<string>((resolve, reject) => {
+      server.stderr?.on('data', (chunk: Buffer) => {
+        log += chunk.toString();
+        const listening = /listening on (http:\S+)/.exec(log);
+        if (listening) {
+          resolve(listening[1]);
+        }
+      });
+      server.once('exit', (code) => reject(new Error(`exited with ${code}: ${log}`)));
+    });
+  });
+
+  afterAll(() => {
+    server?.kill();
+  });
+
+  async function connectHttp(): Promise<Client> {
+    const connected = new Client({ name: 'x4-script-mcp-http-test', version: '0' });
+    await connected.connect(new StreamableHTTPClientTransport(new URL(url)));
+    return connected;
+  }
+
+  it('serves the tools on 127.0.0.1, one session per client on the same game files', async () => {
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    const first = await connectHttp();
+    const second = await connectHttp();
+    try {
+      expect((await first.listTools()).tools.map((tool) => tool.name)).toContain('hover');
+      const status = JSON.parse((await callOn(second, 'status')).text) as Record<string, unknown>;
+      expect(status).toMatchObject({ game: unpacked, loaded: true });
+      const hover = JSON.parse((await callOn(first, 'hover', { file: caller, line: 6, column: 10 })).text) as { hover: string };
+      expect(hover.hover).toContain('signal\\_cue\\_instantly');
+    } finally {
+      await first.close();
+      await second.close();
+    }
+    expect(log).toMatch(/session \S+ opened \(2 open\)/);
+  });
+
+  it('refuses a request for another host name, from a page elsewhere, or without a session', async () => {
+    const initialize = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } },
+    });
+    const post = (headers: Record<string, string>, body = initialize): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const request = httpRequest(
+          url,
+          { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers } },
+          (response) => {
+            response.resume();
+            resolve(response.statusCode ?? 0);
+          }
+        );
+        request.on('error', reject);
+        request.end(body);
+      });
+    expect(await post({ Host: 'attacker.example:80' })).toBe(403);
+    expect(await post({ Origin: 'https://attacker.example' })).toBe(403);
+    expect(await post({}, JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }))).toBe(400);
+    expect(await post({ 'Mcp-Session-Id': 'nonsense' }, JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list' }))).toBe(404);
+  });
+
+  it('exits with 1 when the port is taken', async () => {
+    const port = new URL(url).port;
+    const taken = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const second = spawn(process.execPath, [bundle, '--port', port, '--unpacked', unpacked], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      second.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+      second.once('exit', (code) => resolve({ code, stderr }));
+    });
+    expect(taken.code).toBe(1);
+    expect(taken.stderr).toContain(`port ${port} on 127.0.0.1 is in use`);
   });
 });

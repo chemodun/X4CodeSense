@@ -2,7 +2,7 @@
 
 MCP server for X4: Foundations scripts (AI scripts and Mission Director scripts), built on `x4-script-core`. It gives AI agents that write scripts what the X4CodeSense VS Code extension knows from the game's own files: the checks with their quick fixes, the elements and attributes of the schemas, the types and properties of expressions, the scripts, cues and texts of the game, its DLCs and the extensions. Its tools only read; the agent writes the files.
 
-The X4CodeSense extension brings it along and offers it to VS Code's agents (Copilot's agent mode) on the game files and extensions set in its settings, with nothing to set up. Other agents start it from npm:
+The X4CodeSense extension brings it along and offers it to VS Code's agents (Copilot's agent mode) on the game files and extensions set in its settings, with nothing to set up; its command **X4CodeSense: Start MCP Server** serves it at `http://127.0.0.1:47400/mcp` for other agents, Copilot CLI sessions among them. Other agents also start it from npm:
 
 ```powershell
 # Claude Code
@@ -33,6 +33,7 @@ Options:
 - `--language <number>` - the language texts are shown in, `44` (English) by default; the game's `libraries/languages.xml` lists the numbers.
 - `--no-structure` - report unknown elements, attributes and values, missing required attributes and text inside elements only, not the order and completeness of child elements.
 - `--no-type-guesses` - type variables only by what the scripts and the schemas state, not by guesses from the names and documentation of actions (`create_ship` a ship).
+- `--port <number>` - serve Streamable HTTP at `http://127.0.0.1:<port>/mcp` instead of standard input and output, for agents that are given a URL; `0` picks a free port. The game files are then read at once, and every client shares them. Only clients on this machine are served: a request naming another host, or from a web page of another site, is refused. A port in use ends it with exit code 1.
 - `-h`, `--help` - usage.
 
 The game files are read on the first call, a few seconds. The extensions' files are watched: a script or text file the agent writes, changes or deletes is read again before the next call, and a file a call names is always taken as it is on disk. An extension added, or a `content.xml` changed, reads them all again.
