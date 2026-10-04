@@ -2,7 +2,7 @@
   "name": "x4codesense",
   "displayName": "X4CodeSense",
   "description": "Language support for X4: Foundations scripts (AI scripts, Mission Director scripts and their patches): diagnostics, completion, hover, navigation, rename and quick fixes, powered by a language server.",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
   "publisher": "X4DevTools",
   "pricing": "Free",
