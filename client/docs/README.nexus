@@ -24,6 +24,8 @@ All of it keeps working while a tag, an attribute or a quote is still being type
 
 The Problems panel lists the problems of the open scripts, also of those in tabs that VS Code restored at start but has not shown yet, as they are on disk. With [b]x4CodeSense.diagnosticMode[/b] set to [b]workspace[/b], it also lists those of every other script and patch in the workspace folders, as they are on disk. They are checked once the scripts are indexed, and again when something they refer to changes, for example when a cue or an order is renamed in the editor; an open script's problems follow the editor as before.
 
+[img]https://raw.githubusercontent.com/chemodun/X4CodeSense/refs/heads/main/client/images/problems.png[/img]
+
 [size=3][u][i]Completion and hover[/i][/u][/size]
 [list]
 [*] Child elements allowed at the caret, attribute names, and attribute values from the schemas.
@@ -36,6 +38,10 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 [*] AI script names and order ids: in [b]run_script name[/b], [b]run_interrupt_script name[/b], [b]start_script name[/b] and [b]create_order id[/b], completion offers the AI scripts and orders of the game, its DLCs, the extensions and your workspace, inserted with their quotes. Hover over one, or over [b]<aiscript name>[/b] and [b]<order id>[/b], shows what it is: an order's name and description as the game shows them, the parameters, where it is defined, and how often other scripts name it.
 [*] Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, how often it is read, and its type when every [b]set_value[/b], [b]param[/b] and action that sets it agrees on one, with what tells it: a [b]<param type>[/b], the value set, or a guess from the action's name or documentation, marked "(guessed)" there, in completion and in the outline.
 [/list]
+[img]https://raw.githubusercontent.com/chemodun/X4CodeSense/refs/heads/main/client/images/completion.png[/img]
+
+[img]https://raw.githubusercontent.com/chemodun/X4CodeSense/refs/heads/main/client/images/hover.png[/img]
+
 [size=3][u][i]Texts in Lua files[/i][/u][/size]
 
 In Lua files, hovering between the parentheses of [b]ReadText(page, id)[/b] shows the text, as for [b]{page, id}[/b] in scripts. The page and the id may be numbers, or names the file sets to one number, such as [b]local PAGE_ID = 1972092427[/b]. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table, an expression. The Lua extension you use keeps its own hover and everything else. [b].xpl[/b] files count when VS Code opens them as Lua, for example with [b]"files.associations": { "*.xpl": "lua" }[/b].
@@ -77,6 +83,8 @@ These open the other file when what is created belongs there; the game's own scr
 
 [b]Apply all preferred fixes in this file[/b] applies at once the fix that is clearly the best for each problem of the file: in the light bulb when there are two or more, and as the source action [b]source.fixAll[/b], for example on save with [b]"[xml]": { "editor.codeActionsOnSave": { "source.fixAll": "explicit" } }[/b]. Fixes that only add an empty value, a required attribute or the value of an attribute, are left out: the value is still to be written.
 
+[img]https://raw.githubusercontent.com/chemodun/X4CodeSense/refs/heads/main/client/images/quick-fix.png[/img]
+
 [size=3][u][i]Patches[/i][/u][/size]
 [list]
 [*] A patch is applied to the file it changes as the game applies it, after the patches loaded before it: a patch in your extension's [b]md[/b] or [b]aiscripts[/b] folder changes the game's file of the same name, one in [b]extensions/<folder>/md[/b] that extension's file.
@@ -94,9 +102,13 @@ These open the other file when what is created belongs there; the game's own scr
 [/list]
 [*] Both sides of that diff are the script they show: hover, go to definition, references, the outline and semantic highlighting work in them as in the script itself, and in the side with the patch completion and quick fixes too. That side shows the problems the file before the patch does not have: those in what the patch brings in, those of your edits in the side, and what they break elsewhere in the script, such as a read of a variable whose [b]set_value[/b] the patch removes. The file's own problems are left to the file. The Problems panel lists the side's problems under the side, named as the file, beside the patch's. Go to definition in a side stays in it, except on the script's name in [b]md.Script.Cue[/b], which opens the script's file. Rename is refused in both sides; rename in the patch or in the script.
 [/list]
+[img]https://raw.githubusercontent.com/chemodun/X4CodeSense/refs/heads/main/client/images/patch.png[/img]
+
 [size=3][u][i]Status bar[/i][/u][/size]
 
 While a script or a patch is active, the status bar shows the type and name of the script, or the file the patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and where from, the extracted files or the installed game and its version, and which scripts show problems; a click opens a menu of the commands.
+
+[img]https://raw.githubusercontent.com/chemodun/X4CodeSense/refs/heads/main/client/images/status-bar-menu.png[/img]
 
 [size=3][u][i]Command line and CI[/i][/u][/size]
 
