@@ -11,3 +11,4 @@ tsconfig.json
 *.vsix
 artifacts/**
 icons/*.svg
+images/**

@@ -38,7 +38,9 @@ jobs:
         working-directory: client
         run: |
           mkdir -p artifacts
-          npx --yes @vscode/vsce package --no-dependencies --out ./artifacts
+          # The README's images (client/images, not packaged) from the repository: vsce ignores
+          # repository.directory and would point them at the repository's root.
+          npx --yes @vscode/vsce package --no-dependencies --baseImagesUrl "https://github.com/${{ github.repository }}/raw/HEAD/client/" --out ./artifacts
           PACKAGE_PATH="$(find ./artifacts -maxdepth 1 -name '*.vsix' -print -quit)"
           echo "package_path=client/${PACKAGE_PATH#./}" >> "$GITHUB_OUTPUT"
 

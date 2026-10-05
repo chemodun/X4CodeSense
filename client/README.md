@@ -24,6 +24,8 @@ All of it keeps working while a tag, an attribute or a quote is still being type
 
 The Problems panel lists the problems of the open scripts, also of those in tabs that VS Code restored at start but has not shown yet, as they are on disk. With `x4CodeSense.diagnosticMode` set to `workspace`, it also lists those of every other script and patch in the workspace folders, as they are on disk. They are checked once the scripts are indexed, and again when something they refer to changes, for example when a cue or an order is renamed in the editor; an open script's problems follow the editor as before.
 
+![A Mission Director script with four problems: a misspelt element, a property its type does not have, a cue that does not exist and a format with too few arguments, in the editor and the Problems panel](images/problems.png)
+
 ### Completion and hover
 
 - Child elements allowed at the caret, attribute names, and attribute values from the schemas.
@@ -35,6 +37,10 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 - The arguments of a format: in `'%s of %s'.[$a, $b]` and `{page, id}.[…]`, signature help shows the format, for a text as the game shows it, with the placeholder of the argument at the caret highlighted. `%s` takes the next argument, also with flags such as `%,s`; `%1`, `%2` take the numbered one, and letters after the digits are text, as in `%4s` for seconds; `%%` is a percent sign.
 - AI script names and order ids: in `run_script name`, `run_interrupt_script name`, `start_script name` and `create_order id`, completion offers the AI scripts and orders of the game, its DLCs, the extensions and your workspace, inserted with their quotes. Hover over one, or over `<aiscript name>` and `<order id>`, shows what it is: an order's name and description as the game shows them, the parameters, where it is defined, and how often other scripts name it.
 - Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, how often it is read, and its type when every `set_value`, `param` and action that sets it agrees on one, with what tells it: a `<param type>`, the value set, or a guess from the action's name or documentation, marked "(guessed)" there, in completion and in the outline.
+
+![Completion after player.ship. lists the properties of a ship with their types](images/completion.png)
+
+![The hover of find_ship shows its documentation from the game's schema](images/hover.png)
 
 ### Texts in Lua files
 
@@ -77,6 +83,8 @@ These open the other file when what is created belongs there; the game's own scr
 
 **Apply all preferred fixes in this file** applies at once the fix that is clearly the best for each problem of the file: in the light bulb when there are two or more, and as the source action `source.fixAll`, for example on save with `"[xml]": { "editor.codeActionsOnSave": { "source.fixAll": "explicit" } }`. Fixes that only add an empty value, a required attribute or the value of an attribute, are left out: the value is still to be written.
 
+![The light bulb on a misspelt element offers the known name and all preferred fixes of the file](images/quick-fix.png)
+
 ### Patches
 
 - A patch is applied to the file it changes as the game applies it, after the patches loaded before it: a patch in your extension's `md` or `aiscripts` folder changes the game's file of the same name, one in `extensions/<folder>/md` that extension's file.
@@ -92,9 +100,13 @@ These open the other file when what is created belongs there; the game's own scr
   - Nothing is written unless the patch, applied again, gives exactly the side's elements and attributes and each operation selects what it did before. Otherwise the side stays unsaved and the reason is shown, for example a side that is not well-formed, a change outside the root element, or text typed inside an element.
 - Both sides of that diff are the script they show: hover, go to definition, references, the outline and semantic highlighting work in them as in the script itself, and in the side with the patch completion and quick fixes too. That side shows the problems the file before the patch does not have: those in what the patch brings in, those of your edits in the side, and what they break elsewhere in the script, such as a read of a variable whose `set_value` the patch removes. The file's own problems are left to the file. The Problems panel lists the side's problems under the side, named as the file, beside the patch's. Go to definition in a side stays in it, except on the script's name in `md.Script.Cue`, which opens the script's file. Rename is refused in both sides; rename in the patch or in the script.
 
+![A patch of order.dock.xml above the game's script without and with it: the line the patch adds is shown in green](images/patch.png)
+
 ### Status bar
 
 While a script or a patch is active, the status bar shows the type and name of the script, or the file the patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and where from, the extracted files or the installed game and its version, and which scripts show problems; a click opens a menu of the commands.
+
+![The menu of the status bar item: the game files, which scripts show problems, the MCP server, the output, the settings](images/status-bar-menu.png)
 
 ### Command line and CI
 
