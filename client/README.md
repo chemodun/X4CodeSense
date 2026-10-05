@@ -220,6 +220,10 @@ A few things the game's files do not say are built in:
 
 Or open [X4CodeSense on the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=X4DevTools.x4codesense) and click "Install" there.
 
+#### Via Open VSX
+
+VSCodium, Cursor, Windsurf and other editors built on VS Code install extensions from [Open VSX](https://open-vsx.org): search their Extensions view for "X4CodeSense", or open [X4CodeSense on Open VSX](https://open-vsx.org/extension/X4DevTools/x4codesense).
+
 #### Via VSIX file
 
 1. Download the `.vsix` file from the [X4CodeSense releases on GitHub](https://github.com/chemodun/X4CodeSense/releases).
