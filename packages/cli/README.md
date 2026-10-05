@@ -138,4 +138,8 @@ C:\mods\my_extension\aiscripts\order.mine.xml:7:8: fixed: Change to 'set_value' 
 
 With `--format json` the fixes are listed under `fixed` (file, place, code, message and the fix's title) and counted as `fixes` and `fixedFiles` in the summary; with `--format github` each is a notice. Most fixes need the game files: without `--unpacked` or `--game`, only those of well-formedness are applied, such as quotes put in and values closed. The files of an installed game, read from its catalogs, are never written; nor is a file that is not UTF-8, whose other characters would be lost: it is listed among the problems, on standard error, in `problems` of the JSON and as a notification in SARIF.
 
+## Stability
+
+From 1.0.0 the options, the exit codes, the output formats and the diagnostic codes change only with a new major version. New options, codes and fields may come in any version: a tool reading the JSON should ignore fields it does not know.
+
 Part of [X4CodeSense](https://github.com/chemodun/X4CodeSense). Apache License 2.0.
