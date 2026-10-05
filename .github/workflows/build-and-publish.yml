@@ -99,7 +99,8 @@ jobs:
         run: npx --yes @vscode/vsce@4 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
 
   # Open VSX, the registry of VSCodium, Cursor, Windsurf, Gitpod and Eclipse Theia: the same .vsix, under the
-  # namespace X4DevTools, with a token of the account that owns it.
+  # namespace X4DevTools. Trusted publishing: Open VSX trusts this workflow file in the environment open-vsx
+  # (its Trusted Publishers settings) and takes GitHub's OIDC token, so no access token is stored here.
   open-vsx:
     needs: extension
     if: ${{ github.event_name == 'release' && vars.PUBLISH_TO_OPEN_VSX == 'true' }}
@@ -107,6 +108,7 @@ jobs:
     environment: open-vsx
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Download VSIX artifact
         uses: actions/download-artifact@v8
@@ -121,9 +123,7 @@ jobs:
           package-manager-cache: false
 
       - name: Publish to Open VSX
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: npx --yes ovsx@0 publish vsix/*.vsix --skip-duplicate
+        run: npx --yes ovsx@1 publish vsix/*.vsix --trusted-publishing --skip-duplicate
 
   npm-package:
     if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-catalog@') || startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@') || startsWith(github.event.release.tag_name, 'x4-script-mcp@')) }}
