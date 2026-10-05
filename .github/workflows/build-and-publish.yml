@@ -98,6 +98,33 @@ jobs:
       - name: Publish to Visual Studio Marketplace
         run: npx --yes @vscode/vsce@4 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
 
+  # Open VSX, the registry of VSCodium, Cursor, Windsurf, Gitpod and Eclipse Theia: the same .vsix, under the
+  # namespace X4DevTools, with a token of the account that owns it.
+  open-vsx:
+    needs: extension
+    if: ${{ github.event_name == 'release' && vars.PUBLISH_TO_OPEN_VSX == 'true' }}
+    runs-on: ubuntu-latest
+    environment: open-vsx
+    permissions:
+      contents: read
+    steps:
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: vsix
+          path: vsix
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx@0 publish vsix/*.vsix --skip-duplicate
+
   npm-package:
     if: ${{ github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'x4-catalog@') || startsWith(github.event.release.tag_name, 'x4-script-core@') || startsWith(github.event.release.tag_name, 'x4-script-language-server@') || startsWith(github.event.release.tag_name, 'x4-script-check@') || startsWith(github.event.release.tag_name, 'x4-script-mcp@')) }}
     runs-on: ubuntu-latest
