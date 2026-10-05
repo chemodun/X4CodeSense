@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.6.0...x4-script-check@v1.0.0) (2026-10-05)
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 of the extension and x4-script-check ([070ea08](https://github.com/chemodun/X4CodeSense/commit/070ea08092fb6a0663f4b29273e953788db217d4))
+
 ## [0.6.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.5.1...x4-script-check@v0.6.0) (2026-10-03)
 
 
