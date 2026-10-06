@@ -87,6 +87,15 @@ export function textReferencesIn(value: string): TextReference[] {
   return references;
 }
 
+/** Every `page="…" line="…"` in a string, in order, with the offsets of the pair. */
+export function pageLineReferencesIn(value: string): TextReference[] {
+  const references: TextReference[] = [];
+  for (const match of value.matchAll(pageLinePattern)) {
+    references.push({ page: Number(match[1]), id: Number(match[2]), start: match.index, end: match.index + match[0].length });
+  }
+  return references;
+}
+
 /**
  * The text reference under an offset of a document text, looked for on the offset's line only, so it
  * works in any XML and while the document does not parse: `{page, id}`, or `page="…" line="…"`.

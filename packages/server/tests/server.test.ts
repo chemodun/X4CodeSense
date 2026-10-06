@@ -29,6 +29,8 @@ import {
   FoldingRangeRequest,
   HoverRequest,
   InitializedNotification,
+  InlayHintRefreshRequest,
+  InlayHintRequest,
   InitializeRequest,
   PrepareRenameRequest,
   PublishDiagnosticsNotification,
@@ -99,6 +101,8 @@ const progress: string[] = [];
 const statusWaiters = new Set<(status: ServerStatus) => boolean>();
 /** How often the server asked for the semantic tokens of the open documents again. */
 let semanticTokensRefreshes = 0;
+/** How often the server asked for the inlay hints of the open documents again. */
+let inlayHintRefreshes = 0;
 /** The methods the server registered for. */
 const registrations: string[] = [];
 
@@ -187,6 +191,9 @@ beforeAll(async () => {
   connection.onRequest(SemanticTokensRefreshRequest.type, () => {
     semanticTokensRefreshes++;
   });
+  connection.onRequest(InlayHintRefreshRequest.type, () => {
+    inlayHintRefreshes++;
+  });
   connection.listen();
   const result = await connection.sendRequest(InitializeRequest.type, {
     processId: process.pid,
@@ -197,6 +204,7 @@ beforeAll(async () => {
         didChangeConfiguration: { dynamicRegistration: true },
         workspaceFolders: true,
         semanticTokens: { refreshSupport: true },
+        inlayHint: { refreshSupport: true },
       },
       textDocument: { completion: { completionItem: { snippetSupport: true } } },
       window: { workDoneProgress: true },
@@ -211,6 +219,7 @@ beforeAll(async () => {
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
   expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
   expect(result.capabilities.foldingRangeProvider).toBe(true);
+  expect(result.capabilities.inlayHintProvider).toBe(true);
   expect(result.capabilities.workspaceSymbolProvider).toBe(true);
   expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix', 'source.fixAll'] });
   expect(result.capabilities.semanticTokensProvider).toEqual({ legend: semanticTokensLegend, full: { delta: true }, range: true });
@@ -679,6 +688,62 @@ describe('folding', () => {
       textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<macros>\n  <macro name="m">\n  </macro>\n</macros>\n' },
     });
     expect(await connection.sendRequest(FoldingRangeRequest.type, { textDocument: { uri: otherUri } })).toBeNull();
+  });
+});
+
+describe('inlay hints', () => {
+  it('shows texts and variable types, each as the settings ask, and asks for them again when the settings change', async () => {
+    const uri = 'file:///mod/md/Hints.xml';
+    const lines = [
+      '<mdscript name="H">',
+      '  <cues>',
+      '    <cue name="A">',
+      '      <actions>',
+      '        <set_value name="$ship" exact="player.ship"/>',
+      '        <debug_text text="{1001,2}"/>',
+      '      </actions>',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    await open(uri, lines.join('\n'));
+    const hints = async (): Promise<string[]> => {
+      const found = await connection.sendRequest(InlayHintRequest.type, {
+        textDocument: { uri },
+        range: { start: { line: 0, character: 0 }, end: { line: 10, character: 0 } },
+      });
+      return (found ?? []).map((hint) => `${hint.position.line + 1}:${hint.position.character + 1} ${String(hint.label)}`);
+    };
+    expect(await hints()).toEqual(['5:31 : ship', '6:35 Shield']);
+    onTestFinished(async () => {
+      delete clientSettings.inlayHints;
+      const restored = nextDiagnostics(uri);
+      await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+      await restored;
+    });
+    const refreshes = inlayHintRefreshes;
+    clientSettings.inlayHints = { texts: false };
+    const reanalysed = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await reanalysed;
+    await vi.waitFor(() => expect(inlayHintRefreshes).toBeGreaterThan(refreshes));
+    expect(await hints()).toEqual(['5:31 : ship']);
+    // Other XML has texts too.
+    const otherUri = 'file:///mod/libraries/hinted.xml';
+    clientSettings.inlayHints = { variableTypes: false };
+    const changed = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await changed;
+    expect(await hints()).toEqual(['6:35 Shield']);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<wares>\n  <ware id="x" name="{1001,1}"/>\n</wares>\n' },
+    });
+    const other = await connection.sendRequest(InlayHintRequest.type, {
+      textDocument: { uri: otherUri },
+      range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } },
+    });
+    expect(other?.map((hint) => String(hint.label))).toEqual(['Hull']);
   });
 });
 

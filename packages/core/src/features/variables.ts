@@ -42,7 +42,7 @@ function definitionsElsewhere(variable: ScriptVariable, index: ScriptIndex | und
 }
 
 /** How a variable's type is told, after the element that tells it. */
-function typeOrigin(type: VariableType): string {
+export function variableTypeOrigin(type: VariableType): string {
   switch (type.source) {
     case 'param type':
       return 'declared';
@@ -94,7 +94,7 @@ export function describeVariable(variable: ScriptVariable, document: TextDocumen
   if (type) {
     lines.push(
       '',
-      `Type from \\<${escapeMarkdown(type.definition.element.name)}\\> at ${describeLines(document, [type.definition.start], origin)}: ${typeOrigin(type)}`
+      `Type from \\<${escapeMarkdown(type.definition.element.name)}\\> at ${describeLines(document, [type.definition.start], origin)}: ${variableTypeOrigin(type)}`
     );
   }
   if (definitions > 0) {

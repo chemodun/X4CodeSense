@@ -38,6 +38,7 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 - The arguments of a format: in `'%s of %s'.[$a, $b]` and `{page, id}.[…]`, signature help shows the format, for a text as the game shows it, with the placeholder of the argument at the caret highlighted. `%s` takes the next argument, also with flags such as `%,s`; `%1`, `%2` take the numbered one, and letters after the digits are text, as in `%4s` for seconds; `%%` is a percent sign.
 - AI script names and order ids: in `run_script name`, `run_interrupt_script name`, `start_script name` and `create_order id`, completion offers the AI scripts and orders of the game, its DLCs, the extensions and your workspace, inserted with their quotes. Hover over one, or over `<aiscript name>` and `<order id>`, shows what it is: an order's name and description as the game shows them, the parameters, where it is defined, and how often other scripts name it.
 - Hover documentation for elements, attributes, enumeration values, keywords and properties; for a variable, where it is set, how often it is read, and its type when every `set_value`, `param` and action that sets it agrees on one, with what tells it: a `<param type>`, the value set, or a guess from the action's name or documentation, marked "(guessed)" there, in completion and in the outline.
+- Inlay hints: after each `{page, id}` and `page="…" line="…"`, the text the game shows in the preferred language, in any XML file; after the definition that tells a variable's type, the type, once per variable: `$ship: ship`, or `: ship?` when guessed. A type is left out where the element shows it already: `<param type>`, or a value that is a lone string, text reference, `[]` or `table[]`. Each kind has its setting, and VS Code's `editor.inlayHints.enabled` turns them all off or shows them only while `Ctrl+Alt` is held.
 
 ![Completion after player.ship. lists the properties of a ship with their types](images/completion.png)
 
@@ -293,6 +294,10 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
   - _default_: `false`
 - `x4CodeSense.guessVariableTypes` - guess what an action writes into a variable from the action's name and documentation where the schema does not state it: `create_ship` a ship, `find_ship` with `multiple` a list. What rests on a guess says so: hover and completion mark the type "(guessed)", and a property such a type lacks is information (`expression-unknown-property-guessed`), not a warning. Off, only what the scripts and the schema state types a variable: `<param type>`, the value `set_value` sets, groups.
   - _default_: `true`
+- `x4CodeSense.inlayHints.texts` - after each text reference, the text the game shows for it in the preferred language.
+  - _default_: `true`
+- `x4CodeSense.inlayHints.variableTypes` - a variable's type after the definition it comes from, once per variable.
+  - _default_: `true`
 - `x4CodeSense.diagnosticMode` - which scripts the Problems panel lists problems of: `openFilesOnly`, the scripts open in the editor, or `workspace`, also every other script and patch in the workspace folders, as they are on disk. Checking them all takes a few seconds for a hundred scripts, once after the scripts are indexed and again in the background when something they refer to changes.
   - _default_: `openFilesOnly`
 - `x4CodeSense.mcpServer.enabled` - offer the X4CodeSense MCP server to the editor's AI agents, on the game files and extensions set above (see **AI agents**). VS Code starts it when an agent first uses it.
@@ -339,6 +344,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - The mods installed in the game (`x4CodeSense.gameFolder`) that your extensions need are read, packed ones from their catalogs (`ext_01.cat`, and the versioned ones of the installed game's version): a patch of an installed mod's script is checked against it, and the installed mods' patches of a library file that load before yours are applied first. `x4CodeSense.readInstalledDependencies` makes their cues, scripts and texts resolve in your scripts too. x4-script-check: `--game` beside `--unpacked`, and `--installed-dependencies`.
   - After a class test (`player.target.isclass.npc`), the value is of that class: further in the same expression, in the body of a `do_if`, `do_elseif` or `do_while` that tests it, and in a cue's actions after a `check_value` of its conditions. Completion offers the class's properties, hover tells which test says so, and properties of the class are no longer reported as missing: `@player.target.isclass.npc and player.target.race`. A negated test does the same where it is false: in the `do_elseif` and `do_else` after it, and after a `do_if` whose body ends with `return`, `break`, `continue` or `resume`.
   - Folding in scripts and patches: elements up to their end tag, comments, and `<!-- #region -->` to `<!-- #endregion -->`.
+  - Inlay hints: the text after a text reference, in any XML file, and a variable's type after the definition it comes from. `x4CodeSense.inlayHints.texts` and `x4CodeSense.inlayHints.variableTypes` turn them off.
 
 ### [1.0.0] - 2026-10-05
 

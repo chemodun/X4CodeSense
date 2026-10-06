@@ -254,6 +254,16 @@
           "default": "openFilesOnly",
           "description": "Which scripts the Problems panel shows problems of: only the open ones, or every script in the workspace folders."
         },
+        "x4CodeSense.inlayHints.texts": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show after each text reference, `{page, id}` or `page=\"…\" line=\"…\"`, the text the game shows for it in the preferred language (`#x4CodeSense.languageNumber#`). VS Code's `#editor.inlayHints.enabled#` turns all inlay hints off or shows them only while a key is held."
+        },
+        "x4CodeSense.inlayHints.variableTypes": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a variable's type after the definition it comes from, once per variable, as `: ship`, or `: ship?` when guessed (`#x4CodeSense.guessVariableTypes#`). Left out where the element already shows it: `<param type>`, or a value that is a lone string, text reference or empty list or table."
+        },
         "x4CodeSense.mcpServer.enabled": {
           "type": "boolean",
           "default": true,

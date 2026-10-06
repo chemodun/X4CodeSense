@@ -5,7 +5,8 @@
  * listed once unless it is a parameter, every symbol has a name, its name inside its range and its range
  * inside its parent's. Go to Symbol in Workspace names every script, cue, library and interrupt library
  * item of the index at its name. Folding folds every element whose end tag is lines below its start, in
- * ranges inside the document.
+ * ranges inside the document. Inlay hints come in text order, a text after its reference, a type after
+ * a variable name, once there.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -19,6 +20,7 @@ import {
   attributeNamed,
   documentSymbols,
   foldingRanges,
+  inlayHints,
   loadGameData,
   parseXml,
   scriptSchemaOf,
@@ -253,6 +255,59 @@ describe.skipIf(!extracted)('the outline on the corpus', { timeout: 300_000 }, (
     const best = bestOf(5, () => foldingRanges(analysis));
     console.log(`folding: ${counts.files} files, ${counts.ranges} ranges; largest ${path.basename(largest.file)} ${best.toFixed(1)} ms best of 5`);
     expect(counts.files).toBeGreaterThan(600);
+    expect(problems.slice(0, 20)).toEqual([]);
+    expect(best).toBeLessThan(fileCeilingMs);
+  });
+
+  it('gives inlay hints in text order, texts after their reference and types after a variable name', () => {
+    const problems: string[] = [];
+    const counts = { files: 0, texts: 0, types: 0 };
+    let largest = { length: 0, file: '', text: '' };
+    for (const entry of game.index?.entries() ?? []) {
+      if (entry.kind === 'patch') {
+        continue;
+      }
+      const text = readFileSync(entry.file, 'utf8');
+      if (text.length > largest.length) {
+        largest = { length: text.length, file: entry.file, text };
+      }
+      const analysis = analyzeText(text, context, pathToFileURL(entry.file).toString());
+      const document = analysis.document;
+      const hints = inlayHints(analysis, { start: { line: 0, character: 0 }, end: document.positionAt(text.length) }, game);
+      const where = path.basename(entry.file);
+      counts.files++;
+      let previous = -1;
+      const typed = new Set<number>();
+      for (const hint of hints) {
+        const offset = document.offsetAt(hint.position);
+        const label = String(hint.label);
+        if (offset < previous || offset > text.length) {
+          problems.push(`${where}: hint at line ${hint.position.line + 1} out of order`);
+        }
+        previous = offset;
+        if (label.startsWith(': ')) {
+          counts.types++;
+          if (!/[\w.-]$/.test(text.slice(0, offset)) || typed.has(offset)) {
+            problems.push(`${where}: type hint ${label} at line ${hint.position.line + 1} not after one variable name`);
+          }
+          typed.add(offset);
+        } else {
+          counts.texts++;
+          if (!/[}"]$/.test(text.slice(0, offset)) || label.trim() === '' || label.length > 100) {
+            problems.push(`${where}: text hint ${label} at line ${hint.position.line + 1}`);
+          }
+        }
+      }
+    }
+    const analysis = analyzeText(largest.text, context, pathToFileURL(largest.file).toString());
+    const range = { start: { line: 0, character: 0 }, end: analysis.document.positionAt(largest.text.length) };
+    const best = bestOf(5, () => inlayHints(analysis, range, game));
+    console.log(
+      `inlay hints: ${counts.files} files, ${counts.texts} texts, ${counts.types} types; largest ${path.basename(largest.file)} ${best.toFixed(1)} ms best of 5`
+    );
+    expect(counts.files).toBeGreaterThan(400);
+    expect(counts.texts).toBeGreaterThan(1000);
+    expect(counts.types).toBeGreaterThan(1000);
     expect(problems.slice(0, 20)).toEqual([]);
     expect(best).toBeLessThan(fileCeilingMs);
   });

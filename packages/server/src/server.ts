@@ -19,6 +19,7 @@ import {
   type Hover,
   type InitializeParams,
   type InitializeResult,
+  type InlayHint,
   type Location,
   type Range,
   type SemanticTokens,
@@ -51,6 +52,7 @@ import {
   GameFileRequestMethod,
   gameFileUri,
   hoverAt,
+  inlayHints,
   isInside,
   languageOfTextFile,
   loadGameData,
@@ -116,6 +118,8 @@ interface X4CodeSenseSettings {
    * it those mods are read only for the patches of the extensions.
    */
   readInstalledDependencies: boolean;
+  /** Which inlay hints are shown: the text of a text reference, the type of a variable where it is set. */
+  inlayHints: { texts: boolean; variableTypes: boolean };
   debug: boolean;
 }
 
@@ -129,6 +133,7 @@ const defaultSettings: X4CodeSenseSettings = {
   guessVariableTypes: true,
   diagnosticMode: 'openFilesOnly',
   readInstalledDependencies: false,
+  inlayHints: { texts: true, variableTypes: true },
   debug: false,
 };
 
@@ -148,6 +153,9 @@ function settingsOf(received: unknown): X4CodeSenseSettings {
     const value = values[key];
     return typeof value === 'boolean' ? value : defaultSettings[key];
   };
+  // `x4CodeSense.inlayHints.texts` comes as `inlayHints: { texts }`.
+  const hints = typeof values.inlayHints === 'object' && values.inlayHints !== null ? (values.inlayHints as Record<string, unknown>) : {};
+  const hint = (key: 'texts' | 'variableTypes'): boolean => (typeof hints[key] === 'boolean' ? hints[key] : defaultSettings.inlayHints[key]);
   return {
     unpackedFileLocation: text('unpackedFileLocation'),
     gameFolder: text('gameFolder'),
@@ -158,6 +166,7 @@ function settingsOf(received: unknown): X4CodeSenseSettings {
     guessVariableTypes: flag('guessVariableTypes'),
     diagnosticMode: diagnosticModes.find((mode) => mode === values.diagnosticMode) ?? defaultSettings.diagnosticMode,
     readInstalledDependencies: flag('readInstalledDependencies'),
+    inlayHints: { texts: hint('texts'), variableTypes: hint('variableTypes') },
     debug: flag('debug'),
   };
 }
@@ -182,6 +191,7 @@ let configurationRegistration = false;
 let snippetSupport = false;
 let workspaceFolderSupport = false;
 let semanticTokensRefreshSupport = false;
+let inlayHintRefreshSupport = false;
 let game: GameData | undefined;
 /** What the game data was loaded as: its key (see `gameKey`), where it comes from, and an installed game's version. */
 let loadedGame: { key: string; source: GameSource; version?: string } | undefined;
@@ -347,6 +357,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   snippetSupport = params.capabilities.textDocument?.completion?.completionItem?.snippetSupport === true;
   workspaceFolderSupport = params.capabilities.workspace?.workspaceFolders === true;
   semanticTokensRefreshSupport = params.capabilities.workspace?.semanticTokens?.refreshSupport === true;
+  inlayHintRefreshSupport = params.capabilities.workspace?.inlayHint?.refreshSupport === true;
   const folders = params.workspaceFolders?.map((folder) => folder.uri) ?? (params.rootUri ? [params.rootUri] : []);
   workspaceFolders = folders.map(filePathOf).filter((folder): folder is string => folder !== undefined);
   return {
@@ -361,6 +372,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       renameProvider: { prepareProvider: true },
       documentSymbolProvider: { label: 'X4CodeSense' },
       foldingRangeProvider: true,
+      inlayHintProvider: true,
       workspaceSymbolProvider: true,
       codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix, CodeActionKind.SourceFixAll] },
       semanticTokensProvider: { legend: semanticTokensLegend, full: { delta: true }, range: true },
@@ -676,7 +688,7 @@ async function refreshSettings(): Promise<void> {
   try {
     settings = settingsOf(await connection.workspace.getConfiguration('x4CodeSense'));
     log(
-      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} readInstalledDependencies=${settings.readInstalledDependencies} debug=${settings.debug}`
+      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} readInstalledDependencies=${settings.readInstalledDependencies} inlayHints.texts=${settings.inlayHints.texts} inlayHints.variableTypes=${settings.inlayHints.variableTypes} debug=${settings.debug}`
     );
     await refreshGameData();
     refreshTexts();
@@ -828,7 +840,7 @@ function reanalyzeAll(except?: string): void {
       analyze(document);
     }
   }
-  refreshSemanticTokens();
+  refreshTokensAndHints();
 }
 
 /**
@@ -855,7 +867,7 @@ function scheduleReanalysis(from: string, files?: readonly string[]): void {
         analyze(document);
       }
     }
-    refreshSemanticTokens();
+    refreshTokensAndHints();
   }, othersDelay);
 }
 
@@ -870,10 +882,13 @@ function libraryUsersOf(analysis: DocumentAnalysis, index: ScriptIndex): string[
   return name ? index.libraryUsersOf(name) : [];
 }
 
-/** Asks the client for the semantic tokens of the open documents again: their analyses changed, not only their text. */
-function refreshSemanticTokens(): void {
+/** Asks the client for the semantic tokens and inlay hints of the open documents again: their analyses changed, not only their text. */
+function refreshTokensAndHints(): void {
   if (semanticTokensRefreshSupport) {
     connection.languages.semanticTokens.refresh().catch((error: unknown) => debug(`semantic tokens refresh: ${String(error)}`));
+  }
+  if (inlayHintRefreshSupport) {
+    connection.languages.inlayHint.refresh().catch((error: unknown) => debug(`inlay hint refresh: ${String(error)}`));
   }
 }
 
@@ -1027,7 +1042,7 @@ function reanalyzePatchesOf(file: string, except?: string): void {
     }
   }
   if (reanalyzed) {
-    refreshSemanticTokens();
+    refreshTokensAndHints();
   }
 }
 
@@ -1407,6 +1422,11 @@ connection.onDocumentSymbol((params): DocumentSymbol[] | null => {
 connection.onFoldingRanges((params): FoldingRange[] | null => {
   const analysis = currentAnalysis(params.textDocument.uri);
   return (analysis && foldingRanges(analysis)) ?? null;
+});
+
+connection.languages.inlayHint.on((params): InlayHint[] => {
+  const analysis = currentAnalysis(params.textDocument.uri);
+  return analysis ? inlayHints(analysis, params.range, game, { ...textDisplay(), ...settings.inlayHints }) : [];
 });
 
 // The scripts, cues and interrupt library items of the index; the workspace's own first among equal matches.
