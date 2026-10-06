@@ -151,6 +151,19 @@
           <xs:attributeGroup ref="commentgroup" />
         </xs:complexType>
       </xs:element>
+      <xs:element name="do_elseif">
+        <xs:complexType>
+          <xs:group ref="actions" />
+          <xs:attribute name="value" type="booleanexpression" use="required" />
+          <xs:attributeGroup ref="commentgroup" />
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="do_else">
+        <xs:complexType>
+          <xs:group ref="actions" />
+          <xs:attributeGroup ref="commentgroup" />
+        </xs:complexType>
+      </xs:element>
       <xs:element name="find_ship">
         <xs:complexType>
           <xs:attribute name="name" type="lvaluename" use="required" />

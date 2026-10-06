@@ -335,6 +335,48 @@ describe('unknown keywords and properties', () => {
       ]);
     });
 
+    it('holds where a negated test is false: in do_elseif and do_else after it, until the variable is set again', () => {
+      const chain = (rest: string): string =>
+        `${entity}<do_if value="not $e.isclass.ship">\n        <set_value name="$x" exact="0"/>\n      </do_if>\n      ${rest}`;
+      expect(reportNarrowed(chain('<do_else>\n        <set_value name="$x" exact="$e.speed"/>\n      </do_else>'))).toEqual([]);
+      // In the value of a do_elseif and its body, and in a do_else after both.
+      expect(reportNarrowed(chain('<do_elseif value="$e.speed gt 0">\n        <set_value name="$x" exact="$e.speed"/>\n      </do_elseif>'))).toEqual([]);
+      expect(
+        reportNarrowed(chain('<do_elseif value="$e.isclass.station"/>\n      <do_else>\n        <set_value name="$x" exact="$e.speed"/>\n      </do_else>'))
+      ).toEqual([]);
+      // The test says which one tells it.
+      expect(reportNarrowed(chain('<do_else>\n        <set_value name="$x" exact="$e.frobnicate"/>\n      </do_else>'))).toEqual([
+        "9 expression-unknown-property: 'ship' has no property 'frobnicate' ($e is a ship here, by not isclass.ship at line 5)",
+      ]);
+      // A set in the body of the do_if does not run before the do_else; one in the do_else ends it.
+      expect(
+        reportNarrowed(
+          chain('<do_else>\n        <set_value name="$e" exact="player.entity"/>\n        <set_value name="$x" exact="$e.speed"/>\n      </do_else>')
+        )
+      ).toEqual([lacks('speed', 10)]);
+      // Not after the chain, nor where the test is true.
+      expect(reportNarrowed(chain('<do_else/>\n      <set_value name="$x" exact="$e.speed"/>'))).toEqual([lacks('speed', 9)]);
+      expect(
+        reportNarrowed(`${entity}<do_if value="$e.isclass.ship"/>\n      <do_else>\n        <set_value name="$x" exact="$e.speed"/>\n      </do_else>`)
+      ).toEqual([lacks('speed', 7)]);
+    });
+
+    it('holds after a do_if of a negated test whose body leaves the block', () => {
+      const guard = (exit: string, rest = '<set_value name="$x" exact="$e.speed"/>'): string =>
+        `${entity}<do_if value="not $e.isclass.ship">\n        <set_value name="$e" exact="player.entity"/>\n        ${exit}\n      </do_if>\n      ${rest}`;
+      for (const exit of ['<return/>', '<break/>', '<continue/>', '<resume label="start"/>']) {
+        expect(reportNarrowed(guard(exit)), exit).toEqual([]);
+      }
+      // Deeper in what follows, until the variable is set again.
+      expect(reportNarrowed(guard('<return/>', '<do_if value="true">\n        <set_value name="$x" exact="$e.speed"/>\n      </do_if>'))).toEqual([]);
+      expect(reportNarrowed(guard('<return/>', '<set_value name="$e" exact="player.entity"/>\n      <set_value name="$x" exact="$e.speed"/>'))).toEqual([
+        lacks('speed', 10),
+      ]);
+      // Not when the body may go on, or a do_else follows.
+      expect(reportNarrowed(guard('<set_value name="$y" exact="1"/>'))).toEqual([lacks('speed', 9)]);
+      expect(reportNarrowed(guard('<return/>', '<do_else/>\n      <set_value name="$x" exact="$e.speed"/>'))).toEqual([lacks('speed', 10)]);
+    });
+
     it("holds in a cue's actions for a check_value of its conditions", () => {
       const cue = (body: string): string =>
         `<mdscript name="S">\n  <cues>\n    <cue name="A">\n      <conditions>\n        <check_value value="player.entity.isclass.ship"/>\n      </conditions>\n      <actions>\n        ${body}\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n`;

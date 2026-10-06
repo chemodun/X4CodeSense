@@ -3,7 +3,9 @@
  * chain of names (`$x`, `player.target`, `event.param`) and C a class with a datatype of its name, tell
  * that P is a C where the test holds: further in the same expression (right of `and`, right of `or` after
  * a negated test, in `then`), in the body of `do_if`, `do_elseif` and `do_while`, and in the actions of a
- * cue or handler whose conditions `check_value` it. A variable's facts end where it is set or removed again.
+ * cue or handler whose conditions `check_value` it. A negated test tells it where its condition is false:
+ * in the `do_elseif` and `do_else` after it, and after a `do_if` whose body ends by leaving the block. A
+ * variable's facts end where it is set or removed again.
  */
 import type { ScriptDatatype, ScriptProperties } from '../properties/scriptProperties';
 import type { ScriptSchema } from '../types';
@@ -30,6 +32,8 @@ export interface ClassFact extends Omit<ValueFact, 'offset'> {
   attribute: XmlAttribute;
   /** Offset of the test in the attribute's value. */
   offset: number;
+  /** Where the fact starts to hold, when not right after the attribute: a variable set before it does not end it. */
+  holdsFrom?: number;
 }
 
 /** The facts of a value that hold within a range of it. */
@@ -45,6 +49,8 @@ const mayTest = /is(real)?class/;
 const noFacts: ClassFact[] = [];
 const noRanges: FactRange[] = [];
 const conditionals: ReadonlySet<string> = new Set(['do_if', 'do_elseif', 'do_while']);
+/** Actions after which none of the block they are in runs. */
+const exits: ReadonlySet<string> = new Set(['return', 'break', 'continue', 'resume']);
 
 /** The datatype of a class name: a class the `class` lookup has, of the name of a datatype. */
 function classDatatype(name: string, properties: ScriptProperties, schema: ScriptSchema): ScriptDatatype | undefined {
@@ -124,7 +130,7 @@ function factsWhenFalse(node: Expression, text: string, properties: ScriptProper
     case 'group':
       return factsWhenFalse(node.expression, text, properties, schema);
     case 'unary':
-      return node.operator === 'not' ? factsWhenTrue(node.operand, text, properties, schema) : [];
+      return node.operator === 'not' ? factsWhenTrue(node.operand, text, properties, schema).map((fact) => ({ ...fact, test: `not ${fact.test}` })) : [];
     case 'binary':
       return node.operator === 'or' ? [...factsWhenFalse(node.left, text, properties, schema), ...factsWhenFalse(node.right, text, properties, schema)] : [];
     default:
@@ -214,16 +220,70 @@ function rangesOf(tree: Expression, text: string, properties: ScriptProperties, 
   return ranges;
 }
 
-/** The facts of a condition value as a whole, true. */
-function conditionFacts(attribute: XmlAttribute | undefined, properties: ScriptProperties, schema: ScriptSchema): ClassFact[] {
+/** The facts of a condition value as a whole, true or false. */
+function conditionFacts(attribute: XmlAttribute | undefined, properties: ScriptProperties, schema: ScriptSchema, holds = true): ClassFact[] {
   if (!attribute || !mayTest.test(attribute.value)) {
     return noFacts;
   }
-  return factsWhenTrue(parsedValue(attribute).expression, attribute.value, properties, schema).map((fact) => ({ ...fact, attribute }));
+  const facts = (holds ? factsWhenTrue : factsWhenFalse)(parsedValue(attribute).expression, attribute.value, properties, schema);
+  return facts.map((fact) => ({ ...fact, attribute }));
 }
 
 function attributeOf(element: XmlElement, name: string): XmlAttribute | undefined {
   return element.attributes.find((attribute) => attribute.name === name);
+}
+
+interface SiblingsMemo {
+  properties: ScriptProperties;
+  schema: ScriptSchema;
+  facts: Map<XmlElement, ClassFact[]>;
+}
+
+const factsBySiblings = new WeakMap<XmlElement, SiblingsMemo>();
+
+/** A `do_if` without a `do_elseif` or `do_else`, whose body ends by leaving the block it is in. */
+function isGuard(element: XmlElement, next: XmlElement | undefined): boolean {
+  const last = element.children.at(-1);
+  return element.name === 'do_if' && next?.name !== 'do_elseif' && next?.name !== 'do_else' && last !== undefined && exits.has(last.name);
+}
+
+/**
+ * The facts the siblings before an element give it, where their conditions are false: those of the
+ * `do_if` and `do_elseif` before a `do_elseif` or `do_else` of the same chain, and those of a guard before it.
+ */
+function siblingFacts(element: XmlElement, properties: ScriptProperties, schema: ScriptSchema): ClassFact[] {
+  const parent = element.parent;
+  if (!parent) {
+    return noFacts;
+  }
+  let memo = factsBySiblings.get(parent);
+  if (!memo || memo.properties !== properties || memo.schema !== schema) {
+    memo = { properties, schema, facts: new Map() };
+    factsBySiblings.set(parent, memo);
+    let guarded: ClassFact[] = noFacts;
+    let chain: ClassFact[] = noFacts;
+    parent.children.forEach((child, index) => {
+      if (child.name !== 'do_elseif' && child.name !== 'do_else') {
+        chain = noFacts;
+      }
+      const facts = chain.length === 0 ? guarded : [...guarded, ...chain.map((fact) => ({ ...fact, holdsFrom: child.start }))];
+      if (facts.length > 0) {
+        memo?.facts.set(child, facts);
+      }
+      if (child.name !== 'do_if' && child.name !== 'do_elseif') {
+        return;
+      }
+      const falseFacts = conditionFacts(attributeOf(child, 'value'), properties, schema, false);
+      if (falseFacts.length === 0) {
+        return;
+      }
+      chain = [...chain, ...falseFacts];
+      if (isGuard(child, parent.children[index + 1])) {
+        guarded = [...guarded, ...falseFacts.map((fact) => ({ ...fact, holdsFrom: child.end }))];
+      }
+    });
+  }
+  return memo.facts.get(element) ?? noFacts;
 }
 
 interface ElementMemo {
@@ -236,8 +296,9 @@ const factsByElement = new WeakMap<XmlElement, ElementMemo>();
 
 /**
  * The facts the elements around an element give it, outer ones first: the conditions of the `do_if`,
- * `do_elseif` and `do_while` it is in, and the `check_value` conditions of the cue or handler whose actions
- * it is in. Its own attributes are not in the body of its own condition.
+ * `do_elseif` and `do_while` it is in, the `check_value` conditions of the cue or handler whose actions it
+ * is in, and the false conditions of the siblings before it. Its own attributes are not in the body of its
+ * own condition, but after the false ones of its chain.
  */
 function enclosingFacts(element: XmlElement, properties: ScriptProperties, schema: ScriptSchema): ClassFact[] {
   const known = factsByElement.get(element);
@@ -258,6 +319,7 @@ function enclosingFacts(element: XmlElement, properties: ScriptProperties, schem
       }
     }
   }
+  own.push(...siblingFacts(element, properties, schema));
   // Most elements add nothing: they share their parent's list.
   const facts = own.length === 0 ? inherited : [...inherited, ...own];
   factsByElement.set(element, { properties, schema, facts });
@@ -289,7 +351,7 @@ function writtenSince(fact: ClassFact, at: number, variables: DocumentVariables 
     return false;
   }
   const name = fact.key.slice(1).split('.')[0];
-  const after = fact.attribute.end;
+  const after = fact.holdsFrom ?? fact.attribute.end;
   return (writesOf(variables).get(name) ?? []).some((offset) => offset > after && offset < at);
 }
 

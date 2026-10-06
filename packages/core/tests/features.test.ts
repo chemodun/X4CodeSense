@@ -110,6 +110,8 @@ describe('completion', () => {
       'create_ship',
       'debug_text',
       'deliver',
+      'do_else',
+      'do_elseif',
       'do_if',
       'find_closest_resource',
       'find_ship',
@@ -263,6 +265,25 @@ describe('after a class test', () => {
       'Here a `ship`, by `isclass.ship` at line 5'
     );
     expect(hoverText(actions('<set_value name="$x" exact="player.ent|ity"/>'))).not.toContain('Here a');
+  });
+
+  it('completes and describes where a negated test is false: in do_else, and after a guard that returns', () => {
+    const negated = '<do_if value="not player.entity.isclass.ship">\n          <return/>\n        </do_if>';
+    expect(labels(actions(`${negated}\n        <set_value name="$x" exact="player.entity.|"/>`))).toContain('speed');
+    expect(
+      labels(
+        actions(
+          `<do_if value="not player.entity.isclass.ship"/>\n        <do_else>\n          <set_value name="$x" exact="player.entity.|"/>\n        </do_else>`
+        )
+      )
+    ).toContain('speed');
+    expect(hoverText(actions(`${negated}\n        <set_value name="$x" exact="player.ent|ity.speed"/>`))).toContain(
+      'Here a `ship`, by `not isclass.ship` at line 5'
+    );
+    // While typing: the do_else not closed yet, nor the value.
+    expect(
+      labels(actions('<do_if value="not player.entity.isclass.ship"/>\n        <do_else>\n          <set_value name="$x" exact="player.entity.|\n'))
+    ).toContain('speed');
   });
 
   it("goes to the class's property", () => {
