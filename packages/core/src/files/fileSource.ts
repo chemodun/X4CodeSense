@@ -5,6 +5,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
+import type { ExtensionFolder } from '../extensions/extensions';
 
 /** A file or folder in a folder. */
 export interface FolderEntry {
@@ -32,6 +33,22 @@ export interface FileSource {
   inCatalogs?(file: string): boolean;
   /** Problems met while opening it, for logging. */
   readonly problems?: readonly string[];
+  /** The mods installed in the game, read when the extensions being written need them (`installedMods.ts`). */
+  readonly installedMods?: InstalledMods;
+}
+
+/** The mods installed in a game's `extensions` folder that are not part of the game. */
+export interface InstalledMods {
+  /** The game folder, the one holding `extensions`. */
+  readonly folder: string;
+  /** The game's version as its `version.dat` gives it, `900` for 9.00; the versioned catalogs need it. */
+  readonly version: string | undefined;
+  /** Whether the scripts and texts of the installed mods count for names, or only for patches. */
+  readonly names: boolean;
+  /** The installed mods, in the order of their folder names. */
+  readonly mods: readonly ExtensionFolder[];
+  /** An installed mod by its id or its folder name, without case. */
+  find(name: string): ExtensionFolder | undefined;
 }
 
 function isDirectoryOnDisk(file: string): boolean {

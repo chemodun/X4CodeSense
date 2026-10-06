@@ -12,6 +12,7 @@ import {
   languageOfTextFile,
   loadGameData,
   openInstalledGame,
+  withInstalledMods,
   scriptFolders,
   textFolders,
   xmlFilesOf,
@@ -33,6 +34,8 @@ export interface WorkspaceOptions {
   structure: boolean;
   /** Guess what actions write into variables from their names and documentation. */
   typeGuesses: boolean;
+  /** With `game`, also the names and texts of the installed mods the extensions depend on, not only their patches. */
+  installedDependencies?: boolean;
 }
 
 /** A file as last read: its path, and its modification time and size. */
@@ -119,6 +122,11 @@ export class Workspace {
         return;
       }
       files = openInstalledGame(gameFolder);
+    }
+    // The mods installed in the game, for the extensions that depend on them or patch their files.
+    const installed = this.options.game === undefined ? undefined : path.resolve(this.options.game);
+    if (installed !== undefined && isInstalledGame(installed)) {
+      files = withInstalledMods(installed, files, this.options.installedDependencies === true);
     }
     for (const folder of this.extensionFolders) {
       if (!diskFiles.isDirectory(folder)) {

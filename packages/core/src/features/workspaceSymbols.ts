@@ -70,6 +70,10 @@ function candidates(index: ScriptIndex): IndexSymbol[] {
     return source;
   };
   for (const entry of index.entries()) {
+    // An installed mod read only for patches gives no names.
+    if (index.isHidden(entry.file)) {
+      continue;
+    }
     if (entry.kind === 'script' && entry.name !== '') {
       const source = sourceOf(entry.file);
       const script = entry.schema === 'md' ? `md.${entry.name}` : entry.name;

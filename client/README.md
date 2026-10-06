@@ -207,7 +207,7 @@ A few things the game's files do not say are built in:
 ## ⚠️ Known limitations
 
 - Without the game files, extracted or installed, scripts are only checked for well-formedness: the schemas, the script properties, the texts and the game's scripts all come from them.
-- Extensions are read from their files: an extension packed into catalogs of its own (`ext_01.cat`) is not read yet, the DLCs of an installed game aside.
+- Extensions are read from their files, the DLCs and the mods installed in the game aside (see **Mods installed in the game**): a packed extension among your own extensions folders is not read. Of an installed mod, `subst_*.cat` catalogs are not read: they stand in for files of the game or other extensions, in the mods seen so far interface files only.
 - Lookup values such as `class`, `faction` or `ware` are completed but not checked, since their lists in the game files lag behind the game and its DLCs.
 - The game evaluates any XPath 1.0 in patches; what X4CodeSense does not, such as `(//move_to)[1]` or `//a and //b` in `if`, is reported as not understood, never as wrong, and the operation is not followed.
 - The text inside the elements of library files is not modelled: an operation that changes only text (`text()`, or an `add` of text alone) is reported as such, and the diff does not show it.
@@ -255,6 +255,12 @@ To extract them, use Egosoft's [X Catalog Tool](https://wiki.egosoft.com/X4%20Fo
 - the game's catalogs (`01.cat`, `02.cat` and so on) into one folder, which then holds `aiscripts`, `md`, `libraries`, `t` and more;
 - each DLC's catalogs (`ext_01.cat` and so on in `extensions/ego_dlc_*` of the game) into the folder of the same name under `extensions` of that folder, and copy each DLC's `content.xml` there from the game installation. The catalogs do not hold it, and without it the DLCs are read alphabetically instead of in the game's order, so patches of the same file by several DLCs are applied in the wrong order.
 
+### Mods installed in the game
+
+With `x4CodeSense.gameFolder` set, also when the extracted files are the game files, the mods installed in the game's `extensions` folder are read when your extensions need them: the ones they depend on in `content.xml`, with what those depend on, and the ones whose files their patches change (`extensions/<mod>/md/…` in your extension). A packed mod is read from its catalogs as the game reads them, nothing extracted: `ext_01.cat` and on, for the installed game's version also `ext_01_diff_v900.cat` up to it and `ext_v900.cat`; an entry of its catalogs wins over a loose file of the same path. A mod of the same id among your extensions replaces the installed one.
+
+By default they count for your patches only: a patch of an installed mod's script is applied to it and checked, and for a library file the installed mods' patches that load before yours are applied first. With `x4CodeSense.readInstalledDependencies` on, the mods your extensions depend on count as a whole: their cues, libraries, scripts and texts resolve in your scripts, as if they were among your extensions.
+
 ### Coming from X4CodeComplete
 
 X4CodeSense replaces X4CodeComplete: uninstall X4CodeComplete, so the two do not check the same scripts. X4CodeComplete-Lua completes and describes the game's Lua functions, which X4CodeSense does not; both show the text of `ReadText` in Lua files. Their settings stay in your settings files after an uninstall. When X4CodeSense starts where it has no settings of its own yet, in the user settings or in the workspace settings, it offers the ones found there: the extracted game files, the extensions folder, the language settings, the structure validation and verbose logging. **Use** copies them, **Show Them** lists them in the X4CodeSense output first, **Not Now** asks again at the next start, and **Never** stops asking.
@@ -282,6 +288,8 @@ A folder that no longer exists is not taken, nor a relative extensions folder, w
   - _default_: `false`
 - `x4CodeSense.validateXmlStructure` - check the order and completeness of child elements against the schemas. Unknown elements and attributes, invalid values, missing required attributes and text inside elements are always reported.
   - _default_: `true`
+- `x4CodeSense.readInstalledDependencies` - read the mods installed in the game that your extensions depend on as a whole, so their cues, libraries, scripts and texts resolve in your scripts; off, they count for your patches only (see **Mods installed in the game**).
+  - _default_: `false`
 - `x4CodeSense.guessVariableTypes` - guess what an action writes into a variable from the action's name and documentation where the schema does not state it: `create_ship` a ship, `find_ship` with `multiple` a list. What rests on a guess says so: hover and completion mark the type "(guessed)", and a property such a type lacks is information (`expression-unknown-property-guessed`), not a warning. Off, only what the scripts and the schema state types a variable: `<param type>`, the value `set_value` sets, groups.
   - _default_: `true`
 - `x4CodeSense.diagnosticMode` - which scripts the Problems panel lists problems of: `openFilesOnly`, the scripts open in the editor, or `workspace`, also every other script and patch in the workspace folders, as they are on disk. Checking them all takes a few seconds for a hundred scripts, once after the scripts are indexed and again in the background when something they refer to changes.
@@ -327,6 +335,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 ### [1.1.0] - unreleased
 
 - Added
+  - The mods installed in the game (`x4CodeSense.gameFolder`) that your extensions need are read, packed ones from their catalogs (`ext_01.cat`, and the versioned ones of the installed game's version): a patch of an installed mod's script is checked against it, and the installed mods' patches of a library file that load before yours are applied first. `x4CodeSense.readInstalledDependencies` makes their cues, scripts and texts resolve in your scripts too. x4-script-check: `--game` beside `--unpacked`, and `--installed-dependencies`.
   - After a class test (`player.target.isclass.npc`), the value is of that class: further in the same expression, in the body of a `do_if`, `do_elseif` or `do_while` that tests it, and in a cue's actions after a `check_value` of its conditions. Completion offers the class's properties, hover tells which test says so, and properties of the class are no longer reported as missing: `@player.target.isclass.npc and player.target.race`.
 
 ### [1.0.0] - 2026-10-05

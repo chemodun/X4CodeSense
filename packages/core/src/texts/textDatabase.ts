@@ -320,7 +320,9 @@ export interface TextLoadOptions {
 /** The `t` folders of the game and of its and the given extensions, in the order the game loads them. */
 export function textFolders(gameFolder: string | undefined, extensionFolders: readonly string[] = [], files: FileSource = diskFiles): string[] {
   const candidates = gameFolder ? [path.join(gameFolder, 't')] : [];
-  candidates.push(...findExtensions(gameFolder, extensionFolders, files).map((extension) => path.join(extension.folder, 't')));
+  // An installed mod the extensions need gives its texts only when its names are wanted.
+  const extensions = findExtensions(gameFolder, extensionFolders, files).filter((extension) => !extension.installed || files.installedMods?.names);
+  candidates.push(...extensions.map((extension) => path.join(extension.folder, 't')));
   return candidates.filter((folder) => files.isDirectory(folder));
 }
 

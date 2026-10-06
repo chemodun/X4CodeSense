@@ -17,6 +17,12 @@ Options:
   --game <folder>       the installed game, the folder of X4.exe: its files and its DLCs' are read
                         from their catalogs, nothing is extracted; used when --unpacked is not given
                         Without either, the X4_UNPACKED environment variable is read, else X4_GAME.
+                        Also with --unpacked, the mods installed in its extensions folder that the
+                        extensions depend on or patch are read from it, packed ones from their
+                        catalogs, for the patches
+  --installed-dependencies
+                        with --game, the installed mods the extensions depend on count for names
+                        and texts as well: their cues, scripts and texts resolve
   --extensions <folder> an extension, or a folder of extensions, whose scripts and texts are read
                         besides the game's: those written and those they refer to; may be given
                         several times (default: the current folder)
@@ -65,6 +71,8 @@ function parseOptions(argv: string[]): Options {
       options.structure = false;
     } else if (argument === '--no-type-guesses') {
       options.typeGuesses = false;
+    } else if (argument === '--installed-dependencies') {
+      options.installedDependencies = true;
     } else if (argument === '-h' || argument === '--help') {
       options.help = true;
     } else {

@@ -55,6 +55,7 @@ import {
   loadTexts,
   newProblems,
   openInstalledGame,
+  withInstalledMods,
   parseXml,
   PatchComparisonRequestMethod,
   PatchWriteRequestMethod,
@@ -108,6 +109,11 @@ interface X4CodeSenseSettings {
   guessVariableTypes: boolean;
   /** Problems of the open documents only, or also of every other script in the workspace folders. */
   diagnosticMode: 'openFilesOnly' | 'workspace';
+  /**
+   * Also the names and texts of the mods installed in `gameFolder` that the extensions depend on; without
+   * it those mods are read only for the patches of the extensions.
+   */
+  readInstalledDependencies: boolean;
   debug: boolean;
 }
 
@@ -120,6 +126,7 @@ const defaultSettings: X4CodeSenseSettings = {
   validateXmlStructure: true,
   guessVariableTypes: true,
   diagnosticMode: 'openFilesOnly',
+  readInstalledDependencies: false,
   debug: false,
 };
 
@@ -135,7 +142,7 @@ function settingsOf(received: unknown): X4CodeSenseSettings {
     const value = values[key];
     return typeof value === 'string' ? value : defaultSettings[key];
   };
-  const flag = (key: 'limitLanguageOutput' | 'validateXmlStructure' | 'guessVariableTypes' | 'debug'): boolean => {
+  const flag = (key: 'limitLanguageOutput' | 'validateXmlStructure' | 'guessVariableTypes' | 'readInstalledDependencies' | 'debug'): boolean => {
     const value = values[key];
     return typeof value === 'boolean' ? value : defaultSettings[key];
   };
@@ -148,6 +155,7 @@ function settingsOf(received: unknown): X4CodeSenseSettings {
     validateXmlStructure: flag('validateXmlStructure'),
     guessVariableTypes: flag('guessVariableTypes'),
     diagnosticMode: diagnosticModes.find((mode) => mode === values.diagnosticMode) ?? defaultSettings.diagnosticMode,
+    readInstalledDependencies: flag('readInstalledDependencies'),
     debug: flag('debug'),
   };
 }
@@ -368,9 +376,15 @@ function wantedGame(): { folder: string; source: GameSource } | undefined {
   return settings.gameFolder.trim() === '' ? undefined : { folder: settings.gameFolder, source: 'installed' };
 }
 
-/** What tells one wanted game from another. */
+/** The installed game whose mods the extensions may need: `gameFolder`, also when the extracted files are the game files. */
+function installedModsFolder(): string | undefined {
+  return settings.gameFolder.trim() === '' ? undefined : settings.gameFolder;
+}
+
+/** What tells one wanted game from another, the installed mods it reads included. */
 function gameKey(wanted: { folder: string; source: GameSource } | undefined): string | undefined {
-  return wanted && `${wanted.source} ${wanted.folder}`;
+  const mods = installedModsFolder();
+  return wanted && `${wanted.source} ${wanted.folder}${mods ? ` mods ${mods}${settings.readInstalledDependencies ? ' names' : ''}` : ''}`;
 }
 
 /**
@@ -405,7 +419,10 @@ async function refreshGameData(): Promise<void> {
     const started = performance.now();
     const options = textOptions();
     const installed = wanted.source === 'installed' ? openInstalledGame(wanted.folder) : undefined;
-    game = loadGameData(wanted.folder, installed ? { ...options, files: installed } : options);
+    // The mods installed in the game, for the extensions that depend on them or patch their files.
+    const modsFolder = installedModsFolder();
+    const files = modsFolder ? withInstalledMods(modsFolder, installed ?? diskFiles, settings.readInstalledDependencies) : installed;
+    game = loadGameData(wanted.folder, files ? { ...options, files } : options);
     loadedGame = { key, source: wanted.source, ...(installed?.version !== undefined ? { version: installed.version } : {}) };
     textSources = JSON.stringify(options, (_key, value: unknown) => (value instanceof Set ? [...(value as Set<string>)] : value));
     overlayOpenTextFiles();
@@ -656,7 +673,7 @@ async function refreshSettings(): Promise<void> {
   try {
     settings = settingsOf(await connection.workspace.getConfiguration('x4CodeSense'));
     log(
-      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} debug=${settings.debug}`
+      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} readInstalledDependencies=${settings.readInstalledDependencies} debug=${settings.debug}`
     );
     await refreshGameData();
     refreshTexts();

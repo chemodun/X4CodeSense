@@ -17,6 +17,7 @@ import {
   loadGameData,
   messageOf,
   openInstalledGame,
+  withInstalledMods,
   quickFixes,
   severities,
   xmlFilesOf,
@@ -65,6 +66,8 @@ interface Options {
   structure: boolean;
   /** Guess what actions write into variables from their names and documentation. */
   typeGuesses: boolean;
+  /** Also the names and texts of the installed mods the checked extensions depend on, not only their patches. */
+  installedDependencies: boolean;
   /** Apply the preferred fixes to the files before checking them. */
   fix: boolean;
   format: Format;
@@ -87,6 +90,12 @@ Options:
   --game <folder>       the installed game, the folder of X4.exe: its files and its DLCs' are read
                         from their catalogs, nothing is extracted; used when --unpacked is not given
                         Without either, the X4_UNPACKED environment variable is read, else X4_GAME.
+                        Also with --unpacked, the mods installed in its extensions folder that the
+                        checked extensions depend on or patch are read from it, packed ones from
+                        their catalogs, for the patches
+  --installed-dependencies
+                        with --game, the installed mods the checked extensions depend on count for
+                        names and texts as well: their cues, scripts and texts resolve
   --extensions <folder> other extensions the checked ones refer to: their texts and scripts are
                         read, they are not checked; may be given several times
   --no-structure        do not check the order and completeness of child elements
@@ -123,7 +132,17 @@ function oneOf<T extends string>(option: string, value: string, allowed: readonl
 }
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = { roots: [], extensions: [], structure: true, typeGuesses: true, fix: false, format: 'text', failOn: 'warning', help: false };
+  const options: Options = {
+    roots: [],
+    extensions: [],
+    structure: true,
+    typeGuesses: true,
+    installedDependencies: false,
+    fix: false,
+    format: 'text',
+    failOn: 'warning',
+    help: false,
+  };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const equals = argument.startsWith('--') ? argument.indexOf('=') : -1;
@@ -149,6 +168,8 @@ function parseOptions(argv: string[]): Options {
       options.structure = false;
     } else if (argument === '--no-type-guesses') {
       options.typeGuesses = false;
+    } else if (argument === '--installed-dependencies') {
+      options.installedDependencies = true;
     } else if (argument === '--fix') {
       options.fix = true;
     } else if (argument === '-h' || argument === '--help') {
@@ -492,6 +513,15 @@ async function main(argv: string[]): Promise<number> {
   let game: GameData | undefined;
   let gameFolder: string | undefined;
   let files: FileSource = diskFiles;
+  let installedGame = options.game === undefined ? undefined : path.resolve(options.game);
+  if (installedGame !== undefined && !isInstalledGame(installedGame)) {
+    console.error(`Not an installed game, it has no 01.cat: ${installedGame}`);
+    // Beside extracted files it only gives the installed mods: the check goes on without them, as before them.
+    if (options.unpacked === undefined) {
+      return 2;
+    }
+    installedGame = undefined;
+  }
   if (options.unpacked !== undefined) {
     gameFolder = path.resolve(options.unpacked);
     const libraries = path.join(gameFolder, 'libraries');
@@ -499,13 +529,13 @@ async function main(argv: string[]): Promise<number> {
       console.error(`Not a folder: ${libraries}`);
       return 2;
     }
-  } else if (options.game !== undefined) {
-    gameFolder = path.resolve(options.game);
-    if (!isInstalledGame(gameFolder)) {
-      console.error(`Not an installed game, it has no 01.cat: ${gameFolder}`);
-      return 2;
-    }
+  } else if (installedGame !== undefined) {
+    gameFolder = installedGame;
     files = openInstalledGame(gameFolder);
+  }
+  if (installedGame !== undefined) {
+    // The mods installed in the game, for the checked extensions that depend on them or patch their files.
+    files = withInstalledMods(installedGame, files, options.installedDependencies);
   }
   if (gameFolder !== undefined) {
     for (const folder of options.extensions) {

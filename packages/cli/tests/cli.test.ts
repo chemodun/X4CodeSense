@@ -841,9 +841,14 @@ describe('x4-script-check on an installed game', { timeout: 30_000 }, () => {
   });
 
   it('takes the extracted files first, an option given over the environment, and refuses a folder that is no installed game', async () => {
-    const both = await run('--unpacked', unpacked, '--game', workDir, extension);
+    const both = await run('--unpacked', unpacked, '--game', install, extension);
     expect(both.code).toBe(0);
     expect(lines(both)).toEqual(['3 file(s) in 2 folder(s): 2 script(s), 1 patch(es), 0 finding(s)']);
+    // Beside the extracted files, a folder that is no installed game gives no mods: said, and the check goes on.
+    const noMods = await run('--unpacked', unpacked, '--game', workDir, extension);
+    expect(noMods.code).toBe(0);
+    expect(noMods.stderr).toContain(`Not an installed game, it has no 01.cat: ${workDir}`);
+    expect(lines(noMods)).toEqual(lines(both));
     const notGame = await run('--game', workDir, extension);
     expect(notGame.code).toBe(2);
     expect(notGame.stderr).toContain(`Not an installed game, it has no 01.cat: ${workDir}`);
@@ -851,5 +856,34 @@ describe('x4-script-check on an installed game', { timeout: 30_000 }, () => {
     const overVariable = await execute(undefined, ['--game', workDir, extension], { X4_UNPACKED: unpacked });
     expect(overVariable.code).toBe(2);
     expect(overVariable.stderr).toContain(`Not an installed game, it has no 01.cat: ${workDir}`);
+  });
+
+  it('reads the installed mods the checked extension depends on: packed ones from their catalogs, for patches, and with --installed-dependencies for names', async () => {
+    // A packed mod of the player in the game, and an extension being written that depends on it.
+    const packed = path.join(install, 'extensions', 'packed_api');
+    mkdirSync(packed, { recursive: true });
+    writeFileSync(path.join(packed, 'content.xml'), '<content id="ws_packed_api"/>\n');
+    writeCatalog(path.join(packed, 'ext_01.cat'), [
+      { path: 'md/api.xml', data: '<mdscript name="Api">\n  <cues>\n    <cue name="Hello"/>\n  </cues>\n</mdscript>\n' },
+    ]);
+    const writing = path.join(workDir, 'writing', 'my_ext');
+    mkdirSync(path.join(writing, 'md'), { recursive: true });
+    mkdirSync(path.join(writing, 'extensions', 'packed_api', 'md'), { recursive: true });
+    writeFileSync(path.join(writing, 'content.xml'), '<content id="my_ext"><dependency id="ws_packed_api"/></content>\n');
+    writeFileSync(
+      path.join(writing, 'md', 'main.xml'),
+      '<mdscript name="Main">\n  <cues>\n    <cue name="A">\n      <actions>\n        <signal_cue_instantly cue="md.Api.Hello"/>\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n'
+    );
+    writeFileSync(path.join(writing, 'extensions', 'packed_api', 'md', 'api.xml'), `<diff>\n  <remove sel="//cue[@name='Missing']"/>\n</diff>\n`);
+    const codes = (result: { stdout: string }): string[] =>
+      (JSON.parse(result.stdout) as JsonReport).findings.map((finding) => `${path.basename(finding.file)} ${finding.code}`).sort();
+    expect(codes(await run('--unpacked', unpacked, '--format', 'json', writing))).toEqual(['api.xml patch-target-missing', 'main.xml cue-undefined']);
+    expect(codes(await run('--unpacked', unpacked, '--game', install, '--format', 'json', writing))).toEqual([
+      'api.xml patch-no-match',
+      'main.xml cue-undefined',
+    ]);
+    expect(codes(await run('--unpacked', unpacked, '--game', install, '--installed-dependencies', '--format', 'json', writing))).toEqual([
+      'api.xml patch-no-match',
+    ]);
   });
 });

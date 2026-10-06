@@ -210,6 +210,38 @@ describe('finding the catalogs of a folder', () => {
     expect(extensionCatalogs(at).map((file) => path.basename(file))).toEqual(['ext_01.cat', 'ext_02.cat']);
   });
 
+  it('with the game version, also those for versions: diffs up to it after their catalog, the exact one last', () => {
+    const versions = folder();
+    for (const name of [
+      'ext_01.cat',
+      'ext_02.cat',
+      'ext_01_diff_v900.cat',
+      'ext_01_diff_v800.cat',
+      'ext_01_diff_v950.cat',
+      'ext_02_diff_v760.cat',
+      'ext_v800.cat',
+      'ext_v900.cat',
+      'subst_v900.cat',
+    ]) {
+      writeFileSync(path.join(versions, name), '');
+    }
+    expect(extensionCatalogs(versions, '900').map((file) => path.basename(file))).toEqual([
+      'ext_01.cat',
+      'ext_01_diff_v800.cat',
+      'ext_01_diff_v900.cat',
+      'ext_02.cat',
+      'ext_02_diff_v760.cat',
+      'ext_v900.cat',
+    ]);
+    expect(extensionCatalogs(versions, '800').map((file) => path.basename(file))).toEqual([
+      'ext_01.cat',
+      'ext_01_diff_v800.cat',
+      'ext_02.cat',
+      'ext_02_diff_v760.cat',
+      'ext_v800.cat',
+    ]);
+  });
+
   it('finds others by a pattern, and nothing in a folder that is not there', () => {
     expect(catalogsIn(at, /^subst_\d+\.cat$/i).map((file) => path.basename(file))).toEqual(['subst_01.cat']);
     expect(gameCatalogs(path.join(at, 'absent'))).toEqual([]);

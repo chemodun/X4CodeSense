@@ -14,6 +14,7 @@ const serverSettings = [
   'languageNumber',
   'validateXmlStructure',
   'guessVariableTypes',
+  'readInstalledDependencies',
   'mcpServer.port',
 ];
 

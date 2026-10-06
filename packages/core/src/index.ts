@@ -26,6 +26,7 @@ export * from './names/validateNames';
 export * from './files/fileSource';
 export * from './files/gameFileUris';
 export * from './files/installedGame';
+export * from './files/installedMods';
 export * from './extensions/extensions';
 export * from './project/scriptIndex';
 export * from './project/mdReferences';

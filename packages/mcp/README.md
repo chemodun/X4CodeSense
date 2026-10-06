@@ -26,7 +26,8 @@ Agents use the tools they are told about: say in your agent's instructions (`CLA
 
 Options:
 
-- `--game <folder>` - the installed game, the folder of `X4.exe`. Its files and those of its DLCs are read from their catalogs where they lie: nothing is extracted. Used when `--unpacked` is not given.
+- `--game <folder>` - the installed game, the folder of `X4.exe`. Its files and those of its DLCs are read from their catalogs where they lie: nothing is extracted. Used when `--unpacked` is not given. Also beside `--unpacked`, the mods installed there that the extensions depend on or patch are read from it for the patches, packed ones from their catalogs.
+- `--installed-dependencies` - with `--game`, the installed mods the extensions depend on count as a whole: their cues, scripts and texts resolve.
 - `--unpacked <folder>` - the extracted vanilla game files, the folder holding `libraries`, `md`, `aiscripts` and `t`.
 - Without `--game` and `--unpacked`, the `X4_UNPACKED` environment variable gives the extracted files, else `X4_GAME` the installed game; either option given wins over both variables.
 - `--extensions <folder>` - an extension, or a folder of extensions: those the agent writes and those they refer to. Their scripts and texts are read besides the game's. May be given several times; without it, the current folder.

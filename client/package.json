@@ -236,6 +236,11 @@
           "default": true,
           "description": "Guess what an action writes into a variable from the action's name and documentation where the game's schema does not state it: `create_ship` a ship, `find_ship` with `multiple` a list. Hover, completion and the checks of properties then know the variable's type; what rests on a guess is marked so, and a property a guessed type lacks is information, not a warning. Off: only what the scripts and the schema state types a variable (`<param type>`, the value `set_value` sets, groups)."
         },
+        "x4CodeSense.readInstalledDependencies": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Read the mods installed in the game (`#x4CodeSense.gameFolder#`) that your extensions depend on as a whole: their cues, libraries, scripts and texts resolve in your scripts. Off: an installed mod is read only for your patches, the files they change and the patches that load before them. A mod of the same id among your extensions replaces the installed one; packed mods are read from their catalogs."
+        },
         "x4CodeSense.diagnosticMode": {
           "type": "string",
           "enum": [

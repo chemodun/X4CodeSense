@@ -31,6 +31,8 @@ export interface ExtensionFolder {
   dependencies: string[];
   /** True for an extension shipped with the game, in the game's `extensions` folder. */
   bundled: boolean;
+  /** True for a mod installed in the game, read because the extensions being written need it. */
+  installed?: boolean;
 }
 
 /** How deep below a given folder extensions are looked for: `<folder>/src/<mod>` is two levels down. */
@@ -135,8 +137,37 @@ export function bundledExtensionsOf(gameFolder: string, files: FileSource = disk
 }
 
 /**
- * The extensions of a game installation and of other folders, each once, in load order. The game's own
- * folder is never one of them, even when a workspace is opened on it.
+ * The mods installed in the game that the extensions need, and that are not among them: the ones they depend
+ * on, and the ones whose files they patch (`extensions/<mod>/…` in an extension), with what those depend on
+ * in turn. An extension of the same id or folder name among the given ones replaces the installed mod.
+ */
+function neededInstalledMods(extensions: readonly ExtensionFolder[], files: FileSource): ExtensionFolder[] {
+  const mods = files.installedMods;
+  if (!mods) {
+    return [];
+  }
+  const known = new Set(extensions.flatMap((extension) => [extension.id.toLowerCase(), path.basename(extension.folder).toLowerCase()]));
+  const wanted = extensions
+    .filter((extension) => !extension.bundled)
+    .flatMap((extension) => [...extension.dependencies, ...subfolderNames(files, path.join(extension.folder, 'extensions'))]);
+  const needed: ExtensionFolder[] = [];
+  for (let next = wanted.shift(); next !== undefined; next = wanted.shift()) {
+    const mod = known.has(next.toLowerCase()) ? undefined : mods.find(next);
+    if (!mod || known.has(mod.id.toLowerCase())) {
+      continue;
+    }
+    known.add(mod.id.toLowerCase());
+    known.add(path.basename(mod.folder).toLowerCase());
+    needed.push({ ...mod, installed: true });
+    wanted.push(...mod.dependencies);
+  }
+  return needed;
+}
+
+/**
+ * The extensions of a game installation and of other folders, each once, in load order, with the mods
+ * installed in the game that they need when the file source reads those. The game's own folder is never one
+ * of them, even when a workspace is opened on it.
  */
 export function findExtensions(gameFolder: string | undefined, extensionFolders: readonly string[] = [], files: FileSource = diskFiles): ExtensionFolder[] {
   const found: ExtensionFolder[] = [];
@@ -159,6 +190,13 @@ export function findExtensions(gameFolder: string | undefined, extensionFolders:
   for (const folder of extensionFolders) {
     for (const extension of extensionsIn(folder, files)) {
       add(extension, false);
+    }
+  }
+  for (const mod of neededInstalledMods(found, files)) {
+    const key = mod.folder.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      found.push(mod);
     }
   }
   return inLoadOrder(found);

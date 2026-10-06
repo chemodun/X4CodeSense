@@ -295,7 +295,34 @@ export function gameCatalogs(gameFolder: string): string[] {
   return catalogsIn(gameFolder, /^\d+\.cat$/i);
 }
 
-/** An extension's catalogs of its own files: `ext_01.cat`, `ext_02.cat`, … in its folder. */
-export function extensionCatalogs(extensionFolder: string): string[] {
-  return catalogsIn(extensionFolder, /^ext_\d+\.cat$/i);
+/**
+ * An extension's catalogs of its own files, in the order the game loads them, a later one winning:
+ * `ext_01.cat`, `ext_02.cat`, … in its folder. With the game's version (`900` for 9.00), also the
+ * catalogs for versions: after each `ext_NN.cat` its `ext_NN_diff_vNNN.cat` for every version up to the
+ * game's, lowest first; last `ext_vNNN.cat` of exactly the game's version.
+ */
+export function extensionCatalogs(extensionFolder: string, version?: string): string[] {
+  const numbered = catalogsIn(extensionFolder, /^ext_\d+\.cat$/i);
+  const game = version !== undefined && /^\d+$/.test(version) ? Number(version) : undefined;
+  if (game === undefined) {
+    return numbered;
+  }
+  const diffs = catalogsIn(extensionFolder, /^ext_\d+_diff_v\d+\.cat$/i)
+    .map((file) => {
+      const [, catalog, at] = /^ext_(\d+)_diff_v(\d+)\.cat$/i.exec(path.basename(file)) ?? [];
+      return { file, catalog: Number(catalog), at: Number(at) };
+    })
+    .filter((diff) => diff.at <= game);
+  const ordered = numbered.flatMap((file) => {
+    const catalog = Number(/^ext_(\d+)\.cat$/i.exec(path.basename(file))?.[1]);
+    return [
+      file,
+      ...diffs
+        .filter((diff) => diff.catalog === catalog)
+        .sort((a, b) => a.at - b.at)
+        .map((diff) => diff.file),
+    ];
+  });
+  const exact = catalogsIn(extensionFolder, /^ext_v\d+\.cat$/i).filter((file) => Number(/^ext_v(\d+)\.cat$/i.exec(path.basename(file))?.[1]) === game);
+  return [...ordered, ...exact];
 }

@@ -40,8 +40,13 @@ export function serverArguments(): string[] {
   const game = textSetting(configuration, 'gameFolder');
   if (unpacked !== '') {
     args.push('--unpacked', unpacked);
-  } else if (game !== '') {
+  }
+  // The installed game: the game files without extracted ones, and the mods installed in it either way.
+  if (game !== '') {
     args.push('--game', game);
+    if (booleanSetting(configuration, 'readInstalledDependencies', false)) {
+      args.push('--installed-dependencies');
+    }
   }
   for (const folder of extensionFolders(configuration)) {
     args.push('--extensions', folder);

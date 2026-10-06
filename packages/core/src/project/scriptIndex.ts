@@ -198,6 +198,12 @@ export interface ScriptFolder {
    * files of the same names, and merge files, whose root's children the game adds to the root of its file.
    */
   library?: boolean;
+  /**
+   * For the folders of a mod installed in the game, read only for patches: its files are indexed as the
+   * targets and earlier patches of the extensions' patches, but their names (scripts, cues, libraries,
+   * orders) and references are not looked up.
+   */
+  hidden?: boolean;
 }
 
 /** The file a patch changes, or why there is none. */
@@ -854,6 +860,11 @@ export class ScriptIndex {
     return entry?.kind === 'script' ? entry : undefined;
   }
 
+  /** True for a file of a folder read only for patches: an installed mod's (`ScriptFolder.hidden`). */
+  isHidden(file: string): boolean {
+    return this.folders.get(keyOf(path.dirname(file)))?.hidden === true;
+  }
+
   /** The source a file belongs to: its own when indexed, else the one of the script folder it lies in. */
   sourceOf(file: string): string | undefined {
     return this.files.get(keyOf(file))?.source ?? this.folders.get(keyOf(path.dirname(file)))?.source;
@@ -1002,7 +1013,9 @@ export class ScriptIndex {
         scripts.add(entry.kind === 'script' ? entry.name : '');
         users.set(ref, scripts);
       };
-      for (const entry of this.files.values()) {
+      // An installed mod read only for patches gives no names: only its patches and the scripts they change count.
+      const named = [...this.files.values()].filter((entry) => !this.isHidden(entry.file));
+      for (const entry of named) {
         for (const name of entry.writesThroughValues) {
           writesThroughValues.add(name);
         }
@@ -1021,7 +1034,7 @@ export class ScriptIndex {
           map.set(key, [value]);
         }
       };
-      for (const entry of this.files.values()) {
+      for (const entry of named) {
         if (entry.kind !== 'script') {
           continue;
         }
@@ -1044,6 +1057,9 @@ export class ScriptIndex {
           continue;
         }
         push(patches, keyOf(target.file), entry);
+        if (this.isHidden(entry.file) || this.isHidden(target.file)) {
+          continue;
+        }
         cues.get(target)?.push(...entry.cues);
         for (const item of entry.libraryItems) {
           push(libraryItems, `${item.kind}:${item.name}`, { ...item, script: target.name });
@@ -1156,6 +1172,9 @@ export class ScriptIndex {
         }
       };
       for (const entry of this.files.values()) {
+        if (this.isHidden(entry.file)) {
+          continue;
+        }
         entry.references.forEach(add);
         if (entry.kind !== 'patch' || entry.pathNames.length === 0) {
           continue;
@@ -1240,7 +1259,8 @@ export function scriptFolders(gameFolder: string | undefined, extensionFolders: 
     }
   }
   for (const extension of extensions) {
-    const bundled = extension.bundled ? { bundled: true } : {};
+    // An installed mod the extensions need is read only for patches, unless its names are wanted too.
+    const bundled = { ...(extension.bundled ? { bundled: true } : {}), ...(extension.installed && !files.installedMods?.names ? { hidden: true } : {}) };
     for (const kind of kinds) {
       const folder: ScriptFolder = { folder: path.join(extension.folder, kind), source: extension.id, ...bundled };
       if (gameFolder) {
@@ -1248,7 +1268,12 @@ export function scriptFolders(gameFolder: string | undefined, extensionFolders: 
       }
       folders.push(folder);
     }
-    const libraries: ScriptFolder = { folder: path.join(extension.folder, 'libraries'), source: extension.id, ...bundled, library: true };
+    const libraries: ScriptFolder = {
+      folder: path.join(extension.folder, 'libraries'),
+      source: extension.id,
+      ...(extension.bundled ? { bundled: true } : {}),
+      library: true,
+    };
     if (gameFolder) {
       libraries.patches = { name: 'libraries', folder: path.join(gameFolder, 'libraries') };
     }
