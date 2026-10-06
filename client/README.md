@@ -338,7 +338,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [1.1.0] - unreleased
+### [1.1.0] - 2026-10-06
 
 - Added
   - The mods installed in the game (`x4CodeSense.gameFolder`) that your extensions need are read, packed ones from their catalogs (`ext_01.cat`, and the versioned ones of the installed game's version): a patch of an installed mod's script is checked against it, and the installed mods' patches of a library file that load before yours are applied first. `x4CodeSense.readInstalledDependencies` makes their cues, scripts and texts resolve in your scripts too. x4-script-check: `--game` beside `--unpacked`, and `--installed-dependencies`.
