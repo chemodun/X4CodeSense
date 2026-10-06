@@ -246,6 +246,35 @@ describe('definition', () => {
   });
 });
 
+describe('after a class test', () => {
+  // `player.entity` is an entity; a ship test makes it a ship where the test holds.
+  const inShipTest = (body: string): string => actions(`<do_if value="player.entity.isclass.ship">\n          ${body}\n        </do_if>`);
+
+  it("completes the class's properties", () => {
+    expect(labels(actions('<set_value name="$x" exact="player.entity.|"/>'))).toContain('skill');
+    const narrowed = labels(inShipTest('<set_value name="$x" exact="player.entity.|"/>'));
+    expect(narrowed).toEqual(expect.arrayContaining(['pilot', 'speed', 'cargo', 'owner', 'sector']));
+    expect(narrowed).not.toContain('skill');
+  });
+
+  it('describes the property of the class, and the narrowed step with the test that tells it', () => {
+    expect(hoverText(inShipTest('<set_value name="$x" exact="player.entity.sp|eed"/>'))).toContain('Current speed');
+    expect(hoverText(actions('<set_value name="$x" exact="player.entity.isclass.ship and player.ent|ity.speed"/>'))).toContain(
+      'Here a `ship`, by `isclass.ship` at line 5'
+    );
+    expect(hoverText(actions('<set_value name="$x" exact="player.ent|ity"/>'))).not.toContain('Here a');
+  });
+
+  it("goes to the class's property", () => {
+    expect(definitionFiles(actions('<set_value name="$x" exact="player.entity.sp|eed"/>'))).toEqual([]);
+    expect(definitionFiles(inShipTest('<set_value name="$x" exact="player.entity.sp|eed"/>'))).toEqual(['scriptproperties.xml']);
+  });
+
+  it('works while typing: completes after a test in a value whose closing quote is missing', () => {
+    expect(labels(actions('<set_value name="$x" exact="player.entity.isclass.ship and player.entity.|\n'))).toContain('speed');
+  });
+});
+
 describe('while typing', () => {
   it('completes inside a start tag that is not closed yet', () => {
     expect(labels(actions('<set_value |\n'))).toEqual(['name', 'exact', 'operation', 'comment']);

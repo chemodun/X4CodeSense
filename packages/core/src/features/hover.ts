@@ -2,6 +2,7 @@ import { Range, type Hover } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { positionContext, schemaOf, scriptSchemaOf } from '../analysis/positionContext';
 import { isInsideString, tokenize } from '../expressions/lexer';
+import { narrowingAt } from '../expressions/narrowing';
 import { chainAtToken, resolveChain, type ResolvedStep } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
 import { offsetInValue, type XmlAttribute } from '../xml/xmlStructure';
@@ -82,13 +83,19 @@ function hoverInValue(
     return undefined;
   }
   const variables = analysis.variables;
-  const resolved = resolveChain(found.chain, properties, schema, variables && stepTypesIn(variables, attribute.element, properties));
+  const narrowing = narrowingAt(attribute, found.chain.steps[0].start, properties, schema, variables);
+  const resolved = resolveChain(found.chain, properties, schema, variables && stepTypesIn(variables, attribute.element, properties), narrowing?.types);
   const step = resolved.steps[found.stepIndex];
   const text = describeStep(step);
   if (text === undefined) {
     return undefined;
   }
-  return hover(analysis, text, offsetInValue(attribute, step.step.start), offsetInValue(attribute, step.step.end));
+  // `player.target` inside `do_if value="player.target.isclass.npc"`: what the test tells, and where.
+  const fact = step.narrowed ? narrowing?.factFor(found.stepIndex, found.chain.steps) : undefined;
+  const note = fact
+    ? `\n\nHere ${/^[aeiou]/i.test(fact.datatype.name) ? 'an' : 'a'} \`${fact.datatype.name}\`, by \`${fact.test}\` at line ${analysis.document.positionAt(offsetInValue(fact.attribute, fact.offset)).line + 1}`
+    : '';
+  return hover(analysis, text + note, offsetInValue(attribute, step.step.start), offsetInValue(attribute, step.step.end));
 }
 
 /** Hover information for an offset in an analysed document. */

@@ -82,8 +82,6 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
     "expression-unknown-property: 'entity' has no property 'dynamicinterior' (story_yaki.xml)",
     // `md.GS_Pirate2.$SilenceOtherPrisoner?`: no `md.<script>.$variable` form exists, written once in all of vanilla.
     "expression-unknown-property: 'md' has no property 'GS_Pirate2' (setup_dlc_pirate.xml)",
-    // `@player.target.isclass.npc and player.target.race`: no narrowing after a class test, a known limitation.
-    "expression-unknown-property: 'object' has no property 'race' (story_research_welfare_2.xml)",
   ];
 
   it('reports only the known findings through the analysis', () => {
@@ -140,8 +138,6 @@ describe.skipIf(!extracted)('expression parser on the vanilla corpus', () => {
     // `@$refobject.issuperhighway`, a property of zones, used as a test of the type.
     "game lib.find.sectors.inrange.xml: expression-unknown-property: 'controllable' has no property 'issuperhighway' ($refobject is a controllable, set by param at line 4)",
     "game mainmenu.xml: expression-unknown-property: 'buildmodule' has no property 'neededsequenceresources' ($BuildModule is a buildmodule, set by set_value at line 92)",
-    "game move.generic.xml: expression-unknown-property: 'object' has no property 'islocalhighway' ($destination is an object, declared by its param at line 13)",
-    "game move.generic.xml: expression-unknown-property: 'object' has no property 'istempzone' ($destination is an object, declared by its param at line 13)",
     // `@$leaderpilot.escortgroup.indexof.{…}`, three times: scriptproperties.xml gives no datatype `escortgroup`.
     "game order.fight.escort.xml: expression-unknown-property: 'entity' has no property 'escortgroup' ($leaderpilot is an entity, set by set_value at line 352)",
     // `@$TradeOrder.available` and `@$TradeOrder.tradedeal` in debug texts, on an order guessed from create_trade_order.

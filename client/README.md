@@ -30,6 +30,7 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 
 - Child elements allowed at the caret, attribute names, and attribute values from the schemas.
 - Property chains in expressions (`player.ship.cargo.{$ware}.count`), keywords, and the values of lookups such as `class` or `ware`. After a variable whose type the script tells, the properties of that type: `$ship.` after `<create_ship name="$ship">` offers a ship's, and hover and go to definition of `$ship.name` name the ship's property rather than every datatype's `name`.
+- After a class test, the class: `player.target` is an object, and after `player.target.isclass.npc` it is an npc. That holds further in the same expression (`@player.target.isclass.npc and player.target.race`, after `not … or`, in `then`), in the body of a `do_if`, `do_elseif` or `do_while` that tests it, and in a cue's or handler's actions when a `check_value` of its conditions does, until a variable is set again. Completion, hover, go to definition and the checks use the class's properties; hover on the value tells which test says so. `isrealclass` and `isclass.{class.npc}` count too; a list of classes gives the type they all are.
 - Variables visible at the caret, also after `this.`, `parent.` or a cue name, and the variables other scripts set for this one: interrupt library items, libraries spliced in with `include_actions`, `md.Script.Cue.$x`.
 - Labels, cues, libraries and interrupt library items; script names after `md.` and cue names after `md.Script.`, cues that an extension's patch adds included.
 - Texts: pages after `{` and text ids after `{page,`. Hover over `{page, id}` or `page="…" line="…"` shows the text as the game shows it. Both work in any XML file, wares, macros, the text files and their patches included. In an XML file that is no script, completion also offers the page and the line in `page="…" line="…"`; in a script these hold expressions and are completed as such.
@@ -216,7 +217,7 @@ A few things the game's files do not say are built in:
 - Writing the changes of the side of a large library file, such as `wares.xml` after the DLCs' patches, into its patch takes up to about a second.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
 - A variable has a type only when everything that sets it in the script agrees on one: one set from a property of a variable whose own type is not known, by `do_for_each`, by a library's `return` or by other scripts has none, and neither has a variable of the global table or of a library other scripts fill. The elements of a list have no type.
-- A test of the class does not narrow the type for what follows: in `@player.target.isclass.npc and player.target.race`, `race` is reported, since `player.target` is an `object`, which has no `race`.
+- A class test narrows only a value whose type is known, and only to a class that `scriptproperties.xml` has a datatype for: not an untyped variable, which may be a macro (macros have `isclass` too), and not `ship_s` to `ship_xl`, which have no datatype of their own. A negated test does not narrow `do_else`, nor does `typeof`.
 - A variable that is read but never set is not reported where code the check does not follow may set it: `global.$x`, a cue of another script (`md.Script.Cue.$x`), a library the script never names or other scripts include, a variable some script writes into cues it gets as values (`$Cue.$x`), what a cue reads after it includes a library chosen at run time (`<include_actions ref="$Thread.$NameLib"/>`), what a `<patch>` block for older script versions reads, and what an interrupt library item of an AI script reads, which the scripts that use it set.
 - The parameters and orders a patch adds to an AI script or library are not seen by the checks of calls and their signature help: a call that passes such a parameter is reported.
 - Semantic highlighting needs the game files, which tell which attributes hold expressions, and a theme that uses semantic colours. Most do, the default themes included; `"editor.semanticHighlighting.enabled": true` turns it on for the others.
@@ -322,6 +323,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [1.1.0] - unreleased
+
+- Added
+  - After a class test (`player.target.isclass.npc`), the value is of that class: further in the same expression, in the body of a `do_if`, `do_elseif` or `do_while` that tests it, and in a cue's actions after a `check_value` of its conditions. Completion offers the class's properties, hover tells which test says so, and properties of the class are no longer reported as missing: `@player.target.isclass.npc and player.target.race`.
 
 ### [1.0.0] - 2026-10-05
 

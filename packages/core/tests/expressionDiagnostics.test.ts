@@ -275,4 +275,78 @@ describe('unknown keywords and properties', () => {
       expect(reportTyped(`${set}<set_value name="$s" exact="player.money"/>\n      <set_value name="$x" exact="$s.frobnicate"/>`)).toEqual([]);
     });
   });
+
+  describe('after a class test', () => {
+    function reportNarrowed(body: string, wrap: (body: string) => string = ai): string[] {
+      return analyzeText(wrap(body), { schemas: game.schemas, properties: game.properties, validateVariables: true })
+        .diagnostics.filter((diagnostic) => String(diagnostic.code).startsWith('expression-unknown'))
+        .map((diagnostic) => `${diagnostic.range.start.line + 1} ${diagnostic.code}: ${diagnostic.message}`);
+    }
+    // Properties of a value's subtypes are accepted on it already (an object may be a ship); a class test
+    // matters across siblings, as an object and an npc are in the game. Here an entity and a ship: both
+    // components, neither a subtype of the other.
+    const entity = '<set_value name="$e" exact="player.entity"/>\n      ';
+    const lacks = (name: string, line = 5, setAt = 4): string =>
+      `${line} expression-unknown-property: 'entity' has no property '${name}' ($e is an entity, set by set_value at line ${setAt})`;
+
+    it('takes the class further in the same expression: after and, after a negated test with or, in then', () => {
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.speed"/>`)).toEqual([lacks('speed')]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.isclass.ship and $e.speed"/>`)).toEqual([]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="@$e.isclass.ship and ($e.speed gt 0)"/>`)).toEqual([]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="not $e.isclass.ship or $e.speed"/>`)).toEqual([]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="if $e.isclass.ship then $e.speed else 0"/>`)).toEqual([]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="if $e.isclass.ship then 0 else $e.speed"/>`)).toEqual([lacks('speed')]);
+      // Left of the test, and on the other side of a plain or, nothing is known.
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.speed and $e.isclass.ship"/>`)).toEqual([lacks('speed')]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.isclass.ship or $e.speed"/>`)).toEqual([lacks('speed')]);
+    });
+
+    it('checks against the class, and says which test tells it', () => {
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.isclass.ship and $e.frobnicate"/>`)).toEqual([
+        "5 expression-unknown-property: 'ship' has no property 'frobnicate' ($e is a ship here, by isclass.ship at line 5)",
+      ]);
+      // A chain of keywords and properties, as the test names it.
+      expect(reportNarrowed('<set_value name="$x" exact="player.entity.speed"/>')).toEqual(["4 expression-unknown-property: 'entity' has no property 'speed'"]);
+      expect(reportNarrowed('<set_value name="$x" exact="player.entity.isclass.ship and player.entity.speed"/>')).toEqual([]);
+    });
+
+    it('takes the class from braces and lists: the datatype the classes share', () => {
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.isclass.{class.ship} and $e.speed"/>`)).toEqual([]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.isclass.{[class.ship, class.station]} and $e.cargo.list"/>`)).toEqual([]);
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.isclass.{[class.ship, class.station]} and $e.frobnicate"/>`)).toEqual([
+        "5 expression-unknown-property: 'container' has no property 'frobnicate' ($e is a container here, by isclass.{[class.ship, class.station]} at line 5)",
+      ]);
+    });
+
+    it('holds in the body of do_if, do_elseif and do_while, until the variable is set again', () => {
+      const inside = (condition: string, body: string): string => `${entity}<${condition} value="$e.isclass.ship">\n        ${body}\n      </${condition}>`;
+      for (const condition of ['do_if', 'do_while']) {
+        expect(reportNarrowed(inside(condition, '<set_value name="$x" exact="$e.speed"/>'))).toEqual([]);
+      }
+      expect(
+        reportNarrowed(
+          `${entity}<do_if value="false"/>\n      <do_elseif value="$e.isclass.ship">\n        <set_value name="$x" exact="$e.speed"/>\n      </do_elseif>`
+        )
+      ).toEqual([]);
+      // After the body, and after the variable is set again in it.
+      expect(reportNarrowed(`${entity}<do_if value="$e.isclass.ship"/>\n      <set_value name="$x" exact="$e.speed"/>`)).toEqual([lacks('speed', 6)]);
+      expect(reportNarrowed(inside('do_if', '<set_value name="$e" exact="player.entity"/>\n        <set_value name="$x" exact="$e.speed"/>'))).toEqual([
+        "7 expression-unknown-property: 'entity' has no property 'speed' ($e is an entity, set by set_value at line 4)",
+      ]);
+    });
+
+    it("holds in a cue's actions for a check_value of its conditions", () => {
+      const cue = (body: string): string =>
+        `<mdscript name="S">\n  <cues>\n    <cue name="A">\n      <conditions>\n        <check_value value="player.entity.isclass.ship"/>\n      </conditions>\n      <actions>\n        ${body}\n      </actions>\n    </cue>\n  </cues>\n</mdscript>\n`;
+      expect(reportNarrowed('<set_value name="$x" exact="player.entity.speed"/>', cue)).toEqual([]);
+    });
+
+    it('leaves a value of no known type alone: it may be a macro, which has isclass too', () => {
+      expect(reportNarrowed('<do_if value="$u.isclass.ship">\n        <set_value name="$x" exact="$u.frobnicate"/>\n      </do_if>')).toEqual([]);
+    });
+
+    it('works while typing: a test before an unclosed value', () => {
+      expect(reportNarrowed(`${entity}<set_value name="$x" exact="$e.isclass.ship and $e.speed`)).toEqual([]);
+    });
+  });
 });

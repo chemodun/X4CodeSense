@@ -9,6 +9,7 @@ import { enumerationsOf, isExpressionAttribute, type XsdElement } from '../xsd/s
 import { isChainNode, resolvedChainOf, type ChainNode } from './astChain';
 import { parsedValue } from './attributeExpression';
 import { formatArgumentCount, formatPlaceholders } from './formats';
+import { narrowingAt, type ClassFact } from './narrowing';
 import { walkExpression, type Expression } from './parser';
 import type { ResolvedChain } from './propertyChain';
 
@@ -67,6 +68,15 @@ export function describeVariableType(name: string, type: VariableType, document:
   }
   const how = type.source === 'param type' ? 'declared by its param' : `set by ${element}`;
   return `${name} is ${article} ${type.name}, ${how} at ${at}`;
+}
+
+/** Why a chain is of the class a test tells: `$x is a ship here, by isclass.ship at line 12`. */
+export function describeNarrowing(chain: string, fact: ClassFact, document: TextDocument, origin?: ExpressionValidationOptions['origin']): string {
+  const offset = offsetInValue(fact.attribute, fact.offset);
+  const place = origin?.(offset) ?? { line: document.positionAt(offset).line };
+  const at = `line ${place.line + 1}${place.file === undefined ? '' : ` of ${place.file}`}`;
+  const article = /^[aeiou]/i.test(fact.datatype.name) ? 'an' : 'a';
+  return `${chain} is ${article} ${fact.datatype.name} here, by ${fact.test} at ${at}`;
 }
 
 /**
@@ -255,9 +265,11 @@ export function validateExpressions(
       const variables = options.variables;
       const stepTypes = variables ? stepTypesIn(variables, element, properties) : undefined;
       const checkChain = (outer: ChainNode): void => {
-        const { head, steps, resolved } = resolvedChainOf(outer, text, properties, schema, stepTypes);
+        const narrowing = narrowingAt(attribute, outer.start, properties, schema, variables);
+        const { head, steps, resolved } = resolvedChainOf(outer, text, properties, schema, stepTypes, narrowing?.types);
         checkHead(head, resolved.steps[0].keyword !== undefined);
         let typedFrom = -1;
+        let narrowedFrom = -1;
         for (let index = 1; index < steps.length; index++) {
           if (steps[index].text === '' || steps[index + 1]?.text === '') {
             // The name after a dot still to be typed: the syntax error says so, and the name before it may
@@ -266,6 +278,9 @@ export function validateExpressions(
           }
           if (resolved.steps[index - 1].fromVariable) {
             typedFrom = index - 1;
+          }
+          if (resolved.steps[index - 1].narrowed) {
+            narrowedFrom = index - 1;
           }
           const owner = resolved.owners[index];
           const step = resolved.steps[index];
@@ -281,12 +296,23 @@ export function validateExpressions(
             // Variables on objects, argument lists and dynamic lookups (`$ship.{$name}`) are not described by the data.
             break;
           }
-          const variableType = typedFrom >= 0 ? variables?.typeAt(element, steps, typedFrom) : undefined;
-          if (typedFrom >= 0 && (!options.typedProperties || !variableType)) {
+          // The latest of a variable's type and a class test decides the type; a class test says why only
+          // when the step is looked up on the class itself, not on what a property of it yields.
+          const fromTest = narrowedFrom >= 0 && narrowedFrom >= typedFrom;
+          const fact = fromTest && narrowedFrom === index - 1 ? narrowing?.factFor(narrowedFrom, steps) : undefined;
+          const variableType = !fromTest && typedFrom >= 0 ? variables?.typeAt(element, steps, typedFrom) : undefined;
+          if (fromTest && !options.typedProperties) {
+            break;
+          }
+          if (!fromTest && typedFrom >= 0 && (!options.typedProperties || !variableType)) {
             break;
           }
           const ownerName = owner.kind === 'keyword' ? owner.keyword.name : owner.datatype.name;
-          const because = variableType ? ` (${describeVariableType(steps[typedFrom].text, variableType, document, options.origin)})` : '';
+          const because = fact
+            ? ` (${describeNarrowing(text.slice(steps[0].start, steps[narrowedFrom].end), fact, document, options.origin)})`
+            : variableType
+              ? ` (${describeVariableType(steps[typedFrom].text, variableType, document, options.origin)})`
+              : '';
           const guessed = variableType?.guessed === true;
           const first = stopped ? stopped.first : index;
           const name = text.slice(steps[first].start, steps[index].end);

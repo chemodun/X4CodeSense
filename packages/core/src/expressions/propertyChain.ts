@@ -224,11 +224,14 @@ export interface ResolvedStep {
   datatype?: ScriptDatatype;
   /** True for a variable step whose datatype is the variable's type (`StepTypes`). */
   fromVariable?: boolean;
+  /** True when the datatype after this step is the class a test of the chain so far tells (`isclass.ship`). */
+  narrowed?: boolean;
 }
 
 /**
  * The type of a variable a step of a chain names (`$ship` at its head, `this.$ship`), from what the script
- * sets it to; undefined when not known. Asked for variable steps only.
+ * sets it to; undefined when not known. Asked for variable steps only. As `narrowed`, the type of the chain
+ * of steps `0..index`, for any step.
  */
 export type StepTypes = (index: number, steps: readonly ChainStep[]) => ScriptDatatype | undefined;
 
@@ -242,6 +245,18 @@ export interface ResolvedChain {
 }
 
 const unknownOwner: ChainOwner = { kind: 'unknown' };
+
+/**
+ * True when the value's type and the class's datatype share a supertype. A value of no known type is not
+ * narrowed: it may be a macro as well as a component, and both have `isclass`.
+ */
+function related(type: ScriptDatatype | undefined, datatype: ScriptDatatype): boolean {
+  if (!type) {
+    return false;
+  }
+  const family = new Set(datatype.chain());
+  return [...type.chain()].some((supertype) => family.has(supertype));
+}
 
 function ownerOfDatatype(datatype: ScriptDatatype | undefined): ChainOwner {
   return datatype ? { kind: 'datatype', datatype } : unknownOwner;
@@ -532,8 +547,18 @@ function commonType(candidates: readonly ScriptProperty[], properties: ScriptPro
   return properties.datatype(type);
 }
 
-/** Resolves the steps of a chain against the script properties; with `stepTypes`, variables of known type as values of that type. */
-export function resolveChain(chain: PropertyChain, properties: ScriptProperties, schema: ScriptSchema, stepTypes?: StepTypes): ResolvedChain {
+/**
+ * Resolves the steps of a chain against the script properties; with `stepTypes`, variables of known type as
+ * values of that type; with `narrowed`, a chain a class test names as a value of that class, whatever it
+ * would be otherwise.
+ */
+export function resolveChain(
+  chain: PropertyChain,
+  properties: ScriptProperties,
+  schema: ScriptSchema,
+  stepTypes?: StepTypes,
+  narrowed?: StepTypes
+): ResolvedChain {
   const steps = chain.steps;
   const resolved: ResolvedStep[] = steps.map((step) => ({ step }));
   // owners[i] is what steps[i] is looked up on; the head has no owner.
@@ -563,8 +588,19 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
     owner = ownerOfDatatype(datatype);
   }
 
+  // A class test of the chain so far decides what the step before `index` is, when its type is known and of
+  // the class's family: an object may be an npc, as both are components; a macro of the class lockbox is no lockbox.
+  const narrow = (index: number): void => {
+    const datatype = narrowed?.(index - 1, steps);
+    if (datatype && related(resolved[index - 1].datatype, datatype)) {
+      resolved[index - 1].datatype = datatype;
+      resolved[index - 1].narrowed = true;
+      owner = { kind: 'datatype', datatype };
+    }
+  };
   let index = 1;
   while (index < steps.length) {
+    narrow(index);
     // `this.$ship`: a variable of the cue's table, not a property of the cue.
     const typed = variableType(index);
     if (typed) {
@@ -664,6 +700,7 @@ export function resolveChain(chain: PropertyChain, properties: ScriptProperties,
     owner = unknownOwner;
     index++;
   }
+  narrow(steps.length);
   // The owner after the last step is what a following segment would be looked up on.
   owners[steps.length] = owner;
   return { steps: resolved, owners };
@@ -703,10 +740,16 @@ function segmentLabel(segment: PropertySegment): string {
  * written on an unknown owner that a property starts with. Bare values of a lookup are offered where a
  * shortcut takes them, `isclass.<classname>`; a placeholder such as `{$faction}` is offered as `{…}`.
  */
-export function completeChain(chain: PropertyChain, properties: ScriptProperties, schema: ScriptSchema, stepTypes?: StepTypes): SegmentCompletion[] {
+export function completeChain(
+  chain: PropertyChain,
+  properties: ScriptProperties,
+  schema: ScriptSchema,
+  stepTypes?: StepTypes,
+  narrowed?: StepTypes
+): SegmentCompletion[] {
   const partial = chain.partial?.text ?? '';
   const steps = chain.steps;
-  const { owners } = resolveChain(chain, properties, schema, stepTypes);
+  const { owners } = resolveChain(chain, properties, schema, stepTypes, narrowed);
   const results = new Map<string, SegmentCompletion>();
   const offer = (label: string, property: ScriptProperty, continues: boolean, value?: ScriptProperty): void => {
     if (!label.startsWith(partial) || results.has(label)) {

@@ -1,6 +1,7 @@
 import { CompletionItemKind, InsertTextFormat, Range, type CompletionItem } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { positionContext, schemaOf, scriptSchemaOf, type PositionContext } from '../analysis/positionContext';
+import { narrowingAt } from '../expressions/narrowing';
 import { chainAtCaret, completeChain } from '../expressions/propertyChain';
 import { isInsideString, tokenize, tokenIndexAt, type TokenKind } from '../expressions/lexer';
 import type { GameData } from '../gameData';
@@ -240,7 +241,8 @@ class Completer {
         }
       }
       const variables = this.analysis.variables;
-      for (const completion of completeChain(chain, properties, schema, variables && stepTypesIn(variables, element, properties))) {
+      const narrowing = narrowingAt(attribute, chain.steps[0]?.start ?? index, properties, schema, variables);
+      for (const completion of completeChain(chain, properties, schema, variables && stepTypesIn(variables, element, properties), narrowing?.types)) {
         const item: CompletionItem = {
           label: completion.label,
           kind: completion.value ? CompletionItemKind.EnumMember : CompletionItemKind.Field,

@@ -66,6 +66,8 @@ interface Memo extends ResolvedChainNode {
   schema: ScriptSchema;
   /** The types of the variable steps the resolution used, by step; empty when none had one. */
   types: (ScriptDatatype | undefined)[];
+  /** The types class tests gave chains of the steps up to each, by step; empty when none did. */
+  narrowedTypes: (ScriptDatatype | undefined)[];
 }
 
 const resolvedByNode = new WeakMap<Expression, Memo>();
@@ -74,29 +76,54 @@ const noTypes: (ScriptDatatype | undefined)[] = [];
 /**
  * `stepsOf` and `resolveChain` of an outermost chain node, or of a lone head, of a parsed value. The trees
  * of an analysis are shared (`parsedValue`), and so is this: the expression checks, the variables and the
- * semantic tokens resolve each chain once, unless the types of its variables differ from those it was
- * resolved with. `text` is the value the tree was parsed from. Callers must not change the result.
+ * semantic tokens resolve each chain once, unless the types of its variables, or those class tests give
+ * it (`narrowed`), differ from those it was resolved with. `text` is the value the tree was parsed from.
+ * Callers must not change the result.
  */
-export function resolvedChainOf(node: Expression, text: string, properties: ScriptProperties, schema: ScriptSchema, stepTypes?: StepTypes): ResolvedChainNode {
+export function resolvedChainOf(
+  node: Expression,
+  text: string,
+  properties: ScriptProperties,
+  schema: ScriptSchema,
+  stepTypes?: StepTypes,
+  narrowed?: StepTypes
+): ResolvedChainNode {
   const known = resolvedByNode.get(node);
   const { head, steps } = known ?? stepsOf(node, text);
-  let types = noTypes;
-  if (stepTypes) {
-    for (let index = 0; index < steps.length; index++) {
-      const type = steps[index].kind === 'variable' ? stepTypes(index, steps) : undefined;
-      if (type) {
-        if (types === noTypes) {
-          types = [];
+  const typesOf = (ask: StepTypes | undefined, variablesOnly: boolean): (ScriptDatatype | undefined)[] => {
+    let types = noTypes;
+    if (ask) {
+      for (let index = 0; index < steps.length; index++) {
+        const type = !variablesOnly || steps[index].kind === 'variable' ? ask(index, steps) : undefined;
+        if (type) {
+          if (types === noTypes) {
+            types = [];
+          }
+          types[index] = type;
         }
-        types[index] = type;
       }
     }
-  }
-  if (known && known.properties === properties && known.schema === schema && sameTypes(known.types, types, steps.length)) {
+    return types;
+  };
+  const types = typesOf(stepTypes, true);
+  const narrowedTypes = typesOf(narrowed, false);
+  if (
+    known &&
+    known.properties === properties &&
+    known.schema === schema &&
+    sameTypes(known.types, types, steps.length) &&
+    sameTypes(known.narrowedTypes, narrowedTypes, steps.length)
+  ) {
     return known;
   }
-  const resolved = resolveChain({ steps }, properties, schema, types === noTypes ? undefined : (index) => types[index]);
-  const chain: Memo = { head, steps, resolved, properties, schema, types };
+  const resolved = resolveChain(
+    { steps },
+    properties,
+    schema,
+    types === noTypes ? undefined : (index) => types[index],
+    narrowedTypes === noTypes ? undefined : (index) => narrowedTypes[index]
+  );
+  const chain: Memo = { head, steps, resolved, properties, schema, types, narrowedTypes };
   resolvedByNode.set(node, chain);
   return chain;
 }

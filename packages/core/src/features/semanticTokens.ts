@@ -32,6 +32,7 @@ import type { SemanticTokensLegend } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { declarationOf } from '../analysis/positionContext';
 import { isChainNode, resolvedChainOf, stepsOf } from '../expressions/astChain';
+import { narrowingAt } from '../expressions/narrowing';
 import { parsedValue } from '../expressions/attributeExpression';
 import type { Token } from '../expressions/lexer';
 import { walkExpression, type Expression } from '../expressions/parser';
@@ -230,6 +231,7 @@ class Classifier {
     const parsed = parsedValue(attribute);
     const documentVariables = this.analysis.variables;
     const roles = this.roles(
+      attribute,
       parsed.expression,
       text,
       documentVariables && this.properties ? stepTypesIn(documentVariables, attribute.element, this.properties) : undefined
@@ -287,7 +289,7 @@ class Classifier {
   }
 
   /** What the identifiers of an expression are, by their start in the value: keywords, chain steps, calls, units. */
-  private roles(expression: Expression, text: string, stepTypes: StepTypes | undefined): Map<number, Classification> {
+  private roles(attribute: XmlAttribute, expression: Expression, text: string, stepTypes: StepTypes | undefined): Map<number, Classification> {
     const roles = new Map<number, Classification>();
     const inner = new Set<Expression>();
     walkExpression(expression, (node) => {
@@ -311,7 +313,7 @@ class Classifier {
         case 'args':
           // Parents come first: a chain's object is marked before it is visited, so each chain is resolved once, whole.
           if (!inner.has(node)) {
-            this.chainRoles(node, text, roles, stepTypes);
+            this.chainRoles(attribute, node, text, roles, stepTypes);
           }
           if (isChainNode(node.object)) {
             inner.add(node.object);
@@ -325,10 +327,11 @@ class Classifier {
   }
 
   /** The steps of a chain after its head: each property covers as many steps as it has segments. */
-  private chainRoles(outer: Expression, text: string, roles: Map<number, Classification>, stepTypes: StepTypes | undefined): void {
+  private chainRoles(attribute: XmlAttribute, outer: Expression, text: string, roles: Map<number, Classification>, stepTypes: StepTypes | undefined): void {
     // Resolved by the expression checks already, in an analysis that ran them with the same types.
+    const narrowing = this.properties ? narrowingAt(attribute, outer.start, this.properties, this.schema, this.analysis.variables) : undefined;
     const { steps, resolved } = this.properties
-      ? resolvedChainOf(outer, text, this.properties, this.schema, stepTypes)
+      ? resolvedChainOf(outer, text, this.properties, this.schema, stepTypes, narrowing?.types)
       : { ...stepsOf(outer, text), resolved: undefined };
     let index = 1;
     while (index < steps.length) {

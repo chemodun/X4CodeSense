@@ -2,6 +2,7 @@ import type { Location } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { positionContext, schemaOf, scriptSchemaOf } from '../analysis/positionContext';
 import { isInsideString, tokenize } from '../expressions/lexer';
+import { narrowingAt } from '../expressions/narrowing';
 import { chainAtToken, resolveChain } from '../expressions/propertyChain';
 import type { GameData } from '../gameData';
 import type { SourceLocation } from '../sourceLocation';
@@ -53,7 +54,10 @@ function definitionInValue(analysis: DocumentAnalysis, attribute: XmlAttribute, 
     return [];
   }
   const variables = analysis.variables;
-  const step = resolveChain(found.chain, properties, schema, variables && stepTypesIn(variables, attribute.element, properties)).steps[found.stepIndex];
+  const narrowing = narrowingAt(attribute, found.chain.steps[0].start, properties, schema, variables);
+  const step = resolveChain(found.chain, properties, schema, variables && stepTypesIn(variables, attribute.element, properties), narrowing?.types).steps[
+    found.stepIndex
+  ];
   if (step.keyword) {
     return locations(game, [step.keyword.location]);
   }
