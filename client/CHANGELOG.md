@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.1.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v1.0.0...x4codesense@v1.1.0) (2026-10-06)
+
+
+### Features
+
+* a class test narrows the type: after player.target.isclass.npc, player.target is an npc ([d2c853f](https://github.com/chemodun/X4CodeSense/commit/d2c853fab20d81b09e41e69f18cc8021ed8289b2))
+* a negated class test narrows where it is false: in do_else, and after a do_if that returns ([79d2e48](https://github.com/chemodun/X4CodeSense/commit/79d2e4818e3b960797ac3f5ed04501e54fd9f581))
+* folding in scripts and patches: elements up to their end tag, comments and #region blocks ([1f2f811](https://github.com/chemodun/X4CodeSense/commit/1f2f811d6ba54f438893f53a2fc80b85e7496376))
+* inlay hints: the text after a text reference, a variable's type where it is set ([51640f8](https://github.com/chemodun/X4CodeSense/commit/51640f8623ba71dd91a33f5c6ecdb331fa252910))
+* the MCP server sends the extension's icon in its serverInfo ([47f4940](https://github.com/chemodun/X4CodeSense/commit/47f4940315db153d9a04bcb91599e0bf1904ff46))
+* the mods installed in the game that the extensions need are read, packed ones from their catalogs ([8148bde](https://github.com/chemodun/X4CodeSense/commit/8148bde0b8c565c3eb88b6fb3c8a3ba64910bbb3))
+
+
+### Miscellaneous Chores
+
+* release 1.1.0 of the extension ([52b58ab](https://github.com/chemodun/X4CodeSense/commit/52b58abea4b4d7b1d3d19d818c6b6cb3114489e1))
+
+
+### Documentation
+
+* screenshots in the extension's README ([13da1a3](https://github.com/chemodun/X4CodeSense/commit/13da1a3f5312e118a10f0b49621500320c3a6e72))
+* the extension is on Open VSX ([dcb7e22](https://github.com/chemodun/X4CodeSense/commit/dcb7e22594e5014e63dc95eecc7c4732079d1b60))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.10.1 to 0.11.0
+
 ## [1.0.0](https://github.com/chemodun/X4CodeSense/compare/x4codesense@v0.12.0...x4codesense@v1.0.0) (2026-10-05)
 
 

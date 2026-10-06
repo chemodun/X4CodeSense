@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.10.1...x4-script-core@v0.11.0) (2026-10-06)
+
+
+### Features
+
+* a class test narrows the type: after player.target.isclass.npc, player.target is an npc ([d2c853f](https://github.com/chemodun/X4CodeSense/commit/d2c853fab20d81b09e41e69f18cc8021ed8289b2))
+* a negated class test narrows where it is false: in do_else, and after a do_if that returns ([79d2e48](https://github.com/chemodun/X4CodeSense/commit/79d2e4818e3b960797ac3f5ed04501e54fd9f581))
+* folding in scripts and patches: elements up to their end tag, comments and #region blocks ([1f2f811](https://github.com/chemodun/X4CodeSense/commit/1f2f811d6ba54f438893f53a2fc80b85e7496376))
+* inlay hints: the text after a text reference, a variable's type where it is set ([51640f8](https://github.com/chemodun/X4CodeSense/commit/51640f8623ba71dd91a33f5c6ecdb331fa252910))
+* the mods installed in the game that the extensions need are read, packed ones from their catalogs ([8148bde](https://github.com/chemodun/X4CodeSense/commit/8148bde0b8c565c3eb88b6fb3c8a3ba64910bbb3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-catalog bumped from 0.1.1 to 0.2.0
+
 ## [0.10.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.10.0...x4-script-core@v0.10.1) (2026-10-03)
 
 

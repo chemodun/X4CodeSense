@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.3.0...x4-script-mcp@v0.4.0) (2026-10-06)
+
+
+### Features
+
+* the MCP server sends the extension's icon in its serverInfo ([47f4940](https://github.com/chemodun/X4CodeSense/commit/47f4940315db153d9a04bcb91599e0bf1904ff46))
+* the mods installed in the game that the extensions need are read, packed ones from their catalogs ([8148bde](https://github.com/chemodun/X4CodeSense/commit/8148bde0b8c565c3eb88b6fb3c8a3ba64910bbb3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.10.1 to 0.11.0
+
 ## [0.3.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.2.0...x4-script-mcp@v0.3.0) (2026-10-04)
 
 
