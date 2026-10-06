@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v1.0.0...x4-script-check@v1.1.0) (2026-10-06)
+
+
+### Features
+
+* the mods installed in the game that the extensions need are read, packed ones from their catalogs ([8148bde](https://github.com/chemodun/X4CodeSense/commit/8148bde0b8c565c3eb88b6fb3c8a3ba64910bbb3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.10.1 to 0.11.0
+
 ## [1.0.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v0.6.0...x4-script-check@v1.0.0) (2026-10-05)
 
 

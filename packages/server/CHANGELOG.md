@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.9.2...x4-script-language-server@v0.10.0) (2026-10-06)
+
+
+### Features
+
+* folding in scripts and patches: elements up to their end tag, comments and #region blocks ([1f2f811](https://github.com/chemodun/X4CodeSense/commit/1f2f811d6ba54f438893f53a2fc80b85e7496376))
+* inlay hints: the text after a text reference, a variable's type where it is set ([51640f8](https://github.com/chemodun/X4CodeSense/commit/51640f8623ba71dd91a33f5c6ecdb331fa252910))
+* the mods installed in the game that the extensions need are read, packed ones from their catalogs ([8148bde](https://github.com/chemodun/X4CodeSense/commit/8148bde0b8c565c3eb88b6fb3c8a3ba64910bbb3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.10.1 to 0.11.0
+
 ## [0.9.2](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.9.1...x4-script-language-server@v0.9.2) (2026-10-03)
 
 

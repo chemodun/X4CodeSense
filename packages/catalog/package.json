@@ -1,6 +1,6 @@
 {
   "name": "x4-catalog",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Reads the catalogs of X4: Foundations (.cat/.dat) in place, without extracting them, and writes new ones.",
   "main": "out/index.js",
   "types": "out/index.d.ts",
