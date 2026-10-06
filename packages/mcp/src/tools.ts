@@ -7,6 +7,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import { serverIcon } from './icon';
 import {
   analyzeDocument,
   chainAtToken,
@@ -559,7 +560,7 @@ const readOnly = { readOnlyHint: true, openWorldHint: false };
 
 /** The server with its tools; every call first reads what changed in the extensions. */
 export function createServer(workspace: Workspace, version?: string): McpServer {
-  const server = new McpServer({ name: 'x4-script-mcp', title: 'X4CodeSense', version: version ?? '0.0.0' }, { instructions });
+  const server = new McpServer({ name: 'x4-script-mcp', title: 'X4CodeSense', version: version ?? '0.0.0', icons: [serverIcon] }, { instructions });
   /**
    * Runs a tool on a current workspace; an error is reported to the agent, not thrown. Each call is logged
    * on standard error, which clients show as the server's log: what agents ask, and how it went.

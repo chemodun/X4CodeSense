@@ -345,6 +345,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - After a class test (`player.target.isclass.npc`), the value is of that class: further in the same expression, in the body of a `do_if`, `do_elseif` or `do_while` that tests it, and in a cue's actions after a `check_value` of its conditions. Completion offers the class's properties, hover tells which test says so, and properties of the class are no longer reported as missing: `@player.target.isclass.npc and player.target.race`. A negated test does the same where it is false: in the `do_elseif` and `do_else` after it, and after a `do_if` whose body ends with `return`, `break`, `continue` or `resume`.
   - Folding in scripts and patches: elements up to their end tag, comments, and `<!-- #region -->` to `<!-- #endregion -->`.
   - Inlay hints: the text after a text reference, in any XML file, and a variable's type after the definition it comes from. `x4CodeSense.inlayHints.texts` and `x4CodeSense.inlayHints.variableTypes` turn them off.
+  - The MCP server sends the extension's icon with its name, so VS Code's list of MCP servers shows it rather than a generic one.
 
 ### [1.0.0] - 2026-10-05
 

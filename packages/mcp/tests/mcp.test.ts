@@ -162,6 +162,18 @@ describe('x4-script-mcp', { timeout: 30_000 }, () => {
     expect(client.getInstructions()).toContain('describe_element');
   });
 
+  it('names itself with a title and the extension icon, which clients show in their server lists', () => {
+    const info = client.getServerVersion();
+    expect(info).toMatchObject({ name: 'x4-script-mcp', title: 'X4CodeSense' });
+    expect(info?.icons).toHaveLength(1);
+    const icon = info?.icons?.[0];
+    expect(icon).toMatchObject({ mimeType: 'image/png', sizes: ['64x64'] });
+    const png = Buffer.from(icon?.src.replace(/^data:image\/png;base64,/, '') ?? '', 'base64');
+    // The PNG signature, then the width and height of its header chunk.
+    expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([64, 64]);
+  });
+
   it('tells what it read', async () => {
     const status = await call<Record<string, unknown>>('status');
     expect(status).toMatchObject({ game: unpacked, gameKind: 'extracted', loaded: true, extensions: [extensions], schemas: ['aiscripts', 'md'] });
