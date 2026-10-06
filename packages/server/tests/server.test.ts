@@ -26,6 +26,7 @@ import {
   DocumentSymbolRequest,
   ExitNotification,
   FileChangeType,
+  FoldingRangeRequest,
   HoverRequest,
   InitializedNotification,
   InitializeRequest,
@@ -209,6 +210,7 @@ beforeAll(async () => {
   expect(result.capabilities.referencesProvider).toBe(true);
   expect(result.capabilities.renameProvider).toEqual({ prepareProvider: true });
   expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
+  expect(result.capabilities.foldingRangeProvider).toBe(true);
   expect(result.capabilities.workspaceSymbolProvider).toBe(true);
   expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix', 'source.fixAll'] });
   expect(result.capabilities.semanticTokensProvider).toEqual({ legend: semanticTokensLegend, full: { delta: true }, range: true });
@@ -651,6 +653,32 @@ describe('outline', () => {
       textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<macros>\n  <macro name="m"/>\n</macros>\n' },
     });
     expect(await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri: otherUri } })).toBeNull();
+  });
+});
+
+describe('folding', () => {
+  it('folds scripts and leaves other XML to other tooling', async () => {
+    const uri = 'file:///mod/md/Folding.xml';
+    const lines = [
+      '<mdscript name="F">',
+      '  <cues>',
+      '    <!--',
+      '      A cue.',
+      '    -->',
+      '    <cue name="A">',
+      '    </cue>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    await open(uri, lines.join('\n'));
+    const ranges = await connection.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } });
+    expect(ranges?.map((range) => `${range.startLine}-${range.endLine}${range.kind ? ` ${range.kind}` : ''}`)).toEqual(['0-7', '1-6', '2-4 comment']);
+    const otherUri = 'file:///mod/assets/folded.xml';
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<macros>\n  <macro name="m">\n  </macro>\n</macros>\n' },
+    });
+    expect(await connection.sendRequest(FoldingRangeRequest.type, { textDocument: { uri: otherUri } })).toBeNull();
   });
 });
 

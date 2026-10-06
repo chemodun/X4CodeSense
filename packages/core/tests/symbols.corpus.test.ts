@@ -4,7 +4,8 @@
  * interrupt library item and patch operation is in the outline once, every variable a script sets is
  * listed once unless it is a parameter, every symbol has a name, its name inside its range and its range
  * inside its parent's. Go to Symbol in Workspace names every script, cue, library and interrupt library
- * item of the index at its name.
+ * item of the index at its name. Folding folds every element whose end tag is lines below its start, in
+ * ranges inside the document.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -17,6 +18,7 @@ import {
   analyzeText,
   attributeNamed,
   documentSymbols,
+  foldingRanges,
   loadGameData,
   parseXml,
   scriptSchemaOf,
@@ -211,6 +213,47 @@ describe.skipIf(!extracted)('the outline on the corpus', { timeout: 300_000 }, (
     expect(all.length).toBeGreaterThan(20_000);
     expect(problems.slice(0, 20)).toEqual([]);
     expect(all.length).toBe(wanted + added);
+    expect(best).toBeLessThan(fileCeilingMs);
+  });
+
+  it('folds every element whose end tag is lines below its start, in ranges inside the document', () => {
+    const problems: string[] = [];
+    const counts = { files: 0, ranges: 0 };
+    let largest = { length: 0, file: '', text: '' };
+    for (const entry of game.index?.entries() ?? []) {
+      const text = readFileSync(entry.file, 'utf8');
+      if (text.length > largest.length) {
+        largest = { length: text.length, file: entry.file, text };
+      }
+      const analysis = analyzeText(text, { schemas: game.schemas }, pathToFileURL(entry.file).toString());
+      const ranges = foldingRanges(analysis);
+      const where = path.basename(entry.file);
+      if (!ranges) {
+        problems.push(`${where}: not folded`);
+        continue;
+      }
+      counts.files++;
+      counts.ranges += ranges.length;
+      const lines = analysis.document.lineCount;
+      const starts = new Set<number>();
+      for (const range of ranges) {
+        starts.add(range.startLine);
+        if (range.startLine < 0 || range.endLine <= range.startLine || range.endLine >= lines) {
+          problems.push(`${where}: ${range.startLine + 1}-${range.endLine + 1}`);
+        }
+      }
+      for (const element of analysis.structure?.elements ?? []) {
+        const start = analysis.document.positionAt(element.start).line;
+        if (element.endTag && analysis.document.positionAt(element.endTag.start).line > start + 1 && !starts.has(start)) {
+          problems.push(`${where}: <${element.name}> at line ${start + 1} not folded`);
+        }
+      }
+    }
+    const analysis = analyzeText(largest.text, { schemas: game.schemas }, pathToFileURL(largest.file).toString());
+    const best = bestOf(5, () => foldingRanges(analysis));
+    console.log(`folding: ${counts.files} files, ${counts.ranges} ranges; largest ${path.basename(largest.file)} ${best.toFixed(1)} ms best of 5`);
+    expect(counts.files).toBeGreaterThan(600);
+    expect(problems.slice(0, 20)).toEqual([]);
     expect(best).toBeLessThan(fileCeilingMs);
   });
 });

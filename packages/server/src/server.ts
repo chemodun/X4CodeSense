@@ -15,6 +15,7 @@ import {
   type CompletionList,
   type DocumentSymbol,
   type FileEvent,
+  type FoldingRange,
   type Hover,
   type InitializeParams,
   type InitializeResult,
@@ -45,6 +46,7 @@ import {
   documentSymbols,
   EditorTabsNotificationMethod,
   fixAll,
+  foldingRanges,
   gameFileOf,
   GameFileRequestMethod,
   gameFileUri,
@@ -358,6 +360,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
       documentSymbolProvider: { label: 'X4CodeSense' },
+      foldingRangeProvider: true,
       workspaceSymbolProvider: true,
       codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix, CodeActionKind.SourceFixAll] },
       semanticTokensProvider: { legend: semanticTokensLegend, full: { delta: true }, range: true },
@@ -1398,6 +1401,12 @@ connection.onRenameRequest((params): WorkspaceEdit | ResponseError | null => {
 connection.onDocumentSymbol((params): DocumentSymbol[] | null => {
   const analysis = currentAnalysis(params.textDocument.uri);
   return analysis?.structure ? documentSymbols(analysis, game && { database: game.texts, language: textDisplay().language }) : null;
+});
+
+// Other XML gets no folding from here either, so VS Code folds it by indentation, or other XML tooling does.
+connection.onFoldingRanges((params): FoldingRange[] | null => {
+  const analysis = currentAnalysis(params.textDocument.uri);
+  return (analysis && foldingRanges(analysis)) ?? null;
 });
 
 // The scripts, cues and interrupt library items of the index; the workspace's own first among equal matches.
