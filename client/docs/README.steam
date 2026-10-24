@@ -67,7 +67,7 @@ VS Code colours XML attribute values as strings, so a whole expression is one co
 [*] cues and libraries, also in [b]md.Script.Cue[/b], labels and interrupt library items, where they are defined and where they are used;
 [*] numbers with their units ([b]5km[/b], [b]10s[/b]), strings, [b]if[/b], [b]then[/b], [b]else[/b], and the operators and punctuation.
 [/list]
-In a patch, what an [b]add[/b] or [b]replace[/b] brings in is coloured as where it lands. The colours come from your theme, as for other languages; VS Code's own themes have none for labels, which keep the colour of XML strings there. Plain values such as [b]operation="add"[/b], and the paths of a patch's [b]sel[/b] and [b]if[/b], keep the colour of XML strings.
+In a patch, what an [b]add[/b] or [b]replace[/b] brings in is coloured as where it lands. The paths of its [b]sel[/b] and [b]if[/b] are coloured as XPath: element and attribute names as the tags and attributes of XML, functions such as [b]not()[/b] and [b]text()[/b], strings, numbers and operators, and the name a path picks a cue or an interrupt library item by ([b]cue[@name='Start'][/b]) as that name is elsewhere. This works on any XPath, also on paths X4CodeSense does not evaluate, and needs no game files. The colours come from your theme, as for other languages; VS Code's own themes have none for labels, which keep the colour of XML strings there. Plain values such as [b]operation="add"[/b] keep the colour of XML strings.
 
 [h2]Quick fixes[/h2]
 
@@ -382,6 +382,7 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [list]
 [*] Library files that name their schema on the root ([b]xsi:noNamespaceSchemaLocation="libraries.xsd"[/b], as 42 of the game's do) are checked against that schema of the game's [b]libraries[/b], with completion, hover, the outline, the quick fixes and the status bar from it. In a [b]libraries[/b] folder, a schema the game does not have is a warning ([b]library-schema-unknown[/b]). x4-script-check and the MCP server's [b]check[/b] count them as library files; [b]describe_element[/b] describes the elements of a library schema with [b]library[/b].
 [*] What a patch brings into a library file whose game file names its schema is checked against that schema where it lands, by its elements, attributes and values, with completion and hover from it; an element the schema does not know is a warning, [b]x4CodeSense.libraryPatchUnknownElements[/b] ([b]--library-patch-unknown-elements[/b] in x4-script-check and the MCP server) sets how severe. The side with the patch in the diff of the file shows the same problems. A merge file that names no schema is checked against its game file's. Of the DLCs' library patches, two of Boron's jobs set [b]preferbuilding[/b] on [b]quota[/b] and [b]owner[/b] instead of [b]environment[/b], and a Timelines job's ship has its [b]quantity[/b] and [b]quality[/b] without the [b]loadout[/b] around them.
+[*] Semantic highlighting of the paths in a patch's [b]sel[/b] and [b]if[/b]: element and attribute names in the colours of XML's, functions, strings, numbers and operators, and the cue or interrupt library item a path selects by as it is coloured elsewhere.
 [/list]
 [/list]
 [h2][1.1.0] - 2026-10-06[/h2]
