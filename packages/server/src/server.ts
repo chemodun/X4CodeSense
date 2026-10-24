@@ -44,6 +44,7 @@ import {
   comparisonSideOf,
   completionAt,
   definitionAt,
+  diagnosticSource,
   diskFiles,
   DocumentInfoRequestMethod,
   documentSymbols,
@@ -75,6 +76,7 @@ import {
   readTextCompletions,
   readTextDefinitions,
   readTextHover,
+  validateReadText,
   referenceLensRanges,
   referenceLenses,
   referenceLensTitle,
@@ -242,8 +244,12 @@ const analysisByUri = new Map<string, DocumentAnalysis>();
 const expressionCaches = new Map<string, ParsedValueCache>();
 /** The semantic tokens builder of each open document: it keeps the last result, which a delta request refers to. */
 const tokenBuilders = new Map<string, SemanticTokensBuilder>();
-/** The `ReadText` calls of each open Lua document, found at the first hover after a change. */
+/** The `ReadText` calls of each open Lua document, found at the first request or check after a change. */
 const readTextCallsByUri = new Map<string, { version: number; calls: ReadTextCall[] }>();
+/** The timer of each open Lua document that publishes its problems: its calls are found again once typing pauses, not at each keystroke. */
+const luaTimers = new Map<string, NodeJS.Timeout>();
+/** How long a Lua document waits after its last change, or one of another Lua file, before its problems are published. */
+const luaDelay = 250;
 /** The sides of patch comparisons whose analysis is not of their current text or context: a request analyses them at once. */
 const staleSides = new Set<string>();
 /** The timer of each side of a patch comparison that publishes its problems, analysing it first when it is still stale. */
@@ -287,7 +293,7 @@ let workspacePending: { all: boolean; files: Map<string, string> } = { all: fals
 /** How long the check of the closed scripts waits after the last change of what scripts see of each other. */
 const workspaceDelay = 1000;
 
-/** Lua documents only get the hover of `ReadText`: they are never analysed as XML. */
+/** Lua documents only get what concerns `ReadText`: they are never analysed as XML. */
 function isLua(document: TextDocument): boolean {
   return document.languageId === 'lua';
 }
@@ -810,15 +816,18 @@ function fileChanges(changes: readonly FileEvent[]): FileEvent[] {
 
 connection.onDidChangeWatchedFiles((params) => {
   let changed = false;
+  let luaChanged = false;
   for (const change of fileChanges(params.changes)) {
     const file = filePathOf(change.uri);
     // A file or folder created or deleted may change which Lua files an extension has.
     if (change.type !== FileChangeType.Changed) {
       luaProject?.project.forgetListings();
+      luaChanged = true;
     }
     // A Lua file only counts for what the other Lua files of its extension read from it.
     if (file && /\.(lua|xpl)$/i.test(file)) {
       luaProject?.project.forget(file);
+      luaChanged = true;
       continue;
     }
     // A file in no folder the index reads: perhaps of an extension created or copied in.
@@ -833,6 +842,9 @@ connection.onDidChangeWatchedFiles((params) => {
     debug(`${change.uri}: ${change.type === FileChangeType.Deleted ? 'deleted' : 'changed'} on disk`);
     reanalyzePatchesOf(file);
     scheduleWorkspaceCheck([file, ...patchFilesOf(file)]);
+  }
+  if (luaChanged) {
+    scheduleLuaProblems(documents.all().filter(isLua));
   }
   if (changed) {
     reanalyzeAll();
@@ -989,6 +1001,8 @@ function analysisContext(openUri?: string): AnalysisContext {
  */
 function analyze(document: TextDocument, typed = false): void {
   if (isLua(document)) {
+    // What it sets counts in the other Lua documents of its extension.
+    scheduleLuaProblems(typed ? documents.all().filter(isLua) : [document]);
     return;
   }
   if (comparisonSideOf(document.uri)) {
@@ -1362,11 +1376,15 @@ documents.onDidClose((event) => {
   clearTimeout(sideTimers.get(event.document.uri));
   sideTimers.delete(event.document.uri);
   if (isLua(event.document)) {
+    clearTimeout(luaTimers.get(event.document.uri));
+    luaTimers.delete(event.document.uri);
+    void connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
     // Other Lua files of its extension read it from disk again.
     const file = filePathOf(event.document.uri);
     if (file) {
       luaProject?.project.forget(file);
     }
+    scheduleLuaProblems(documents.all().filter(isLua));
     return;
   }
   // Back to the file on disk, which may not have the unsaved changes.
@@ -1454,6 +1472,30 @@ function luaProjectNow(): LuaProject {
 function loadedTexts(): TextDatabase | undefined {
   const texts = game?.texts;
   return texts && texts.fileCount > 0 ? texts : undefined;
+}
+
+/** Publishes the problems of open Lua documents once changes pause. */
+function scheduleLuaProblems(luaDocuments: readonly TextDocument[]): void {
+  for (const { uri } of luaDocuments) {
+    clearTimeout(luaTimers.get(uri));
+    luaTimers.set(
+      uri,
+      setTimeout(() => {
+        luaTimers.delete(uri);
+        const document = documents.get(uri);
+        if (document) {
+          publishLuaProblems(document);
+        }
+      }, luaDelay)
+    );
+  }
+}
+
+/** Publishes the texts a Lua document reads that no loaded text file defines; none while no texts are loaded. */
+function publishLuaProblems(document: TextDocument): void {
+  const texts = loadedTexts();
+  const diagnostics = texts ? validateReadText(document, readTextCallsOf(document), texts, diagnosticSource) : [];
+  void connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics });
 }
 
 /**

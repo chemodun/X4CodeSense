@@ -47,7 +47,7 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 
 ### Texts in Lua files
 
-In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the text, as for `{page, id}` in scripts. The page and the id may be numbers, or names and fields of tables set to one number: in the file (`local PAGE_ID = 1972092427`, `local eic = { PAGE = 1972092440 }`), as a global in another Lua file of the same extension, or in a module of the same extension, `local eic = require("extensions.<folder>.ui.eic_config")` (or a mod's own `X.Require`), whose table the module returns or registers (`Register_Require_Response`, `Register_Require_With_Init`, `X.Register`). With `cond and 1001 or 1002`, the hover shows both texts. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table built at run time, an expression. Go to Definition from the parentheses opens the text in its text file. Where the page or the id is written as a number, or not written yet, completion offers the pages, and the ids of the page with their texts; after `ReadText(` type a digit or press Ctrl+Space. The Lua extension you use keeps its own hover and everything else. `.xpl` files count when VS Code opens them as Lua, for example with `"files.associations": { "*.xpl": "lua" }`.
+In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the text, as for `{page, id}` in scripts. The page and the id may be numbers, or names and fields of tables set to one number: in the file (`local PAGE_ID = 1972092427`, `local eic = { PAGE = 1972092440 }`), as a global in another Lua file of the same extension, or in a module of the same extension, `local eic = require("extensions.<folder>.ui.eic_config")` (or a mod's own `X.Require`), whose table the module returns or registers (`Register_Require_Response`, `Register_Require_With_Init`, `X.Register`). With `cond and 1001 or 1002`, the hover shows both texts. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table built at run time, an expression. A text that no loaded text file defines is a warning on the parentheses, `text-undefined` as in scripts, for each text of `cond and … or …`; open Lua files are checked once typing pauses. Go to Definition from the parentheses opens the text in its text file. Where the page or the id is written as a number, or not written yet, completion offers the pages, and the ids of the page with their texts; after `ReadText(` type a digit or press Ctrl+Space. The Lua extension you use keeps its own hover and everything else. `.xpl` files count when VS Code opens them as Lua, for example with `"files.associations": { "*.xpl": "lua" }`.
 
 ### Navigation and rename
 
@@ -345,7 +345,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 
 ## 🛠 Changelog
 
-### [1.2.0] - unreleased
+### [1.2.0] - 2026-10-24
 
 - Added
   - Library files that name their schema on the root (`xsi:noNamespaceSchemaLocation="libraries.xsd"`, as 42 of the game's do) are checked against that schema of the game's `libraries`, with completion, hover, the outline, the quick fixes and the status bar from it. In a `libraries` folder, a schema the game does not have is a warning (`library-schema-unknown`). x4-script-check and the MCP server's `check` count them as library files; `describe_element` describes the elements of a library schema with `library`.
@@ -355,6 +355,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - Code lens with reference counts over cues, libraries, labels and interrupt library items, in scripts and over what a patch brings in; a click shows the references. `x4CodeSense.codeLens.references` turns them off.
   - In Lua files, Go to Definition from the parentheses of `ReadText(page, id)` opens the text, and completion there offers the pages and the ids of a page.
   - In `ReadText`, a page or id from a field of a table, from a global or a module in another Lua file of the same extension, and both texts of `cond and 1001 or 1002`.
+  - In open Lua files, a `ReadText` whose text no loaded text file defines is a warning, `text-undefined`, as in scripts.
 
 ### [1.1.0] - 2026-10-06
 

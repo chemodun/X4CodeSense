@@ -15,6 +15,7 @@ import {
   readTextDefinitions,
   readTextHover,
   scanLua,
+  validateReadText,
   type ReadTextArgument,
 } from '../src';
 
@@ -277,6 +278,33 @@ describe('ReadText calls', () => {
     expect(readTextDefinitions(calls, text.indexOf('unknown'), texts)).toEqual([]);
     expect(readTextDefinitions(calls, text.indexOf('print'), texts)).toEqual([]);
     expect(readTextDefinitions(readTextCalls('ReadText(1001, 999)'), 10, texts)).toEqual([]);
+  });
+
+  it('warns on the argument list about a text that does not exist, for each text of c and N or M, while typing too', () => {
+    const lines = [
+      'local PAGE = 1001',
+      'a = ReadText(PAGE, 1)',
+      'b = ReadText(PAGE, 99)',
+      'c = ReadText(3000, 1)',
+      'd = ReadText(PAGE, x and 1 or 98)',
+      'e = ReadText(x and 3000 or 3001, y and 1 or 2)',
+      'f = ReadText(PAGE, id)',
+      'g = ReadText(1001, 97',
+    ];
+    const document = TextDocument.create('file:///mod/ui/menu.lua', 'lua', 1, lines.join('\n'));
+    const warnings = validateReadText(document, readTextCalls(document.getText()), texts, 'X4CodeSense').map(
+      (diagnostic) =>
+        `${diagnostic.range.start.line}:${diagnostic.range.start.character}-${diagnostic.range.end.line}:${diagnostic.range.end.character} ${diagnostic.code} ${diagnostic.severity} ${diagnostic.message}`
+    );
+    const on = (line: number): string => `${line}:${lines[line].indexOf('(')}-${line}:${lines[line].length} text-undefined 2`;
+    expect(warnings).toEqual([
+      `${on(2)} Text 99 does not exist on page 1001`,
+      `${on(3)} Text page 3000 does not exist`,
+      `${on(4)} Text 98 does not exist on page 1001`,
+      `${on(5)} Text page 3000 does not exist`,
+      `${on(5)} Text page 3001 does not exist`,
+      `${on(7)} Text 97 does not exist on page 1001`,
+    ]);
   });
 
   it('completes the page and the ids of a known page, where the argument is empty or digits', () => {

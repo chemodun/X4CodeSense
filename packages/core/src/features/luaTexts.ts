@@ -1,7 +1,8 @@
 /**
  * Texts in Lua files: the calls of `ReadText(page, id)`, their arguments resolved within the file, and a
  * hover over the argument list that shows the text. The Lua extension the user has keeps its own hover,
- * `ReadText` itself included, so this one is only offered between the parentheses.
+ * `ReadText` itself included, so this one is only offered between the parentheses. A text no loaded text
+ * file defines is warned about there too.
  *
  * An argument resolves when it is an integer literal, or a name that the file sets at least once and only
  * to one integer literal, and never binds as a parameter or a loop variable: the page constants of mods,
@@ -15,10 +16,11 @@
  */
 import * as path from 'node:path';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
-import { Range, type CompletionItem, type Hover, type Location } from 'vscode-languageserver-types';
+import { DiagnosticSeverity, Range, type CompletionItem, type Diagnostic, type Hover, type Location } from 'vscode-languageserver-types';
 import { diskFiles, type FileSource } from '../files/fileSource';
 import { scanLua, type LuaScan, type LuaToken } from '../lua/luaScanner';
 import type { TextDatabase } from '../texts/textDatabase';
+import { missingTextMessage, type TextDiagnosticCode } from '../texts/validateTexts';
 import { inlineCode } from './markdown';
 import { describeText, textDefinitions, textIdCompletionItems, textPageCompletionItems, type TextDisplayOptions } from './texts';
 
@@ -748,6 +750,27 @@ export function readTextCompletions(
     return textIdCompletionItems(texts, call.page.value, range, typed, options);
   }
   return undefined;
+}
+
+/**
+ * The calls whose text no loaded text file defines, as the scripts' `text-undefined` warning on the
+ * argument list: for each text of `c and N or M` that is missing, once per message.
+ */
+export function validateReadText(document: TextDocument, calls: readonly ReadTextCall[], texts: TextDatabase, source: string): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  for (const call of calls) {
+    const messages = new Set(readTextPairs(call).flatMap(([page, id]) => missingTextMessage(texts, page, id) ?? []));
+    for (const message of messages) {
+      diagnostics.push({
+        range: Range.create(document.positionAt(call.open), document.positionAt(call.end)),
+        message,
+        severity: DiagnosticSeverity.Warning,
+        code: 'text-undefined' satisfies TextDiagnosticCode,
+        source,
+      });
+    }
+  }
+  return diagnostics;
 }
 
 /** A file's key for the caches: its full path without case, as Windows compares names. */

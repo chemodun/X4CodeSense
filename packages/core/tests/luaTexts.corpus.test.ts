@@ -2,11 +2,13 @@
  * Corpus gate for texts in Lua files, over the Lua files of the extracted game (X4_EXTRACTED) and of a
  * folder of extensions (X4_MODS), never committed: every string and comment closes and every call of
  * `ReadText` has its `)`, the tokens in order and apart; every call of the game with two numbers names a
- * text of the game but for the known ones, and goes to its definition; the calls of the largest game file
+ * text of the game but for the known ones, which are warned about, and goes to its definition; the calls of the largest game file
  * are found under the file ceiling.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { describe, expect, it } from 'vitest';
 import {
   findExtensions,
@@ -17,6 +19,7 @@ import {
   readTextDefinitions,
   readTextPairs,
   scanLua,
+  validateReadText,
   type ReadTextCall,
 } from '../src';
 import { bestOf, fileCeilingMs } from './timing';
@@ -109,12 +112,15 @@ describe.skipIf(!extracted)('ReadText in the Lua files of the corpus', { timeout
     expect(problems).toEqual([]);
   });
 
-  it('names a text of the game with every call of the game with page and id known, but for the known ones, and goes to it', () => {
+  it('names a text of the game with every call of the game with page and id known, but for the known ones, warned about, and goes to it', () => {
     const texts = loadTexts(root);
     const missing: string[] = [];
     const withoutDefinition: string[] = [];
+    let warnings = 0;
     for (const file of gameFiles) {
-      const calls = readTextCalls(readFileSync(file, 'utf8'));
+      const text = readFileSync(file, 'utf8');
+      const calls = readTextCalls(text);
+      warnings += validateReadText(TextDocument.create(pathToFileURL(file).toString(), 'lua', 1, text), calls, texts, 'X4CodeSense').length;
       for (const call of calls) {
         const pairs = readTextPairs(call);
         const absent = pairs.filter(([page, id]) => missingTextMessage(texts, page, id));
@@ -125,6 +131,7 @@ describe.skipIf(!extracted)('ReadText in the Lua files of the corpus', { timeout
       }
     }
     expect(missing).toEqual(knownMissing);
+    expect(warnings).toBe(knownMissing.length);
     expect(withoutDefinition).toEqual([]);
   });
 

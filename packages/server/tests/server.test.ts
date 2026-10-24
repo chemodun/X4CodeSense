@@ -1128,25 +1128,20 @@ describe('Lua files', () => {
     return { value, range };
   }
 
-  it('shows the text of a ReadText call between its parentheses, and nothing else', async () => {
-    // Diagnostics published until those of an XML document opened after the Lua one: none for the Lua one.
-    const xmlUri = 'file:///mod/md/AfterLua.xml';
-    const published: string[] = [];
-    const xmlPublished = new Promise<void>((resolve) => {
-      const disposable = connection.onNotification(PublishDiagnosticsNotification.type, (params) => {
-        published.push(params.uri);
-        if (params.uri === xmlUri) {
-          disposable.dispose();
-          resolve();
-        }
-      });
-    });
-    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'lua', version: 1, text: lines.join('\n') } });
-    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri: xmlUri, languageId: 'xml', version: 1, text: mdText } });
-    await xmlPublished;
-    expect(published).not.toContain(uri);
+  /** The problems published for a Lua document, as `line:character-line:character code severity message`. */
+  const problemsOf = (params: PublishDiagnosticsParams): string[] =>
+    params.diagnostics.map(
+      (diagnostic) =>
+        `${diagnostic.range.start.line}:${diagnostic.range.start.character}-${diagnostic.range.end.line}:${diagnostic.range.end.character} ${diagnostic.code} ${diagnostic.severity} ${diagnostic.message}`
+    );
 
+  it('shows the text of a ReadText call between its parentheses, and warns when it does not exist', async () => {
     await statusWhere((status) => status.state === 'ready');
+    // No problems while every text it reads exists, and none for the id that is a parameter.
+    const published = nextDiagnostics(uri);
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, { textDocument: { uri, languageId: 'lua', version: 1, text: lines.join('\n') } });
+    expect(problemsOf(await published)).toEqual([]);
+
     const open = lines[1].indexOf('(');
     const hover = await hoverAt(1, open + 1);
     expect(hover?.value).toContain('Hull');
@@ -1174,15 +1169,21 @@ describe('Lua files', () => {
     expect(await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } })).toBeNull();
     expect(await connection.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } })).toBeNull();
 
-    // An edit is seen at the next hover.
+    // An edit is seen at the next hover, and warned about on the argument list once typing pauses: page 1002 has no text 1.
+    const warned = nextDiagnostics(uri);
     await connection.sendNotification(DidChangeTextDocumentNotification.type, {
       textDocument: { uri, version: 2 },
       contentChanges: [{ range: { start: { line: 0, character: 16 }, end: { line: 0, character: 20 } }, text: '1002' }],
     });
     expect((await hoverAt(1, open + 1))?.value).toContain('The page `PAGE_ID` is 1002, set on line 1.');
-    for (const closed of [uri, xmlUri]) {
-      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: closed } });
-    }
+    const warnings = await warned;
+    expect(warnings.version).toBe(2);
+    expect(problemsOf(warnings)).toEqual([`1:${open}-1:${lines[1].indexOf(')') + 1} text-undefined 2 Text 1 does not exist on page 1002`]);
+
+    // Closed: its problems are dropped.
+    const cleared = nextDiagnostics(uri);
+    await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri } });
+    expect(problemsOf(await cleared)).toEqual([]);
   });
 
   it('reads modules and globals from the other Lua files of the extension, open or on disk', async () => {
@@ -1211,17 +1212,21 @@ describe('Lua files', () => {
     expect(await hoverOf(1)).toContain('The page `cfg.PAGE` is 1001, set in `config.lua` on line 1.');
     expect(await hoverOf(2)).toContain('Yes');
 
-    // Changed on disk, then open with other text: the open text counts.
+    // Changed on disk, then open with other text: the open text counts, in the hover and in the warnings.
+    const warned = diagnosticsCount(menuUri, 1);
     writeFileSync(baseFile, 'Shared = 1001\n');
     await connection.sendNotification(DidChangeWatchedFilesNotification.type, {
       changes: [{ uri: pathToFileURL(baseFile).toString(), type: FileChangeType.Changed }],
     });
     expect(await hoverOf(2)).toContain('Text 10 does not exist on page 1001');
+    expect(problemsOf(await warned)).toEqual([`2:${menuLines[2].indexOf('(')}-2:${menuLines[2].length} text-undefined 2 Text 10 does not exist on page 1001`]);
+    const cleared = diagnosticsCount(menuUri, 0);
     const baseUri = pathToFileURL(baseFile).toString();
     await connection.sendNotification(DidOpenTextDocumentNotification.type, {
       textDocument: { uri: baseUri, languageId: 'lua', version: 1, text: 'Shared = 1002\n' },
     });
     expect(await hoverOf(2)).toContain('Yes');
+    await cleared;
     for (const closed of [menuUri, baseUri]) {
       await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: closed } });
     }
