@@ -394,7 +394,8 @@ class Completer {
 
 /**
  * Completion items for a caret offset in an analysed document. In a patch document, what it brings in is
- * completed as it is where it lands, and its paths from the target they select in.
+ * completed as it is where it lands, and its paths from the target they select in. In a library file
+ * that names its schema, the elements, attributes and values of that schema.
  */
 export function completionAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined, options: CompletionOptions = {}): CompletionItem[] {
   if (!analysis.structure || (analysis.detection.isDiff && !scriptSchemaOf(analysis))) {
@@ -423,6 +424,11 @@ export function completionAt(analysis: DocumentAnalysis, offset: number, game: G
     completer.elementNames(landing.declaration, landing.previous, '', offset, offset);
   } else {
     completer.complete(context);
+  }
+  const texts = game?.texts;
+  if (completer.items.length === 0 && !analysis.detection.script && !analysis.detection.isDiff && texts && texts.fileCount > 0) {
+    // A library or merge file: text references also where its schema declares nothing, as in other XML.
+    return textReferenceCompletions(analysis.document, offset, texts, options) ?? [];
   }
   return completer.items;
 }

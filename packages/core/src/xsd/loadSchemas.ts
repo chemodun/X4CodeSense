@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { diskFiles, type FileSource } from '../files/fileSource';
-import { scriptSchemas } from '../scripts/scriptMetadata';
-import type { ScriptSchema } from '../types';
+import { isLibrarySchemaName, scriptSchemas } from '../scripts/scriptMetadata';
+import type { DocumentDetection, ScriptSchema } from '../types';
 import { attributeNamed, parseXml } from '../xml/xmlStructure';
 import { XsdSchema, type XsdFile, type XsdProblem } from './schema';
 
@@ -33,11 +33,16 @@ export const rootElementName: Record<ScriptSchema, string> = {
 /** The schema of patch documents, and their root element. */
 export const diffSchemaName = 'diff';
 
-/** Schemas in `libraries` that are no library files' schema: the scripts', the include they share, the patches'. */
-const notLibrarySchemas: ReadonlySet<string> = new Set([...scriptSchemas, 'common', diffSchemaName, 'scriptproperties']);
-
-/** A schema name as a library file gives it: a file name, without folders. */
-const librarySchemaName = /^[\w.-]+$/;
+/**
+ * The schema of a document: a script's by its root element, a library file's by the name its root gives;
+ * undefined for other documents, for a name the game has no schema of, and without the schemas.
+ */
+export function documentSchema(detection: DocumentDetection, schemas: SchemaSet | undefined): XsdSchema | undefined {
+  if (detection.script) {
+    return schemas?.schemas[detection.script.schema];
+  }
+  return detection.library && schemas?.library(detection.library.schema);
+}
 
 /** Files an XSD file includes, resolved against its folder, in order and without duplicates. */
 function collectFiles(files: FileSource, entry: string, into: XsdFile[], seen: Set<string>, problems: XsdProblem[]): void {
@@ -96,7 +101,7 @@ export function loadSchemas(librariesFolder: string, files: FileSource = diskFil
     library(name: string): XsdSchema | undefined {
       const key = name.toLowerCase();
       if (!libraries.has(key)) {
-        const known = librarySchemaName.test(key) && !notLibrarySchemas.has(key) && files.exists(path.join(librariesFolder, `${key}.xsd`));
+        const known = isLibrarySchemaName(key) && files.exists(path.join(librariesFolder, `${key}.xsd`));
         libraries.set(key, known ? loadSchema(files, librariesFolder, key, set.problems) : undefined);
       }
       return libraries.get(key);

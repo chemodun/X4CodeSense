@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { analyzeText, loadSchemas, parseXml, scriptSchemas, schemaFolderName, validateStructure, type SchemaSet } from '../src';
+import { bestOf, fileCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
 
@@ -134,6 +135,43 @@ describe.skipIf(!extracted)('schema validation on the vanilla corpus', { timeout
     expect(checked.length - games).toBeGreaterThan(20);
     expect(failures).toEqual([]);
   }, 30_000);
+
+  it('analyses the library files as the editor does: those that name their schema with no findings and quickly, the others not', () => {
+    const failures: string[] = [];
+    const files = [...xmlFilesIn(path.join(root, 'libraries')), ...dlcFoldersOf(root, 'libraries').flatMap(xmlFilesIn)];
+    let analysed = 0;
+    let largest: { file: string; text: string } | undefined;
+    for (const file of files) {
+      const text = readFileSync(file, 'utf8');
+      const analysis = analyzeText(text, { schemas }, pathToFileURL(file).href);
+      if (analysis.detection.isDiff) {
+        continue;
+      }
+      if (!analysis.detection.library) {
+        // No schema named on the root: other XML, as before (`wares.xml`, `scriptproperties.xml`, `component.xml`).
+        if (analysis.structure || analysis.diagnostics.length > 0) {
+          failures.push(`${path.relative(root, file)}: analysed without a schema`);
+        }
+        continue;
+      }
+      analysed++;
+      if (!largest || text.length > largest.text.length) {
+        largest = { file, text };
+      }
+      for (const diagnostic of analysis.diagnostics) {
+        failures.push(
+          `${path.relative(root, file)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}: ${diagnostic.message} [${diagnostic.code}]`
+        );
+      }
+    }
+    expect(failures).toEqual([]);
+    expect(analysed).toBeGreaterThan(60);
+    const slowest = largest as { file: string; text: string };
+    const uri = pathToFileURL(slowest.file).href;
+    const elapsed = bestOf(3, () => analyzeText(slowest.text, { schemas }, uri));
+    console.log(`library files analysed: ${analysed}; largest ${path.relative(root, slowest.file)} in ${elapsed.toFixed(0)} ms`);
+    expect(elapsed).toBeLessThan(fileCeilingMs);
+  }, 60_000);
 
   it("has checked the DLCs' scripts", () => {
     expect(dlcScripts).toBeGreaterThan(0);

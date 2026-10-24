@@ -61,8 +61,8 @@ const watcherDelay = 15;
 const noGame = 'No game files: the server was started without --unpacked or --game, or could not read them (see the status tool).';
 
 const instructions = `X4CodeSense knows X4: Foundations scripts, Mission Director scripts (md) and AI scripts (aiscripts), from the game's own files: the schemas md.xsd and aiscripts.xsd, scriptproperties.xml with the keywords, datatypes and properties of expressions, the texts, and every script of the game, its DLCs and the extensions it was given.
-- Before writing an element or attribute you are not sure of, ask describe_element; for what an expression yields and which properties it has, expression_type.
-- After writing a script or a patch (a <diff> file), run check on it and fix what it reports; with text, check what you are about to write first.
+- Before writing an element or attribute you are not sure of, ask describe_element, with library for a library file's schema (libraries for jobs.xml); for what an expression yields and which properties it has, expression_type.
+- After writing a script, a patch (a <diff> file) or a library file that names its schema, run check on it and fix what it reports; with text, check what you are about to write first.
 - find, definition and references locate scripts, cues, libraries and interrupt handlers across the game and the extensions; hover tells what a place of a script is, as the editor's hover does; text looks up {page, id} texts or searches them.
 Use these tools rather than searching the game's .xsd files, scriptproperties.xml or text files: they follow the schemas' types, groups and includes, and know the DLCs and the extensions too.
 Lines and columns count from 1.`;
@@ -166,12 +166,13 @@ function checkTool(workspace: Workspace, paths: readonly string[], text: string 
   }
   workspace.touch(checked.keys());
   const findings: Finding[] = [];
-  const summary = { files: 0, scripts: 0, patches: 0 };
+  const summary = { files: 0, scripts: 0, patches: 0, libraries: 0 };
   for (const [file, folder] of checked) {
     const result = checkFile(file, folder, workspace.context, game, text);
     summary.files++;
     summary.scripts += result.kind === 'script' ? 1 : 0;
     summary.patches += result.kind === 'patch' ? 1 : 0;
+    summary.libraries += result.kind === 'library' ? 1 : 0;
     findings.push(...result.findings.filter((finding) => severities.indexOf(finding.severity) <= severities.indexOf(least)));
   }
   const count = (severity: string): number => findings.filter((finding) => finding.severity === severity).length;
@@ -216,19 +217,30 @@ function attributeOf(attribute: XsdAttribute, full: boolean): Record<string, unk
 function describeElementTool(
   workspace: Workspace,
   name: string,
-  script: ScriptSchema,
+  script: ScriptSchema | undefined,
+  library: string | undefined,
   parent: string | undefined,
   attributeName: string | undefined
 ): CallToolResult {
-  const schema = workspace.game?.schemas.schemas[script];
-  if (!schema) {
-    return failure(workspace.game ? `The game files have no ${script}.xsd.` : noGame);
+  const libraryName = library
+    ?.trim()
+    .replace(/\.xsd$/i, '')
+    .toLowerCase();
+  const schemaName = libraryName ?? script;
+  if (schemaName === undefined || (script !== undefined && libraryName !== undefined)) {
+    return failure('Give script for a script schema, or library for a library schema: one of them.');
   }
+  const schemas = workspace.game?.schemas;
+  const schema = libraryName !== undefined ? schemas?.library(libraryName) : script !== undefined ? schemas?.schemas[script] : undefined;
+  if (!schema) {
+    return failure(workspace.game ? `The game files have no ${schemaName}.xsd${libraryName !== undefined ? ' of library files' : ''}.` : noGame);
+  }
+  const kind = libraryName !== undefined ? { library: libraryName } : { script };
   let declaration: XsdElement | undefined;
   if (parent !== undefined) {
     const parentDeclaration = schema.anyDeclaration(parent);
     if (!parentDeclaration) {
-      return failure(`${script}.xsd declares no element <${parent}>. Similar: ${similar(schema.elementNames, parent).join(', ') || 'none'}.`);
+      return failure(`${schemaName}.xsd declares no element <${parent}>. Similar: ${similar(schema.elementNames, parent).join(', ') || 'none'}.`);
     }
     declaration = parentDeclaration.child(name);
     if (!declaration) {
@@ -239,18 +251,18 @@ function describeElementTool(
     declaration = schema.root(name) ?? schema.anyDeclaration(name);
   }
   if (!declaration) {
-    return failure(`${script}.xsd declares no element <${name}>. Similar: ${similar(schema.elementNames, name).join(', ') || 'none'}.`);
+    return failure(`${schemaName}.xsd declares no element <${name}>. Similar: ${similar(schema.elementNames, name).join(', ') || 'none'}.`);
   }
   if (attributeName !== undefined) {
     const attribute = declaration.attributes.get(attributeName);
     if (!attribute) {
       return failure(`<${declaration.name}> has no attribute '${attributeName}'. It has: ${[...declaration.attributes.keys()].join(', ') || 'none'}.`);
     }
-    return json({ element: declaration.name, script, attribute: attributeOf(attribute, true) });
+    return json({ element: declaration.name, ...kind, attribute: attributeOf(attribute, true) });
   }
   return json({
     element: declaration.name,
-    script,
+    ...kind,
     ...(declaration.documentation ? { documentation: declaration.documentation } : {}),
     attributes: [...declaration.attributes.values()].map((attribute) => attributeOf(attribute, false)),
     children: [...declaration.contentModel.declarations.keys()],
@@ -587,7 +599,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
     {
       title: 'Check scripts',
       description:
-        'Checks X4 scripts and patches as the X4CodeSense editor and x4-script-check do: well-formedness, the game schemas, expressions, variables, names, cues, scripts and texts referred to. Returns the findings with their quick fixes (edits to apply), and counts. Run it after every change to an md or aiscripts script or a patch, and fix what it reports; with text, check a draft before writing it.',
+        'Checks X4 scripts and patches as the X4CodeSense editor and x4-script-check do: well-formedness, the game schemas, expressions, variables, names, cues, scripts and texts referred to; and library files that name their schema in xsi:noNamespaceSchemaLocation against it. Returns the findings with their quick fixes (edits to apply), and counts. Run it after every change to an md or aiscripts script or a patch, and fix what it reports; with text, check a draft before writing it.',
       inputSchema: {
         paths: z
           .array(z.string())
@@ -608,10 +620,16 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
     {
       title: 'Describe an element',
       description:
-        'An element of the Mission Director or AI script schema, from the game’s md.xsd or aiscripts.xsd: its documentation, its attributes (type, required, default, allowed values, whether the value is an expression) and the child elements it allows. Use it before writing an element or attribute you are not sure of, instead of searching md.xsd, aiscripts.xsd or common.xsd: it follows their types, groups and includes.',
+        'An element of the Mission Director or AI script schema, from the game’s md.xsd or aiscripts.xsd, or of a library file’s schema (libraries.xsd for jobs.xml, unlocks.xsd, …): its documentation, its attributes (type, required, default, allowed values, whether the value is an expression) and the child elements it allows. Use it before writing an element or attribute you are not sure of, instead of searching md.xsd, aiscripts.xsd or common.xsd: it follows their types, groups and includes.',
       inputSchema: {
         name: z.string().describe('The element name: set_value, find_ship, create_order, cue.'),
-        script: scriptKind,
+        script: scriptKind.optional().describe('md for Mission Director scripts, aiscripts for AI scripts; or give library instead.'),
+        library: z
+          .string()
+          .optional()
+          .describe(
+            'Instead of script, the schema a library file names in xsi:noNamespaceSchemaLocation, by its file name: libraries (jobs.xml, ships.xml, …), unlocks, factions.'
+          ),
         parent: z.string().optional().describe('The parent element, for an element declared differently in different places, such as param or actions.'),
         attribute: z
           .string()
@@ -620,7 +638,7 @@ export function createServer(workspace: Workspace, version?: string): McpServer 
       },
       annotations: readOnly,
     },
-    (args) => answer('describe_element', args, () => describeElementTool(workspace, args.name, args.script, args.parent, args.attribute))
+    (args) => answer('describe_element', args, () => describeElementTool(workspace, args.name, args.script, args.library, args.parent, args.attribute))
   );
 
   server.registerTool(

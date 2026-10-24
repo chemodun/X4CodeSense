@@ -214,6 +214,17 @@ describe('x4-script-mcp', { timeout: 30_000 }, () => {
       expect(errors.findings.every((finding) => finding.severity === 'error')).toBe(true);
     });
 
+    it('checks a library file against the schema it names, and counts it', async () => {
+      const file = path.join(extensions, 'mod_a', 'libraries', 'unlocks.xml');
+      const text = '<unlocks xsi:noNamespaceSchemaLocation="unlocks.xsd">\n  <discount name="x"/>\n</unlocks>\n';
+      const report = await call<CheckReport & { summary: { libraries: number } }>('check', { paths: [file], text });
+      expect(report.findings.map((finding) => `${finding.line}:${finding.column} ${finding.code}`)).toEqual([
+        '2:4 missing-required-attribute',
+        '2:4 missing-child-element',
+      ]);
+      expect(report.summary).toMatchObject({ files: 1, scripts: 0, patches: 0, libraries: 1 });
+    });
+
     it('refuses a text with several paths, and a path that is not there', async () => {
       expect(await callOn(client, 'check', { paths: [caller, target], text: '<mdscript/>' })).toMatchObject({ error: true });
       const missing = await callOn(client, 'check', { paths: [path.join(extensions, 'nothing.xml')] });
@@ -251,6 +262,21 @@ describe('x4-script-mcp', { timeout: 30_000 }, () => {
         attribute: 'operation',
       });
       expect(operation.attribute.values.map((value) => value.value)).toEqual(['set', 'add', 'subtract']);
+    });
+
+    it('describes the elements of a library schema by its file name', async () => {
+      const discount = await call<{ element: string; library: string; attributes: { name: string; required: boolean }[]; children: string[] }>(
+        'describe_element',
+        { name: 'discount', library: 'Unlocks.xsd' }
+      );
+      expect(discount).toMatchObject({ element: 'discount', library: 'unlocks' });
+      expect(discount.attributes.map((attribute) => `${attribute.name}${attribute.required ? '!' : ''}`)).toEqual(['id!', 'name']);
+      expect(discount.children.sort()).toEqual(['actions', 'conditions', 'rechecktime']);
+      const missing = await callOn(client, 'describe_element', { name: 'job', library: 'nothing' });
+      expect(missing).toMatchObject({ error: true, text: 'The game files have no nothing.xsd of library files.' });
+      for (const args of [{ name: 'cue' }, { name: 'cue', script: 'md', library: 'unlocks' }]) {
+        expect(await callOn(client, 'describe_element', args)).toMatchObject({ error: true, text: expect.stringContaining('one of them') });
+      }
     });
 
     it('names similar elements for one it does not know', async () => {

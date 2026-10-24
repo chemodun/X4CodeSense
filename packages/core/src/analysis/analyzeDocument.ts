@@ -7,7 +7,7 @@ import type { DocumentDetection } from '../types';
 import type { ScriptProperties } from '../properties/scriptProperties';
 import { attributeNamed, elementAt, parseXml, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { rootElementName, type SchemaSet } from '../xsd/loadSchemas';
-import type { XsdElement } from '../xsd/schema';
+import type { XsdElement, XsdSchema } from '../xsd/schema';
 import { validateStructure } from '../xsd/validateStructure';
 import { reuseParsedValues, type ParsedValueCache } from '../expressions/attributeExpression';
 import { validateExpressions } from '../expressions/validateExpressions';
@@ -134,11 +134,65 @@ function cueNames(structure: XmlStructure): Set<string> {
   return names;
 }
 
+export type LibraryDiagnosticCode = 'library-schema-unknown';
+
+/** True for a file in a folder named `libraries`, the game's or an extension's. */
+function inLibrariesFolder(uri: string): boolean {
+  return uri.startsWith('file:') && /[/\\]libraries[/\\][^/\\]+$/i.test(decodeURIComponent(uri.replace(/[?#].*$/, '')));
+}
+
+/**
+ * Checks a library file against the schema its root names: from the root the file has where the schema
+ * declares it (a schema may declare several, `libraries.xsd` ten), else from the only one it declares.
+ */
+function validateLibraryFile(analysis: DocumentAnalysis, structure: XmlStructure, schema: XsdSchema, context: AnalysisContext): void {
+  const root = structure.roots[0];
+  if (!root) {
+    return;
+  }
+  const document = analysis.document;
+  const rootNames = schema.rootNames;
+  const rootName = schema.root(root.name) ? root.name : rootNames.length === 1 ? rootNames[0] : undefined;
+  if (rootName === undefined) {
+    analysis.diagnostics.push({
+      range: Range.create(document.positionAt(root.nameStart), document.positionAt(root.nameEnd)),
+      message: `Root element must be one of ${rootNames.map((name) => `'${name}'`).join(', ')}`,
+      severity: DiagnosticSeverity.Error,
+      code: 'unknown-root-element',
+      source: diagnosticSource,
+    });
+    return;
+  }
+  const validation = validateStructure(structure, schema, rootName, document, {
+    checkContent: context.validateStructure ?? true,
+    source: diagnosticSource,
+    ...(context.checkElement ? { checkElement: context.checkElement } : {}),
+  });
+  analysis.declarations = validation.declarations;
+  analysis.diagnostics.push(...validation.diagnostics);
+}
+
+/** A library file in a `libraries` folder whose root names a schema the game's `libraries` does not have. */
+function unknownLibrarySchema(structure: XmlStructure, document: TextDocument, schema: string): Diagnostic[] {
+  const location = structure.roots[0]?.attributes.find((attribute) => attribute.name.toLowerCase() === 'xsi:nonamespaceschemalocation');
+  return location
+    ? [
+        {
+          range: Range.create(document.positionAt(location.valueStart), document.positionAt(location.valueEnd)),
+          message: `The game's libraries have no schema '${schema}.xsd': the file is not checked against one`,
+          severity: DiagnosticSeverity.Warning,
+          code: 'library-schema-unknown',
+          source: diagnosticSource,
+        },
+      ]
+    : [];
+}
+
 /** Everything the library knows about one document after a full analysis. */
 export interface DocumentAnalysis {
   document: TextDocument;
   detection: DocumentDetection;
-  /** Element structure; present for scripts, patches and merge files, absent for other documents. */
+  /** Element structure; present for scripts, patches, merge files and library files, absent for other documents. */
   structure?: XmlStructure;
   /** Schema declaration of each element that could be resolved; empty without schemas. */
   declarations: Map<XmlElement, XsdElement>;
@@ -163,15 +217,21 @@ export interface DocumentAnalysis {
  * well-formedness problems as diagnostics. Scripts are then validated against their schema when one is
  * available; patches against `diff.xsd`, and with the index against the file they change, where what
  * they bring in is checked as part of that script. With the index, a merge file in an extension's
- * `libraries` is scanned as well, and its root checked. Other XML documents get no diagnostics, so other
- * XML tooling stays in charge of them.
+ * `libraries` is scanned as well, and its root checked. A library file whose root names its schema in
+ * `xsi:noNamespaceSchemaLocation` is validated against that schema of the game's `libraries`; in a
+ * `libraries` folder, a name the game has no schema of is a warning. Other XML documents get no
+ * diagnostics, so other XML tooling stays in charge of them.
  */
 export function analyzeDocument(document: TextDocument, context: AnalysisContext = {}): DocumentAnalysis {
   const text = document.getText();
   const detection = detectDocument(text);
   const analysis: DocumentAnalysis = { document, detection, declarations: new Map(), diagnostics: [], ...(context.origin ? { origin: context.origin } : {}) };
   const merge = !detection.script && !detection.isDiff && context.index ? mergeTargetOf(document.uri, context.index) : undefined;
-  if (!detection.script && !detection.isDiff && !merge) {
+  const library = detection.library;
+  const librarySchema = library && context.schemas?.library(library.schema);
+  // A schema the game lacks is a mistake in a `libraries` folder only: cutscenes and the UI's addons name schemas of their own.
+  const unknownSchema = library !== undefined && !librarySchema && context.schemas !== undefined && inLibrariesFolder(document.uri);
+  if (!detection.script && !detection.isDiff && !merge && !librarySchema && !unknownSchema) {
     return analysis;
   }
   const structure = parseXml(text);
@@ -188,8 +248,16 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
       source: diagnosticSource,
     });
   }
-  if (merge && context.index) {
-    analysis.diagnostics.push(...validateMergeFile(document, structure, merge, context.index, diagnosticSource));
+  if (!detection.script && !detection.isDiff) {
+    // A merge file, a library file that names its schema, or both.
+    if (merge && context.index) {
+      analysis.diagnostics.push(...validateMergeFile(document, structure, merge, context.index, diagnosticSource));
+    }
+    if (librarySchema) {
+      validateLibraryFile(analysis, structure, librarySchema, context);
+    } else if (library && unknownSchema) {
+      analysis.diagnostics.push(...unknownLibrarySchema(structure, document, library.schema));
+    }
     return analysis;
   }
   if (detection.isDiff) {

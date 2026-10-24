@@ -1,6 +1,6 @@
 # X4CodeSense
 
-Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`), Mission Director scripts (`md/*.xml`) and the patches (`<diff>`) that change them or the game's library files (`libraries/*.xml`). X4CodeSense reads the game's schemas, script properties and texts, and the scripts of the game, its DLCs and your extensions, and checks your scripts as you type.
+Language support for **X4: Foundations** scripts in Visual Studio Code: AI scripts (`aiscripts/*.xml`), Mission Director scripts (`md/*.xml`), the patches (`<diff>`) that change them or the game's library files (`libraries/*.xml`), and the library files that name their schema. X4CodeSense reads the game's schemas, script properties and texts, and the scripts of the game, its DLCs and your extensions, and checks your scripts as you type.
 
 X4CodeSense is the successor of X4CodeComplete, written anew around a language server, so the same analysis also runs from the command line and in CI. It replaces X4CodeComplete and offers to take its settings.
 
@@ -19,6 +19,7 @@ X4CodeSense is the successor of X4CodeComplete, written anew around a language s
 - Variables that are read but never set, following the cue namespace rules of the Mission Director.
 - Parameters a call passes that the script, order or library it names does not declare: a `<param name="…">` of `run_script`, `create_order`, `run_actions`, a `cue` with `ref` and the like. Parameters a call leaves out are not reported; the game takes them as null.
 - AI script names and order ids a call writes as is (`run_script name="'move.generic'"`, `create_order id="'Attack'"`) that no script of the game, its DLCs, the extensions or your workspace defines.
+- Library files that name their schema on the root, as the game's do: `<jobs xsi:noNamespaceSchemaLocation="libraries.xsd">` is checked against the game's `libraries/libraries.xsd`, `<unlocks xsi:noNamespaceSchemaLocation="unlocks.xsd">` against `unlocks.xsd`, whatever the folders before the name. The schema is never guessed from the root element or the file name: the game's library files share them across schemas. In a `libraries` folder, a schema the game's `libraries` does not have is a warning (`library-schema-unknown`). `scriptproperties.xml` is left to other tooling, and the few expression values the library schemas declare are not checked.
 
 All of it keeps working while a tag, an attribute or a quote is still being typed. Open files count with their unsaved changes, and files changed, created or deleted on disk in the workspace, also with their folder, are read again or forgotten.
 
@@ -28,7 +29,7 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 
 ### Completion and hover
 
-- Child elements allowed at the caret, attribute names, and attribute values from the schemas.
+- Child elements allowed at the caret, attribute names, and attribute values from the schemas; in a library file that names its schema, from that schema.
 - Property chains in expressions (`player.ship.cargo.{$ware}.count`), keywords, and the values of lookups such as `class` or `ware`. After a variable whose type the script tells, the properties of that type: `$ship.` after `<create_ship name="$ship">` offers a ship's, and hover and go to definition of `$ship.name` name the ship's property rather than every datatype's `name`.
 - After a class test, the class: `player.target` is an object, and after `player.target.isclass.npc` it is an npc. That holds further in the same expression (`@player.target.isclass.npc and player.target.race`, after `not … or`, in `then`), in the body of a `do_if`, `do_elseif` or `do_while` that tests it, and in a cue's or handler's actions when a `check_value` of its conditions does, until a variable is set again. A negated test (`do_if value="not $target.isclass.ship"`) tells it in the `do_elseif` and `do_else` after it, and after the `do_if` when its body ends with `return`, `break`, `continue` or `resume`. Completion, hover, go to definition and the checks use the class's properties; hover on the value tells which test says so. `isrealclass` and `isclass.{class.npc}` count too; a list of classes gives the type they all are.
 - Variables visible at the caret, also after `this.`, `parent.` or a cue name, and the variables other scripts set for this one: interrupt library items, libraries spliced in with `include_actions`, `md.Script.Cue.$x`.
@@ -53,7 +54,7 @@ In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the
 - Go to definition: an element or attribute in the schema, a keyword or property in `scriptproperties.xml`, a lookup value in the game file it comes from, and a variable, label, cue, script, order, interrupt library item or text where it is defined. With the installed game as the game files, its files open read-only, straight from its catalogs, and are the game's scripts there too: hover, go to definition, references and the outline work in them.
 - Find all references and rename, across scripts: variables, labels, cues and libraries (also as `md.Script.Cue` in other scripts and in the paths of patches), Mission Director script names, and interrupt library items. The paths of patches that pick an element by a value holding the name count too, such as `set_value[@name='$count']` or `do_if[@value='$count gt 0']`: a rename changes them alike, so they keep selecting the element. A rename edits the files of your workspace only; when the game or an extension outside the workspace uses the same name, it is refused, with the reason. A cue's bare name in a library of another script, which the cue's script includes, instantiates or runs, is one of its places too: renamed with it, from either file, unless other scripts use that library as well. A label that an interrupt library item of the script names is found there, but not renamed: the item resolves it in every script that uses it.
 - Find all references for AI script names and order ids: where they are defined and every call that names them as is (`'move.generic'`, `'Attack'`). They are not renamed: the game and any extension may name them.
-- The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order with its name as the game shows it, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; and each operation of a patch by its path.
+- The outline, the breadcrumbs and Go to Symbol in Editor: cues and libraries as they nest, with their parameters; the order with its name as the game shows it, interrupts, handlers, attention blocks with their labels and `on_abort` of AI scripts; each variable where it is first set; each operation of a patch by its path; and in a library file that names its schema, each element with an `id`, else a `name`, by it.
 - Folding in scripts and patches: each element that spans lines, up to its end tag, comments that span lines, and `<!-- #region -->` to `<!-- #endregion -->`. VS Code shows up to 5000 folding regions (`editor.foldingMaximumRegions`), dropping the innermost ones beyond; a few of the game's largest story scripts have more.
 - Go to Symbol in Workspace (`Ctrl+T`): the scripts, cues, libraries and interrupt library items of the game, its DLCs, the extensions and your workspace, with the script they are in and where it comes from. With a dot, the query matches the name as other scripts write it: `md.Setup.Start`. Among equally good matches your workspace's come first. Labels are left to the outline of their script.
 
@@ -107,7 +108,7 @@ These open the other file when what is created belongs there; the game's own scr
 
 ### Status bar
 
-While a script or a patch is active, the status bar shows the type and name of the script, or the file the patch changes. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and where from, the extracted files or the installed game and its version, and which scripts show problems; a click opens a menu of the commands.
+While a script, a patch or a library file that names its schema is active, the status bar shows the type and name of the script, the file the patch changes, or the library file's schema. While the game files are read and the scripts indexed, it shows a spinner and the progress, and a warning when the game files are not set or hold no schemas. Its tooltip tells what was read and where from, the extracted files or the installed game and its version, and which scripts show problems; a click opens a menu of the commands.
 
 ![The menu of the status bar item: the game files, which scripts show problems, the MCP server, the output, the settings](images/status-bar-menu.png)
 
@@ -131,8 +132,8 @@ node "$env:USERPROFILE\.vscode\extensions\x4devtools.x4codesense-<version>\dist\
 
 The extension offers an MCP server to the editor's AI agents, such as Copilot's agent mode, on the game files and extensions set in the settings. An agent that writes a script asks it rather than guessing:
 
-- **check** - the problems of scripts and patches with their quick fixes, also of a text before it is written;
-- **describe_element** - an element of the schemas: its attributes with their types and allowed values, the children it allows;
+- **check** - the problems of scripts, patches and library files with their quick fixes, also of a text before it is written;
+- **describe_element** - an element of the schemas, those of library files too: its attributes with their types and allowed values, the children it allows;
 - **expression_type** - what `player.ship.sector` yields, step by step, and the properties of the result; or a datatype's properties;
 - **find**, **definition**, **references** - scripts, cues, libraries and interrupt handlers of the game, its DLCs and the extensions;
 - **hover** - what the editor's hover shows at a place of a script: an element's documentation, a property's type, a variable's type and where it is set, a cue's place, a text;
@@ -192,7 +193,7 @@ claude mcp add x4 -- npx -y x4-script-mcp --game "C:\Program Files (x86)\Steam\s
 
 X4CodeSense has no list of its own of what the game holds: no elements, properties, wares, factions, ships or macros. It reads them from the game files, extracted or straight from the catalogs of the installed game, and from the extensions, so it follows the game version and the DLCs you have:
 
-- The schemas in `libraries` (`md.xsd`, `aiscripts.xsd`, `common.xsd`, `diff.xsd`): every element, attribute and value with its documentation, where each may stand, and what an attribute holds: an expression, a cue, a label, a variable that receives a result.
+- The schemas in `libraries` (`md.xsd`, `aiscripts.xsd`, `common.xsd`, `diff.xsd`): every element, attribute and value with its documentation, where each may stand, and what an attribute holds: an expression, a cue, a label, a variable that receives a result. The schemas of library files (`libraries.xsd`, `unlocks.xsd`, `factions.xsd` and some 30 more) are read when a file names one.
 - `libraries/scriptproperties.xml`: the keywords, datatypes and properties of expressions, and the lookups it imports from other game files.
 - The texts in `t`; the scripts in `md` and `aiscripts` of the game, its DLCs, the extensions and your workspace; the files in `libraries` that the DLCs and extensions patch; each extension's `content.xml` for the order the game loads them in.
 - Of an installed game, the catalogs `01.cat`, `02.cat` and so on, and those of the DLCs, the folders of its `extensions` whose names start with `ego_dlc_`: the files of `libraries`, `md`, `aiscripts` and `t` are read from them in place, nothing is extracted; the other folders of its `extensions` are your mods. `version.dat` gives the version the status bar shows.
@@ -215,7 +216,7 @@ A few things the game's files do not say are built in:
 - The text inside the elements of library files is not modelled: an operation that changes only text (`text()`, or an `add` of text alone) is reported as such, and the diff does not show it.
 - A rename of a variable started in a script does not reach its uses in what patches bring in (started in the patch, it does); a variable written in a patch's path is renamed from the script or the patch's content, not from the path. A variable a library of another script uses through `include_actions` is not renamed: the rename is refused, with the reason.
 - In the side with the patch, text inside elements, which scripts do not have, is not written into the patch: a change of it is refused, with the reason. The order of attributes is not written either. A changed comment of the game's script becomes its removal and a new comment. What a patch brings in and then changes again with another of its operations is changed where that operation does, not from the side.
-- AI scripts, Mission Director scripts and their patches are checked. The patches of library files are applied and their paths checked, but what they bring in is not: of the schemas in `libraries`, only those of scripts and patches are read, not those some library files have, such as `parameters.xsd`. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
+- AI scripts, Mission Director scripts, their patches, and library files that name their schema are checked. A library file that names none, as most of the game's do (`wares.xml`, `icons.xml`), is not: no schema is guessed for it. The patches and merge files of library files are applied and their paths checked, but what they bring in is checked only where a merge file names its schema itself. Text files are read for the texts, and Lua files only for the texts of `ReadText`; other files of the game are not checked.
 - Writing the changes of the side of a large library file, such as `wares.xml` after the DLCs' patches, into its patch takes up to about a second.
 - In `ReadText`, a page or id from a field of a table (`config.page`), from another file or from an expression is not followed.
 - A variable has a type only when everything that sets it in the script agrees on one: one set from a property of a variable whose own type is not known, by `do_for_each`, by a library's `return` or by other scripts has none, and neither has a variable of the global table or of a library other scripts fill. The elements of a list have no type.
@@ -337,6 +338,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
 - Members of the [x4_modding Discord channel](https://discord.com/channels/337098290917146624/502057640877228042) for answers, support and ideas.
 
 ## 🛠 Changelog
+
+### [1.2.0] - unreleased
+
+- Added
+  - Library files that name their schema on the root (`xsi:noNamespaceSchemaLocation="libraries.xsd"`, as 42 of the game's do) are checked against that schema of the game's `libraries`, with completion, hover, the outline, the quick fixes and the status bar from it. In a `libraries` folder, a schema the game does not have is a warning (`library-schema-unknown`). x4-script-check and the MCP server's `check` count them as library files; `describe_element` describes the elements of a library schema with `library`.
 
 ### [1.1.0] - 2026-10-06
 

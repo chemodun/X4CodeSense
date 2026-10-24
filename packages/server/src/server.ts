@@ -950,7 +950,9 @@ function analyze(document: TextDocument, typed = false): void {
     ? `${detection.script.schema} '${detection.script.name}'`
     : detection.isDiff
       ? 'patch'
-      : `not a script (root '${detection.rootElement ?? ''}')`;
+      : detection.library && analysis.structure
+        ? `library file of ${detection.library.schema}.xsd`
+        : `not a script (root '${detection.rootElement ?? ''}')`;
   debug(`${document.uri}: ${description}, ${analysis.diagnostics.length} diagnostic(s), ${(performance.now() - started).toFixed(1)} ms`);
   void connection.sendDiagnostics({ uri: document.uri, version: document.version, diagnostics: analysis.diagnostics });
   const file = filePathOf(document.uri);
@@ -1556,9 +1558,11 @@ connection.onRequest(DocumentInfoRequestMethod, (params: DocumentInfoParams): Do
   const file = patch?.target.file;
   const source = file === undefined ? undefined : game?.index?.sourceOf(file);
   const uri = file === undefined ? undefined : clientUriOf(pathToFileURL(file).toString());
+  const library = analysis?.structure ? detection?.library : undefined;
   return {
     metadata: detection?.script,
     isDiff: detection?.isDiff ?? false,
+    ...(library ? { library: { ...library, known: game?.schemas.library(library.schema) !== undefined } } : {}),
     rootElement: detection?.rootElement,
     patchTarget: patch ? { ...patch.target, ...(uri ? { uri } : {}), ...(source ? { source } : {}), earlier: patch.earlier, merged: patch.merged } : undefined,
   };

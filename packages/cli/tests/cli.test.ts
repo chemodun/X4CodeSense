@@ -278,6 +278,7 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
           folders: 2,
           scripts: 4,
           patches: 1,
+          libraries: 0,
           findings: 3,
           errors: 3,
           warnings: 0,
@@ -645,6 +646,30 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
       // Without the game, a merge file is XML like any other; no file there is said to be no script.
       const alone = await run(extension);
       expect(lines(alone)).toEqual(['6 file(s) in 3 folder(s): 2 script(s), 2 patch(es), 0 finding(s) (no schema validation: pass --unpacked or --game)']);
+    } finally {
+      rmSync(libraries, { recursive: true, force: true });
+    }
+  });
+
+  it("checks the library files in an extension's libraries against the schema they name", async () => {
+    const libraries = path.join(extension, 'libraries');
+    const own = path.join(libraries, 'myunlocks.xml');
+    const unknown = path.join(libraries, 'mything.xml');
+    mkdirSync(libraries, { recursive: true });
+    writeFileSync(
+      own,
+      '<unlocks xsi:noNamespaceSchemaLocation="../../libraries/unlocks.xsd">\n  <discount name="x">\n    <conditions/>\n  </discount>\n</unlocks>\n'
+    );
+    writeFileSync(unknown, '<things xsi:noNamespaceSchemaLocation="things.xsd"/>\n');
+    try {
+      const result = await run('--unpacked', unpacked, extension);
+      expect(result.code).toBe(1);
+      expect(lines(result)).toEqual([
+        `${unknown}:1:40: warning: The game's libraries have no schema 'things.xsd': the file is not checked against one [library-schema-unknown]`,
+        `${own}:2:4: error: Missing required attribute 'id' in 'discount' [missing-required-attribute]`,
+        "  fix: Add the required attribute 'id'",
+        '5 file(s) in 3 folder(s): 2 script(s), 1 patch(es), 1 library file(s), 2 finding(s) (1 error(s), 1 warning(s))',
+      ]);
     } finally {
       rmSync(libraries, { recursive: true, force: true });
     }

@@ -665,6 +665,26 @@ describe('outline', () => {
   });
 });
 
+describe('library files', () => {
+  it('checks and outlines a library file by the schema its root names, and tells it in the document info', async () => {
+    await statusWhere((status) => status.state === 'ready' && status.gameFolder === unpacked);
+    const uri = 'file:///mod/libraries/myunlocks.xml';
+    const params = await open(uri, '<unlocks xsi:noNamespaceSchemaLocation="unlocks.xsd">\n  <discount id="d1">\n    <actions/>\n  </discount>\n</unlocks>\n');
+    expect(params.diagnostics.map((diagnostic) => `${diagnostic.range.start.line}:${diagnostic.range.start.character} ${String(diagnostic.code)}`)).toEqual([
+      '1:3 missing-child-element',
+    ]);
+    expect(await documentInfo(uri)).toEqual({
+      isDiff: false,
+      library: { schema: 'unlocks', schemaLocation: 'unlocks.xsd', known: true },
+      rootElement: 'unlocks',
+    });
+    const symbols = (await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } })) as DocumentSymbol[] | null;
+    expect(symbols?.map((symbol) => [symbol.name, ...(symbol.children ?? []).map((child) => `${child.name} ${child.detail ?? ''}`)])).toEqual([
+      ['unlocks', 'd1 discount'],
+    ]);
+  });
+});
+
 describe('folding', () => {
   it('folds scripts and leaves other XML to other tooling', async () => {
     const uri = 'file:///mod/md/Folding.xml';

@@ -9,6 +9,7 @@
  * documents: each operation, named by its path, with the outline of the content it brings in. The
  * elements that make the outline each belong to one kind of script, except `library`, so content is
  * outlined without knowing where it lands; a patch's folder tells which kind of library it brings in.
+ * Library files that name their schema: the root, and each element with an `id` or a `name` by it.
  * Variables need the schemas; the rest is read from the structure alone and works on half-typed XML.
  */
 import { Range, SymbolKind, type DocumentSymbol } from 'vscode-languageserver-types';
@@ -172,6 +173,18 @@ function outlined(element: XmlElement, schema: ScriptSchema | undefined, texts: 
   return undefined;
 }
 
+/**
+ * What an element of a library file is in the outline: the root, and each element with an `id`, else a
+ * `name` (the game's library files name by `id` and give `name` a text reference), by that value.
+ */
+function libraryOutlined(element: XmlElement): Outlined | undefined {
+  if (!element.parent) {
+    return { kind: SymbolKind.Module, name: element.name };
+  }
+  const value = valueOf(attributeNamed(element, 'id')) ?? valueOf(attributeNamed(element, 'name'));
+  return value ? { kind: SymbolKind.Object, name: value.value, detail: element.name, selection: value } : undefined;
+}
+
 /** The game's texts, for the names of orders. */
 export interface OutlineTexts {
   database: TextDatabase;
@@ -180,12 +193,13 @@ export interface OutlineTexts {
 }
 
 /**
- * The outline of a script or patch document; empty for other documents. Symbols nest as their elements
- * do, in document order. With the texts, an order's detail has its name as the game shows it.
+ * The outline of a script, patch or library file; empty for other documents. Symbols nest as their
+ * elements do, in document order. With the texts, an order's detail has its name as the game shows it.
  */
 export function documentSymbols(analysis: DocumentAnalysis, texts?: OutlineTexts): DocumentSymbol[] {
   const structure = analysis.structure;
-  if (!structure || (!analysis.detection.script && !analysis.detection.isDiff)) {
+  const library = !analysis.detection.script && !analysis.detection.isDiff;
+  if (!structure || (library && !analysis.detection.library)) {
     return [];
   }
   const document = analysis.document;
@@ -195,7 +209,7 @@ export function documentSymbols(analysis: DocumentAnalysis, texts?: OutlineTexts
   const walk = (elements: readonly XmlElement[]): DocumentSymbol[] => {
     const symbols: DocumentSymbol[] = [];
     for (const element of elements) {
-      const item = outlined(element, schema, texts);
+      const item = library ? libraryOutlined(element) : outlined(element, schema, texts);
       if (!item) {
         symbols.push(...walk(element.children));
         continue;

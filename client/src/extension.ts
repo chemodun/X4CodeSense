@@ -70,7 +70,7 @@ let mcpHttpServer: McpHttpServer | undefined;
 let serverStatus: ServerStatus | undefined;
 /** What the server said of the active document. */
 let activeInfo: { document: vscode.TextDocument; info: DocumentInfoResult } | undefined;
-/** The value of the `x4CodeSense.documentKind` context key: `md`, `aiscripts`, `patch` or empty. */
+/** The value of the `x4CodeSense.documentKind` context key: `md`, `aiscripts`, `patch`, `library` or empty. */
 let documentKind = '';
 /** Counts status bar updates: an answer to an older one is dropped. */
 let statusRequests = 0;
@@ -250,9 +250,9 @@ export async function deactivate(): Promise<void> {
   client = undefined;
 }
 
-/** The kind of script the server found the document to be, `patch`, or undefined. */
-function kindOf(info: DocumentInfoResult | undefined): ScriptSchema | 'patch' | undefined {
-  return info?.metadata?.schema ?? (info?.isDiff ? 'patch' : undefined);
+/** The kind of script the server found the document to be, `patch`, `library`, or undefined. */
+function kindOf(info: DocumentInfoResult | undefined): ScriptSchema | 'patch' | 'library' | undefined {
+  return info?.metadata?.schema ?? (info?.isDiff ? 'patch' : info?.library ? 'library' : undefined);
 }
 
 function setDocumentKind(kind: string | undefined): void {
@@ -292,7 +292,8 @@ async function documentInfo(document: vscode.TextDocument | undefined): Promise<
 }
 
 /**
- * Shows the active script or patch in the status bar: its kind and name, or the file a patch changes. A
+ * Shows the active script, patch or library file in the status bar: its kind and name, the file a patch
+ * changes, or the schema a library file names. A
  * spinner while the server reads the game files or indexes the scripts, a warning when the game files
  * are not set or hold no schemas. The tooltip tells what the server has read; a click opens the menu.
  */
@@ -317,10 +318,12 @@ async function updateStatusBar(): Promise<void> {
   const target = info.patchTarget;
   const label = info.metadata
     ? `X4 ${shortSchemaName[info.metadata.schema]}: ${info.metadata.name || '(unnamed)'}`
-    : `X4 patch${target ? `: ${target.name}` : ''}`;
+    : info.library
+      ? `X4 library: ${info.library.schema}.xsd`
+      : `X4 patch${target ? `: ${target.name}` : ''}`;
   const busy = serverStatus === undefined || serverStatus.state !== 'ready';
   const missing = gameFilesMissing();
-  const icon = busy ? '$(sync~spin)' : missing ? '$(warning)' : kind === 'patch' ? '$(diff)' : '$(symbol-namespace)';
+  const icon = busy ? '$(sync~spin)' : missing ? '$(warning)' : kind === 'patch' ? '$(diff)' : kind === 'library' ? '$(library)' : '$(symbol-namespace)';
   item.text = `${icon} ${label}`;
   item.backgroundColor = missing ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
   item.tooltip = tooltip(info, isGameDocument(active.document));
@@ -355,6 +358,12 @@ function tooltip(info: DocumentInfoResult, inGame: boolean): vscode.MarkdownStri
   const target = info.patchTarget;
   if (info.metadata) {
     lines.push(`**${schemaDisplayName[info.metadata.schema]}** \`${info.metadata.name}\``);
+  } else if (info.library) {
+    lines.push(
+      info.library.known
+        ? `**Library file**, checked against the game's \`${info.library.schema}.xsd\``
+        : `**Library file**: the game's libraries have no \`${info.library.schema}.xsd\`, so it is not checked against one`
+    );
   } else if (target?.file) {
     const whose = target.source === 'game' ? "the game's file" : target.source ? `the file of ${escaped(target.source)}` : 'the file';
     const patches = target.earlier.length - target.merged.length;

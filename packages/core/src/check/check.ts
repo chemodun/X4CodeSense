@@ -13,6 +13,7 @@ import { diskFiles, fileNames, subfolderNames, type FileSource } from '../files/
 import type { GameData } from '../gameData';
 import { schemaFolderName, scriptSchemas } from '../scripts/scriptMetadata';
 import type { ScriptSchema } from '../types';
+import { documentSchema } from '../xsd/loadSchemas';
 
 /** The severities of findings, the most severe first. */
 export const severities = ['error', 'warning', 'info', 'hint'] as const;
@@ -48,8 +49,8 @@ export interface CheckedFolder {
 
 export interface FileFindings {
   findings: Finding[];
-  /** What the file is: a script, a patch, or neither. */
-  kind: 'script' | 'patch' | 'other';
+  /** What the file is: a script, a patch, a library file checked against the schema it names, or none of these. */
+  kind: 'script' | 'patch' | 'library' | 'other';
 }
 
 /** Orders names the same way on every system, so the output does too. */
@@ -163,6 +164,8 @@ export function checkFile(file: string, folder: FileFolder, context: AnalysisCon
     // In a script folder only: in `libraries` such a file is a merge file, which its analysis checks with the game.
     const root = detection.rootElement ? `root element <${detection.rootElement}>` : 'no root element';
     aboutFile('not-a-script', `not recognised as a script or a patch (${root})`);
+  } else if (documentSchema(detection, context.schemas)) {
+    kind = 'library';
   }
   // A fix that creates what is missing in another file is the editor's: a finding lists the edits of its own file.
   const actions = (analysis.diagnostics.length === 0 ? [] : quickFixes(analysis, analysis.diagnostics, game)).filter((action) =>

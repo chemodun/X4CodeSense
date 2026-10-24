@@ -47,9 +47,33 @@ function firstStartTag(text: string): XmlElement | undefined {
 const diffRootElement = 'diff';
 
 /**
- * Classifies an XML text by its root element: script, patch or something else.
+ * Schemas in `libraries` that are no library files' schema: the scripts', the include they share, the
+ * patches', and `scriptproperties.xsd`, whose file is left to other tooling.
+ */
+const notLibrarySchemas: ReadonlySet<string> = new Set([...scriptSchemas, 'common', diffRootElement, 'scriptproperties']);
+
+/** True for a name a library file may give its schema by: a file name without folders, of no script's, patch's or excluded schema. */
+export function isLibrarySchemaName(name: string): boolean {
+  return /^[\w.-]+$/.test(name) && !notLibrarySchemas.has(name.toLowerCase());
+}
+
+/**
+ * The library schema a `xsi:noNamespaceSchemaLocation` value names, lowercased: `libraries` for
+ * `../libraries/libraries.xsd`; the folders are not looked at. Undefined for a script's, a patch's or an
+ * excluded schema, and for a value that names no `.xsd` file.
+ */
+export function librarySchemaFromLocation(schemaLocation: string): string | undefined {
+  const fileName = schemaLocation.trim().replace(/\\/g, '/').split('/').pop() ?? '';
+  const name = /^(.+)\.xsd$/i.exec(fileName)?.[1];
+  return name !== undefined && isLibrarySchemaName(name) ? name.toLowerCase() : undefined;
+}
+
+/**
+ * Classifies an XML text by its root element: script, patch, library file or something else.
  * For scripts the root element decides the schema; `xsi:noNamespaceSchemaLocation` is only recorded
- * so a later diagnostic can flag a mismatch, it never overrides the root element.
+ * so a later diagnostic can flag a mismatch, it never overrides the root element. Any other file is a
+ * library file by the schema its root names there, never by its root element or file name, which the
+ * game's library files share across schemas.
  */
 export function detectDocument(text: string): DocumentDetection {
   const root = firstStartTag(text);
@@ -58,17 +82,22 @@ export function detectDocument(text: string): DocumentDetection {
   }
   const rootElement = root.name.toLowerCase();
   const detection: DocumentDetection = { rootElement, isDiff: rootElement === diffRootElement };
+  const schemaLocation = root.attributes.find((attribute) => attribute.name.toLowerCase() === schemaLocationAttribute);
   if (isScriptRootElement(rootElement)) {
     const script: ScriptMetadata = {
       schema: rootElementToSchema[rootElement],
       rootElement,
       name: attributeNamed(root, 'name')?.value ?? '',
     };
-    const schemaLocation = root.attributes.find((attribute) => attribute.name.toLowerCase() === schemaLocationAttribute);
     if (schemaLocation !== undefined) {
       script.schemaLocation = schemaLocation.value;
     }
     detection.script = script;
+  } else if (!detection.isDiff && schemaLocation !== undefined) {
+    const schema = librarySchemaFromLocation(schemaLocation.value);
+    if (schema !== undefined) {
+      detection.library = { schema, schemaLocation: schemaLocation.value };
+    }
   }
   return detection;
 }

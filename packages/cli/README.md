@@ -14,7 +14,7 @@ npx x4-script-check --game "C:\Games\X4 Foundations" "C:\Games\X4 Foundations"  
 
 It looks for `md` and `aiscripts` folders directly under each given path and one level deeper, and for the patches of other extensions in `extensions/<folder>/md` and `.../aiscripts`. It checks every `*.xml` file in them, in the order of their names, once, also when a path is given twice or inside another given path, and exits with 1 when there are findings (2 on a usage error). The game folder itself, given as a path to check, stands for the game and its DLCs.
 
-It checks each extension's `libraries` folder as well: a patch there (`<diff>`) is applied to the game's library file of the same name, after the patches and merge files of the extensions loaded before it, and counts as a patch. A merge file, whose root is the game file's (`<wares>` in `libraries/wares.xml`), is merged as the game merges it; one whose root is neither is reported, since the game skips it. Other files there are not reported as no scripts.
+It checks each extension's `libraries` folder as well: a patch there (`<diff>`) is applied to the game's library file of the same name, after the patches and merge files of the extensions loaded before it, and counts as a patch. A merge file, whose root is the game file's (`<wares>` in `libraries/wares.xml`), is merged as the game merges it; one whose root is neither is reported, since the game skips it. A file that names its schema on the root (`xsi:noNamespaceSchemaLocation="libraries.xsd"`) is validated against that schema of the game's `libraries` and counts as a library file; a schema the game does not have is a warning. Other files there are not reported as no scripts.
 
 The checks are those the X4CodeSense extension runs as you type, listed with their known limitations in [its README](https://github.com/chemodun/X4CodeSense/blob/main/client/README.md).
 
@@ -23,7 +23,7 @@ Options:
 - `--game <folder>` - the installed game, the folder of `X4.exe`. Its files and those of its DLCs (the folders of its `extensions` whose names start with `ego_dlc_`) are read from their catalogs (`01.cat`, …, a DLC's `ext_01.cat`, …) where they lie: nothing is extracted, and the X Catalog Tool is not needed. The other folders in its `extensions`, the player's mods, are not part of the game: give them as paths to check or with `--extensions`. Used when `--unpacked` is not given.
   - The mods installed there that the checked extensions depend on, and those whose files their patches change, are read from it, also beside `--unpacked`: packed ones from their catalogs (`ext_01.cat`, and `ext_01_diff_vNNN.cat` and `ext_vNNN.cat` for the game's version), an extension of the same id among those given replacing the installed one. They count for the patches: a patch of an installed mod's script is checked against it, and their patches of a library file apply before the checked one's. Beside `--unpacked`, a folder that is no installed game is reported and gives no mods.
 - `--installed-dependencies` - with `--game`, the installed mods the checked extensions depend on count as a whole: their cues, scripts and texts resolve in the checked scripts.
-- `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd`, `common.xsd` and `diff.xsd`, and scripts and patches are validated against them.
+- `--unpacked <folder>` - the extracted vanilla game files; their `libraries` folder provides `md.xsd`, `aiscripts.xsd`, `common.xsd` and `diff.xsd`, which scripts and patches are validated against, and the schemas that library files name.
 - Without `--game` and `--unpacked`, the `X4_UNPACKED` environment variable gives the extracted files, else `X4_GAME` the installed game; either option given wins over both variables.
 - `--extensions <folder>` - other extensions the checked ones refer to: their texts and scripts are read, they are not checked. May be given several times.
 - `--no-structure` - report unknown elements, attributes and values, missing required attributes and text inside elements only, not the order and completeness of child elements.
@@ -35,7 +35,7 @@ Options:
 
 ## Text
 
-One line per finding: the file, for a place in it the 1-based line and column, the severity, the message and its code. A finding with a quick fix, the fix the editor offers, has a line per fix below it. The last line counts what was checked and found.
+One line per finding: the file, for a place in it the 1-based line and column, the severity, the message and its code. A finding with a quick fix, the fix the editor offers, has a line per fix below it. The last line counts what was checked and found, the library files checked against their schema where there are any (`, 2 library file(s)`).
 
 ```text
 C:\mods\my_extension\aiscripts\Misplaced.xml: error: is a md script but lies in the aiscripts folder [script-in-wrong-folder]
@@ -75,6 +75,7 @@ C:\mods\my_extension\md\Texts.xml:5:50: warning: Text 2 does not exist on page 9
     "folders": 2,
     "scripts": 5,
     "patches": 1,
+    "libraries": 0,
     "findings": 1,
     "errors": 1,
     "warnings": 0,

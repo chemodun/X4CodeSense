@@ -12,6 +12,7 @@ import {
   type XmlAttribute,
   type XmlElement,
 } from '../xml/xmlStructure';
+import { documentSchema } from '../xsd/loadSchemas';
 import type { XsdAttribute, XsdElement, XsdSchema } from '../xsd/schema';
 import type { DocumentAnalysis } from './analyzeDocument';
 
@@ -68,10 +69,13 @@ export function scriptSchemaOf(analysis: DocumentAnalysis): ScriptSchema | undef
   }
 }
 
-/** The schema of the document's script kind, when game data is available. */
+/** The schema of the document's script kind, or of a library file the one its root names, when game data is available. */
 export function schemaOf(game: GameData | undefined, analysis: DocumentAnalysis): XsdSchema | undefined {
   const kind = scriptSchemaOf(analysis);
-  return kind && game ? game.schemas.schemas[kind] : undefined;
+  if (kind) {
+    return game?.schemas.schemas[kind];
+  }
+  return documentSchema(analysis.detection, game?.schemas);
 }
 
 /**

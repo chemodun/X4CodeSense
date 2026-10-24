@@ -52,6 +52,8 @@ interface Counters {
   folders: number;
   scripts: number;
   patches: number;
+  /** Library files checked against the schema they name. */
+  libraries: number;
 }
 
 interface Options {
@@ -205,6 +207,8 @@ function checkFolder(scriptFolder: CheckedFolder, context: AnalysisContext, game
       counters.scripts++;
     } else if (checked.kind === 'patch') {
       counters.patches++;
+    } else if (checked.kind === 'library') {
+      counters.libraries++;
     }
     findings.push(...checked.findings);
   }
@@ -360,7 +364,8 @@ function fixedFileCount(applied: readonly Applied[]): number {
 function summaryLine(findings: readonly Finding[], counters: Counters, validated: boolean, applied: readonly Applied[] | undefined): string {
   const notes = severities.filter((severity) => countOf(findings, severity) > 0).map((severity) => `${countOf(findings, severity)} ${counted[severity]}`);
   const details = [...(notes.length > 0 ? [notes.join(', ')] : []), ...(validated ? [] : ['no schema validation: pass --unpacked or --game'])];
-  const counts = `${counters.files} file(s) in ${counters.folders} folder(s): ${counters.scripts} script(s), ${counters.patches} patch(es), ${findings.length} finding(s)`;
+  const libraries = counters.libraries > 0 ? `, ${counters.libraries} library file(s)` : '';
+  const counts = `${counters.files} file(s) in ${counters.folders} folder(s): ${counters.scripts} script(s), ${counters.patches} patch(es)${libraries}, ${findings.length} finding(s)`;
   const line = details.length === 0 ? counts : `${counts} (${details.join('; ')})`;
   return applied ? `${line}; ${applied.length} fix(es) applied to ${fixedFileCount(applied)} file(s)` : line;
 }
@@ -592,7 +597,7 @@ async function main(argv: string[]): Promise<number> {
     }
   }
   const findings: Finding[] = [];
-  const counters: Counters = { files: 0, folders: 0, scripts: 0, patches: 0 };
+  const counters: Counters = { files: 0, folders: 0, scripts: 0, patches: 0, libraries: 0 };
   for (const scriptFolder of scriptFolders) {
     counters.folders++;
     findings.push(...checkFolder(scriptFolder, context, game, counters));

@@ -2,7 +2,7 @@ import type { TextEdit } from 'vscode-languageserver-types';
 import type { PatchComparison } from './patches/patchAnalysis';
 import type { PatchWriteChange, PatchWriteRefusal } from './patches/patchWriter';
 import type { PatchTarget } from './project/scriptIndex';
-import type { ScriptMetadata } from './types';
+import type { LibraryMetadata, ScriptMetadata } from './types';
 
 /**
  * Custom LSP requests shared by the server and its clients.
@@ -22,6 +22,11 @@ export interface DocumentInfoResult {
   metadata?: ScriptMetadata;
   /** True when the document is a `diff` patch. */
   isDiff: boolean;
+  /**
+   * Present when the document is a library file that names its schema and is analysed: one the game has
+   * (`known`), or in a `libraries` folder one it does not have.
+   */
+  library?: LibraryMetadata & { known: boolean };
   /** Lowercased root element name, when the document is open and has one. */
   rootElement?: string;
   /** For a patch document, once the scripts are indexed: the file it changes, or why there is none. */

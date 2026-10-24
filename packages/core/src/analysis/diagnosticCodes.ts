@@ -1,3 +1,4 @@
+import type { LibraryDiagnosticCode } from './analyzeDocument';
 import type { ExpressionDiagnosticCode, FormatDiagnosticCode } from '../expressions/validateExpressions';
 import type { NameDiagnosticCode } from '../names/validateNames';
 import type { PatchDiagnosticCode } from '../patches/validatePatch';
@@ -18,6 +19,7 @@ export type DiagnosticCode =
   | VariableDiagnosticCode
   | TextDiagnosticCode
   | PatchDiagnosticCode
+  | LibraryDiagnosticCode
   | CallParameterDiagnosticCode
   | ScriptNameDiagnosticCode;
 
@@ -75,6 +77,7 @@ export const diagnosticDescriptions: Readonly<Record<DiagnosticCode, string>> = 
   'patch-operation-unsupported':
     "A patch operation that does what X4CodeSense does not model, such as changing an element's text, so its result is not shown or checked.",
   'library-root-mismatch': "A file in an extension's libraries whose root is neither 'diff' nor the root of the game's file of its name, so the game skips it.",
+  'library-schema-unknown': "A file in a libraries folder whose root names a schema in xsi:noNamespaceSchemaLocation that the game's libraries do not have.",
   'param-unknown': 'A parameter a call passes that the script, library or cue it calls does not declare.',
   'aiscript-undefined': 'An AI script a call names that no known script defines.',
   'order-undefined': 'An order a call names that no known AI script defines.',
