@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.11.0...x4-script-core@v0.12.0) (2026-10-24)
+
+
+### Features
+
+* code lens with reference counts ([ddfb082](https://github.com/chemodun/X4CodeSense/commit/ddfb0828b5d97ee9efe461bf0a86571096f87b23))
+* **core:** library schemas, element references and anyAttribute in the XSD engine ([aef64ac](https://github.com/chemodun/X4CodeSense/commit/aef64ac7cf29131e12100f541d3b35de6f2254c7))
+* follow fields, globals and modules of the extension in ReadText ([711119b](https://github.com/chemodun/X4CodeSense/commit/711119b317de3bd7c24f0efe08494665a840fa3b))
+* go to the text and complete pages and ids in ReadText of Lua files ([93a9c04](https://github.com/chemodun/X4CodeSense/commit/93a9c0478c27c43f90b9840d2ec25b813939fd6f))
+* library files are checked against the schema their root names ([0b42a67](https://github.com/chemodun/X4CodeSense/commit/0b42a67ae254dc16fbcca1b2efdb917048b35a45))
+* patches and merge files of library files are checked against their game file's schema ([84e8cad](https://github.com/chemodun/X4CodeSense/commit/84e8cadcbb557a9ad2524596befc94fa5f0cf29b))
+* semantic highlighting of the paths in a patch's sel and if ([a8b4ca4](https://github.com/chemodun/X4CodeSense/commit/a8b4ca48157f32078d1dafcd379935cb4f013405))
+* the side with a patch of a library file is checked as the patch is ([554eca8](https://github.com/chemodun/X4CodeSense/commit/554eca80da12279d5e8fed962ce7f22d3382efab))
+* warn about texts ReadText reads that no text file defines ([1820f10](https://github.com/chemodun/X4CodeSense/commit/1820f1070833ba7f979e4114f7c1d17cfa7444b2))
+
 ## [0.11.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-core@v0.10.1...x4-script-core@v0.11.0) (2026-10-06)
 
 
