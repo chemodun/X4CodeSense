@@ -98,6 +98,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ],
     synchronize: { configurationSection: 'x4CodeSense', fileEvents: [xmlFiles, deletions] },
     outputChannelName: 'X4CodeSense',
+    // A rename in the side with the patch is asked of the patch, at the caret's place there.
+    middleware: {
+      prepareRename: async (document, position, token, next) => {
+        if (document.uri.scheme !== patchedScheme) {
+          return await next(document, position, token);
+        }
+        const place = sides.placeInPatch(document, position);
+        if ('refused' in place) {
+          throw new Error(place.refused);
+        }
+        const prepared = await next(place.patch, place.position, token);
+        if (!prepared) {
+          return prepared;
+        }
+        const range = sides.rangeInSide(document, place.patch, prepared instanceof vscode.Range ? prepared : prepared.range);
+        if (!range) {
+          throw new Error('This side does not show the patch as it is now yet: rename again in a moment');
+        }
+        return prepared instanceof vscode.Range ? range : { range, placeholder: prepared.placeholder };
+      },
+      provideRenameEdits: async (document, position, newName, token, next) => {
+        if (document.uri.scheme !== patchedScheme) {
+          return await next(document, position, newName, token);
+        }
+        const place = sides.placeInPatch(document, position);
+        if ('refused' in place) {
+          throw new Error(place.refused);
+        }
+        const edit = await next(place.patch, place.position, newName, token);
+        if (edit) {
+          sides.renamedFrom(document);
+        }
+        return edit;
+      },
+    },
   };
   const languageClient = new LanguageClient('x4CodeSense', 'X4CodeSense', serverOptions, clientOptions);
   client = languageClient;

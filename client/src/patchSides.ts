@@ -13,10 +13,12 @@
  * differ where half-typed markup or the patch's indentation is written out.
  *
  * A caret moved in the patch moves to its place in the side, and back, where the patch's own pieces are.
+ * A rename in the side is a rename in the patch, from the caret's place there; the side then shows what
+ * the patch became, also while it is the active editor.
  */
 import * as vscode from 'vscode';
 import { gameFileScheme, patchAfterScheme, type PatchComparisonResult, type PatchWriteParams, type PatchWriteResult } from 'x4-script-core';
-import { mapChanges, patchOffsetAt, sideOffsetAt, sideText, type Segment, type TextChange } from './patchPieces';
+import { mapChanges, patchOffsetAt, sideOffsetAt, sideRangeOf, sideText, type Segment, type TextChange } from './patchPieces';
 
 /** The scheme of the patched side; the patch document's uri is in the query. */
 export const patchedScheme = patchAfterScheme;
@@ -50,7 +52,7 @@ interface Side {
   pending: boolean;
   /** The provider announced a change: the editor's next change loads it. */
   loading: boolean;
-  /** Saved into the patch: the server's next answer is shown even while the side is the active editor. */
+  /** Saved into the patch, or renamed from: the server's next answer is shown even while the side is the active editor. */
   takeNext: boolean;
   /** A newer answer the side could not take yet. */
   waiting?: Answer;
@@ -193,6 +195,44 @@ export class PatchedSides implements vscode.FileSystemProvider, vscode.Disposabl
 
   rename(uri: vscode.Uri): void {
     throw vscode.FileSystemError.NoPermissions(uri);
+  }
+
+  /**
+   * Where a caret of a side lies in the patch, for a rename there; or why there is none: the side has
+   * changes the patch does not have, is not the patch as it is now, or the text there is not the patch's.
+   */
+  placeInPatch(document: vscode.TextDocument, position: vscode.Position): { patch: vscode.TextDocument; position: vscode.Position } | { refused: string } {
+    const side = this.sides.get(document.uri.toString());
+    const patch = side && this.documentOf(side.patch);
+    if (!side || !patch) {
+      return { refused: 'Open the patch to rename from this side' };
+    }
+    if (side.pending) {
+      return { refused: 'Save this side first: the patch does not have its changes yet' };
+    }
+    if (patch.version !== side.patchVersion) {
+      return { refused: 'This side does not show the patch as it is now yet: rename again in a moment' };
+    }
+    const at = patchOffsetAt(side.segments, document.offsetAt(position));
+    if (at === undefined) {
+      return { refused: 'This text comes from the file the patch changes, not from the patch: rename where the patch brings the name in, or in the patch' };
+    }
+    return { patch, position: patch.positionAt(at) };
+  }
+
+  /** A range of the patch in a side, when the side shows the patch's text there as it is now. */
+  rangeInSide(document: vscode.TextDocument, patch: vscode.TextDocument, range: vscode.Range): vscode.Range | undefined {
+    const side = this.sides.get(document.uri.toString());
+    const found = side && patch.version === side.patchVersion ? sideRangeOf(side.segments, patch.offsetAt(range.start), patch.offsetAt(range.end)) : undefined;
+    return found && new vscode.Range(document.positionAt(found.start), document.positionAt(found.end));
+  }
+
+  /** A rename from the side edits the patch: the side shows what the patch becomes, even while it is the active editor. */
+  renamedFrom(document: vscode.TextDocument): void {
+    const side = this.sides.get(document.uri.toString());
+    if (side) {
+      side.takeNext = true;
+    }
   }
 
   /** Asks the server again for every side the editor has, after the patch or the file it changes changed. */

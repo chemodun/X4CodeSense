@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapChanges, patchOffsetAt, sideOffsetAt, sideText, type Segment } from '../src/patchPieces';
+import { mapChanges, patchOffsetAt, sideOffsetAt, sideRangeOf, sideText, type Segment } from '../src/patchPieces';
 
 describe('the patched side as the editor holds it', () => {
   // A byte order mark, then `<a>`, CRLF, `  <b x="1"/>` (the patch's own piece, at 40 in the patch), CRLF, `</a>`, LF.
@@ -29,6 +29,19 @@ describe('the patched side as the editor holds it', () => {
     ];
     expect([9, 10, 15, 20, 25, 30, 40, 41].map((offset) => patchOffsetAt(segments, offset))).toEqual([undefined, 100, 105, 110, undefined, 50, 60, undefined]);
     expect([49, 50, 55, 60, 61, 100, 110].map((offset) => sideOffsetAt(segments, offset))).toEqual([undefined, 30, 35, 40, undefined, 10, 20]);
+  });
+
+  it('finds a stretch of the patch in the side where one piece holds it whole', () => {
+    const segments: Segment[] = [
+      { start: 10, end: 20, patchStart: 100 },
+      { start: 20, end: 30, patchStart: 50 },
+    ];
+    expect(sideRangeOf(segments, 102, 110)).toEqual({ start: 12, end: 20 });
+    expect(sideRangeOf(segments, 50, 54)).toEqual({ start: 20, end: 24 });
+    // Across the end of a piece, or outside the pieces: not in the side as the patch has it.
+    expect(sideRangeOf(segments, 105, 111)).toBeUndefined();
+    expect(sideRangeOf(segments, 58, 61)).toBeUndefined();
+    expect(sideRangeOf(segments, 70, 72)).toBeUndefined();
   });
 });
 

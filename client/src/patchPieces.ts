@@ -128,6 +128,12 @@ export function sideOffsetAt(segments: readonly Segment[], offset: number): numb
   return segment ? segment.start + offset - segment.patchStart : undefined;
 }
 
+/** Where a stretch of the patch lies in the side, when one segment holds it whole (its end included). */
+export function sideRangeOf(segments: readonly Segment[], start: number, end: number): { start: number; end: number } | undefined {
+  const segment = segments.find((candidate) => candidate.patchStart <= start && end <= candidate.patchStart + candidate.end - candidate.start);
+  return segment ? { start: segment.start + start - segment.patchStart, end: segment.start + end - segment.patchStart } : undefined;
+}
+
 /** A change of a text: `length` characters at `offset` replaced by `text`. */
 export interface TextChange {
   offset: number;
