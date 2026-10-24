@@ -1,0 +1,53 @@
+[size=4][b]X4CodeSense MCP[/b][/size]
+
+An MCP server for [b]X4: Foundations[/b] scripts: AI scripts ([b]aiscripts/*.xml[/b]), Mission Director scripts ([b]md/*.xml[/b]) and the patches ([b]<diff>[/b]) that change them or the game's library files. It gives AI agents that write scripts, such as [b]Claude Code[/b], [b]GitHub Copilot[/b], [b]Cursor[/b] or [b]Claude Desktop[/b], what [url=https://www.nexusmods.com/x4foundations/mods/2422]X4CodeSense[/url] knows from the game's own files: the checks with their fixes, the schemas, the script properties, and the scripts, cues and texts of the game, its DLCs and your extensions. So the agent looks things up instead of guessing, and checks what it wrote.
+
+[quote][b]This is a tool for modders, not a mod for the game.[/b] It is a program that your AI agent starts on your computer. Do not install it with a mod manager or into the game's folders.[/quote]
+If you use [b]Visual Studio Code[/b], install the [url=https://www.nexusmods.com/x4foundations/mods/2422]X4CodeSense[/url] extension instead: it brings this server along and offers it to Copilot with nothing to set up.
+
+[size=3][b]What it gives the agent[/b][/size]
+[list]
+[*][b]Checks[/b] ([b]check[/b]): the same checks as X4CodeSense, of files, folders or text not yet written: well-formed XML, the game's XSD schemas, expressions, property chains, variables, cues, scripts, labels and texts that do not exist. With their quick fixes, as edits the agent can apply.
+[*][b]The schemas[/b] ([b]describe_element[/b]): an element's documentation, its attributes with their types, defaults and allowed values, and the child elements it allows.
+[*][b]Expressions[/b] ([b]expression_type[/b]): what [b]player.ship.sector[/b] is at each step, and the properties of a type, with their descriptions, from [b]scriptproperties.xml[/b].
+[*][b]Scripts, cues and texts[/b] ([b]find[/b], [b]definition[/b], [b]references[/b], [b]hover[/b], [b]text[/b]): where something is defined and used, across the game, its DLCs and your extensions; [b]{page, id}[/b] texts as the game shows them, and a search of the texts.
+[*][b]The installed game, read in place[/b]: nothing has to be extracted; the game's and DLCs' files are read from their catalogs. Extracted files work too.
+[*][b]It only reads[/b]: the agent writes the files. A file the agent writes or changes is read again before the next call.
+[/list]
+[size=3][b]Installing[/b][/size]
+It needs [url=https://nodejs.org]Node.js[/url] 22 or later.
+[list]
+[*][b]Recommended[/b]: let the agent start it from npm, where it is [url=https://www.npmjs.com/package/x4-script-mcp]x4-script-mcp[/url], so new versions come from there. For Claude Code:
+[code]claude mcp add x4 -- npx -y x4-script-mcp --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" --extensions C:\path\to\your\extensions[/code]
+For Claude Desktop, Cursor and others that take a configuration in this form:
+[code]{
+  "mcpServers": {
+    "x4": {
+      "command": "npx",
+      "args": ["-y", "x4-script-mcp", "--game", "C:\\Program Files (x86)\\Steam\\steamapps\\common\\X4 Foundations", "--extensions", "C:\\path\\to\\your\\extensions"]
+    }
+  }
+}[/code]
+[*][b]From the file here[/b]: download it with [b]Manual download[/b], unpack it into a folder of your choice, and let the agent run [b]x4-script-mcp.js[/b] from it with Node.js:
+[code]claude mcp add x4 -- node C:\Tools\x4-script-mcp\x4-script-mcp.js --game "C:\Program Files (x86)\Steam\steamapps\common\X4 Foundations" --extensions C:\path\to\your\extensions[/code]
+It does not update itself: download it again for a new version.
+[*][b]With VS Code[/b]: the [url=https://www.nexusmods.com/x4foundations/mods/2422]X4CodeSense[/url] extension gives it to Copilot's agent mode on its own. Its command [b]X4CodeSense: Start MCP Server[/b] serves it at [b]http://127.0.0.1:47400/mcp[/b] for other agents, such as Copilot CLI or Claude Code.
+[/list]
+[size=3][b]Setting it up[/b][/size]
+[list]
+[*][b]--game[/b] the installed game, the folder holding [b]X4.exe[/b]; or [b]--unpacked[/b] the extracted game files.
+[*][b]--extensions[/b] your extension, or a folder of extensions: those the agent writes and those they use. May be given several times.
+[*][b]--language[/b] the language texts are shown in, [b]44[/b] (English) by default.
+[*][b]--port[/b] serves it at [b]http://127.0.0.1:<port>/mcp[/b], for agents that are given a URL.
+[/list]
+Agents use the tools they are told about. Say in your agent's instructions ([b]CLAUDE.md[/b], [b]AGENTS.md[/b], [b].github/copilot-instructions.md[/b]) to ask [b]describe_element[/b] and [b]expression_type[/b] before writing an element or an expression, rather than searching the game's [b].xsd[/b] files and [b]scriptproperties.xml[/b], and to run [b]check[/b] after every change to a script.
+
+[size=3][b]Documentation, sources and issues[/b][/size]
+Every option and tool is described on [url=https://www.npmjs.com/package/x4-script-mcp]npm[/url] and on [url=https://github.com/chemodun/X4CodeSense/tree/main/packages/mcp]GitHub[/url], with the changelog and the sources. It is also in the [url=https://registry.modelcontextprotocol.io]MCP Registry[/url] as [b]io.github.chemodun/x4-script-mcp[/b]. Please report problems on GitHub, or in the comments here.
+
+[size=3][b]Credits[/b][/size]
+[list]
+[*][url=https://www.egosoft.com]Egosoft[/url] for the game.
+[*]Members of the [url=https://discord.com/channels/337098290917146624/502057640877228042]x4_modding Discord channel[/url] for answers, support and ideas.
+[/list]
+Licensed under the [url=https://github.com/chemodun/X4CodeSense/blob/main/packages/mcp/LICENSE]Apache License 2.0[/url].
