@@ -47,7 +47,7 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 
 [h2]Texts in Lua files[/h2]
 
-In Lua files, hovering between the parentheses of [b]ReadText(page, id)[/b] shows the text, as for [b]{page, id}[/b] in scripts. The page and the id may be numbers, or names the file sets to one number, such as [b]local PAGE_ID = 1972092427[/b]. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table, an expression. The Lua extension you use keeps its own hover and everything else. [b].xpl[/b] files count when VS Code opens them as Lua, for example with [b]"files.associations": { "*.xpl": "lua" }[/b].
+In Lua files, hovering between the parentheses of [b]ReadText(page, id)[/b] shows the text, as for [b]{page, id}[/b] in scripts. The page and the id may be numbers, or names the file sets to one number, such as [b]local PAGE_ID = 1972092427[/b]. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table, an expression. Go to Definition from the parentheses opens the text in its text file. Where the page or the id is written as a number, or not written yet, completion offers the pages, and the ids of the page with their texts; after [b]ReadText([/b] type a digit or press Ctrl+Space. The Lua extension you use keeps its own hover and everything else. [b].xpl[/b] files count when VS Code opens them as Lua, for example with [b]"files.associations": { "*.xpl": "lua" }[/b].
 
 [h2]Navigation and rename[/h2]
 [list]
@@ -390,6 +390,7 @@ This project is licensed under the Apache License 2.0 - see the [url=https://git
 [*] Semantic highlighting of the paths in a patch's [b]sel[/b] and [b]if[/b]: element and attribute names in the colours of XML's, functions, strings, numbers and operators, and the cue or interrupt library item a path selects by as it is coloured elsewhere.
 [*] Rename in the side with the patch, in what the patch brings in: it renames from the patch, and the side follows. On the game's own text there, or while the side has changes not yet written into the patch, it is refused, with the reason.
 [*] Code lens with reference counts over cues, libraries, labels and interrupt library items, in scripts and over what a patch brings in; a click shows the references. [b]x4CodeSense.codeLens.references[/b] turns them off.
+[*] In Lua files, Go to Definition from the parentheses of [b]ReadText(page, id)[/b] opens the text, and completion there offers the pages and the ids of a page.
 [/list]
 [/list]
 [h2][1.1.0] - 2026-10-06[/h2]
