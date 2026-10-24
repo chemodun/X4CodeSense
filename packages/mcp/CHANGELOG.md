@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.5.0...x4-script-mcp@v0.5.1) (2026-10-24)
+
+
+### Miscellaneous Chores
+
+* **mcp:** add the icon and title images of the MCP server ([76fc56f](https://github.com/chemodun/X4CodeSense/commit/76fc56f937ed2bfa12128708c23d48674af0b0e1))
+
+
+### Documentation
+
+* **mcp:** add the Nexus page of the MCP server ([3530c88](https://github.com/chemodun/X4CodeSense/commit/3530c889ef540e5bacddcc0f6c7cee91b1807e10))
+
 ## [0.5.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-mcp@v0.4.0...x4-script-mcp@v0.5.0) (2026-10-24)
 
 
