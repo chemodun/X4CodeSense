@@ -48,6 +48,7 @@ import {
   DocumentInfoRequestMethod,
   documentSymbols,
   EditorTabsNotificationMethod,
+  findExtensions,
   fixAll,
   foldingRanges,
   gameFileOf,
@@ -69,6 +70,7 @@ import {
   positionTokens,
   prepareRenameAt,
   quickFixes,
+  LuaProject,
   readTextCalls,
   readTextCompletions,
   readTextDefinitions,
@@ -810,6 +812,15 @@ connection.onDidChangeWatchedFiles((params) => {
   let changed = false;
   for (const change of fileChanges(params.changes)) {
     const file = filePathOf(change.uri);
+    // A file or folder created or deleted may change which Lua files an extension has.
+    if (change.type !== FileChangeType.Changed) {
+      luaProject?.project.forgetListings();
+    }
+    // A Lua file only counts for what the other Lua files of its extension read from it.
+    if (file && /\.(lua|xpl)$/i.test(file)) {
+      luaProject?.project.forget(file);
+      continue;
+    }
     // A file in no folder the index reads: perhaps of an extension created or copied in.
     if (file && change.type === FileChangeType.Created && game?.index && game.index.sourceOf(file) === undefined) {
       scheduleFolderCheck();
@@ -1351,6 +1362,11 @@ documents.onDidClose((event) => {
   clearTimeout(sideTimers.get(event.document.uri));
   sideTimers.delete(event.document.uri);
   if (isLua(event.document)) {
+    // Other Lua files of its extension read it from disk again.
+    const file = filePathOf(event.document.uri);
+    if (file) {
+      luaProject?.project.forget(file);
+    }
     return;
   }
   // Back to the file on disk, which may not have the unsaved changes.
@@ -1396,17 +1412,42 @@ connection.onCompletion((params): CompletionList | CompletionItem[] => {
   return { isIncomplete: false, items };
 });
 
-/** The `ReadText` calls of an open Lua document, as of its version. */
+/**
+ * The `ReadText` calls of an open Lua document, as of its version, with what the other Lua files of its
+ * extension tell. Those are asked at each request: they may have changed since.
+ */
 function readTextCallsOf(document: TextDocument): ReadTextCall[] {
-  const known = readTextCallsByUri.get(document.uri);
-  if (known?.version === document.version) {
-    return known.calls;
+  let calls = readTextCallsByUri.get(document.uri)?.version === document.version ? readTextCallsByUri.get(document.uri)?.calls : undefined;
+  if (!calls) {
+    const started = performance.now();
+    calls = readTextCalls(document.getText());
+    readTextCallsByUri.set(document.uri, { version: document.version, calls });
+    debug(`${document.uri}: ${calls.length} ReadText call(s) in ${(performance.now() - started).toFixed(1)} ms`);
   }
-  const started = performance.now();
-  const calls = readTextCalls(document.getText());
-  readTextCallsByUri.set(document.uri, { version: document.version, calls });
-  debug(`${document.uri}: ${calls.length} ReadText call(s) in ${(performance.now() - started).toFixed(1)} ms`);
-  return calls;
+  const file = filePathOf(document.uri);
+  return file ? luaProjectNow().resolveAll(calls, file) : calls;
+}
+
+/** The Lua files of the extensions, for what a Lua document reads from the others of its extension; built again when the extensions change. */
+let luaProject: { sources: string; project: LuaProject } | undefined;
+
+function luaProjectNow(): LuaProject {
+  const folders = extensionFolders();
+  const sources = JSON.stringify([game?.folder, folders]);
+  if (luaProject?.sources !== sources) {
+    const files = game?.files ?? diskFiles;
+    const extensions = findExtensions(game?.folder, folders, files).map((extension) => extension.folder);
+    const openText = (file: string): string | undefined => {
+      const key = fileKey(file);
+      return documents
+        .all()
+        .find((document) => isLua(document) && fileKey(filePathOf(document.uri) ?? '') === key)
+        ?.getText();
+    };
+    luaProject = { sources, project: new LuaProject(extensions, files, openText) };
+    debug(`Lua files followed within ${extensions.length} extension(s)`);
+  }
+  return luaProject.project;
 }
 
 /** The loaded texts, or undefined while none are: Lua documents get nothing then. */

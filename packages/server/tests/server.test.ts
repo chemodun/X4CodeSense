@@ -1184,6 +1184,51 @@ describe('Lua files', () => {
       await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: closed } });
     }
   });
+
+  it('reads modules and globals from the other Lua files of the extension, open or on disk', async () => {
+    const mod = path.join(workDir, 'luamod');
+    mkdirSync(path.join(mod, 'ui'), { recursive: true });
+    writeFileSync(path.join(mod, 'content.xml'), '<content id="luamod"/>');
+    writeFileSync(path.join(mod, 'ui', 'config.lua'), 'local cfg = { PAGE = 1001 }\nreturn cfg\n');
+    const baseFile = path.join(mod, 'ui', 'base.lua');
+    writeFileSync(baseFile, 'Shared = 1002\n');
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, {
+      event: { added: [{ uri: pathToFileURL(mod).toString(), name: 'luamod' }], removed: [] },
+    });
+    const menuUri = pathToFileURL(path.join(mod, 'ui', 'menu.lua')).toString();
+    const menuLines = ['local cfg = require("extensions.luamod.ui.config")', 'x = ReadText(cfg.PAGE, 1)', 'y = ReadText(Shared, 10)'];
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: menuUri, languageId: 'lua', version: 1, text: menuLines.join('\n') },
+    });
+    const hoverOf = async (line: number): Promise<string> => {
+      const hover = await connection.sendRequest(HoverRequest.type, {
+        textDocument: { uri: menuUri },
+        position: { line, character: menuLines[line].indexOf('(') + 1 },
+      });
+      return hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '';
+    };
+    expect(await hoverOf(1)).toContain('Hull');
+    expect(await hoverOf(1)).toContain('The page `cfg.PAGE` is 1001, set in `config.lua` on line 1.');
+    expect(await hoverOf(2)).toContain('Yes');
+
+    // Changed on disk, then open with other text: the open text counts.
+    writeFileSync(baseFile, 'Shared = 1001\n');
+    await connection.sendNotification(DidChangeWatchedFilesNotification.type, {
+      changes: [{ uri: pathToFileURL(baseFile).toString(), type: FileChangeType.Changed }],
+    });
+    expect(await hoverOf(2)).toContain('Text 10 does not exist on page 1001');
+    const baseUri = pathToFileURL(baseFile).toString();
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: baseUri, languageId: 'lua', version: 1, text: 'Shared = 1002\n' },
+    });
+    expect(await hoverOf(2)).toContain('Yes');
+    for (const closed of [menuUri, baseUri]) {
+      await connection.sendNotification(DidCloseTextDocumentNotification.type, { textDocument: { uri: closed } });
+    }
+    await connection.sendNotification(DidChangeWorkspaceFoldersNotification.type, {
+      event: { added: [], removed: [{ uri: pathToFileURL(mod).toString(), name: 'luamod' }] },
+    });
+  });
 });
 
 describe('script index', () => {

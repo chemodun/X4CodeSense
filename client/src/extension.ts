@@ -90,11 +90,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   // Scripts and text files of the workspace change on disk too (checkouts, other editors): the server reads them again.
   const xmlFiles = vscode.workspace.createFileSystemWatcher('**/*.xml');
+  // Lua files: what one sets, others of its extension read.
+  const luaFiles = vscode.workspace.createFileSystemWatcher('**/*.{lua,xpl}');
   // A folder deleted (a mod, or by a checkout) is reported as the folder alone, not as the files in it.
   const deletions = vscode.workspace.createFileSystemWatcher('**/*', true, true, false);
-  context.subscriptions.push(xmlFiles, deletions);
+  context.subscriptions.push(xmlFiles, luaFiles, deletions);
   const clientOptions: LanguageClientOptions = {
-    // Lua files only get the hover of `ReadText` calls, with the text they read. The sides of a patch
+    // Lua files only get hover, definition and completion in `ReadText` calls. The sides of a patch
     // comparison are the script before and after the patch; game documents the files of an installed game.
     documentSelector: [
       { scheme: 'file', language: 'xml' },
@@ -103,7 +105,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       { scheme: patchedScheme, language: 'xml' },
       { scheme: gameFileScheme, language: 'xml' },
     ],
-    synchronize: { configurationSection: 'x4CodeSense', fileEvents: [xmlFiles, deletions] },
+    synchronize: { configurationSection: 'x4CodeSense', fileEvents: [xmlFiles, luaFiles, deletions] },
     outputChannelName: 'X4CodeSense',
     // A rename in the side with the patch is asked of the patch, at the caret's place there.
     middleware: {

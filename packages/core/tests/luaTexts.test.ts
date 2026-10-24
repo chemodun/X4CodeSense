@@ -1,9 +1,14 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
+  describeReadText,
   describeText,
   loadTexts,
+  LuaProject,
   readTextCallAt,
   readTextCalls,
   readTextCompletions,
@@ -153,13 +158,84 @@ describe('ReadText calls', () => {
       '100<PAGE ?a parameter of a function',
       '?set to different values in this file 5<same',
       '?set to something other than a whole number ?set to something other than a whole number',
-      '?a field of a table, which is not followed ?an expression',
+      '7<config.field ?an expression',
       // `field` is only a field of a table constructor, no assignment of the name.
       '?not set in this file ?not set in this file',
       '1001 ?not a whole number',
       '100<PAGE ?missing',
       '?missing ?missing',
     ]);
+  });
+
+  it('resolves fields of tables the file sets, and tells why others are not known', () => {
+    const text = [
+      'local eic = {',
+      '  PAGE = 1972092440, MODE = "eic",',
+      '  sub = { ID = 0x10, [1] = 5, 7; onClick = function() local inner = 3 end },',
+      '  twice = 1,',
+      '}',
+      'eic.twice = 2',
+      'eic.extra = 12',
+      'local skill = GetSkill()',
+      'local mod = require("extensions.mod.ui.config")',
+      'ReadText(eic.PAGE, eic.sub.ID)',
+      'ReadText(eic.PAGE, eic.extra)',
+      'ReadText(eic.MODE, eic.twice)',
+      'ReadText(eic.sub.inner, eic.missing)',
+      'ReadText(skill.textid, mod.PAGE)',
+      'ReadText(Global.PAGE, 1)',
+      'for _, option in ipairs(eic) do ReadText(option.page, option.id) end',
+    ].join('\n');
+    expect(callsOf(text)).toEqual([
+      '1972092440<eic.PAGE 16<eic.sub.ID',
+      '1972092440<eic.PAGE 12<eic.extra',
+      '?set to something other than a whole number ?set to different values in this file',
+      '?a field this file does not set ?a field this file does not set',
+      // A module and a global wait for the files of the extension.
+      '?a field this file does not set ?a field this file does not set',
+      '?a field this file does not set 1',
+      '?a field of a loop variable ?a field of a loop variable',
+    ]);
+    const [, , , , modCall, globalCall] = readTextCalls(text);
+    expect(modCall.id.pending).toEqual({ name: 'mod.PAGE', lookup: { kind: 'module', module: 'extensions.mod.ui.config', rest: ['PAGE'] } });
+    expect(modCall.page.pending).toBeUndefined();
+    expect(globalCall.page.pending).toEqual({ name: 'Global.PAGE', lookup: { kind: 'global', key: 'Global.PAGE' } });
+  });
+
+  it('gives both numbers of c and N or M, and both texts in the hover and the definitions', () => {
+    const text = [
+      'local PAGE = 1001',
+      'local OTHER = 2',
+      'ReadText(PAGE, d.mine and 1 or OTHER)',
+      'ReadText(PAGE, (kind == "x") and 3 or 3)',
+      'ReadText(PAGE, a and b and 1 or 2)',
+      'ReadText(PAGE, a or 2)',
+      'ReadText(PAGE, a and 1 or b and 2 or 3)',
+      'ReadText(PAGE, (a and 1) or 2)',
+      'ReadText(PAGE, a and x or 2)',
+    ].join('\n');
+    expect(readTextCalls(text).map((call) => call.id.choices ?? call.id.value ?? `?${call.id.reason}`)).toEqual([
+      [1, 2],
+      3,
+      [1, 2],
+      '?an expression',
+      '?an expression',
+      '?an expression',
+      '?an expression',
+    ]);
+    const offset = text.indexOf('d.mine');
+    const hover = hoverText(text, offset);
+    expect(hover?.value).toBe(
+      [
+        describeText(texts, 1001, 1),
+        '',
+        describeText(texts, 1001, 2),
+        '',
+        'The page `PAGE` is 1001, set on line 1.  ',
+        'The id `d.mine and 1 or OTHER` is 1 or 2.',
+      ].join('\n')
+    );
+    expect(readTextDefinitions(readTextCalls(text), offset, texts).map((location) => location.range.start.line)).toEqual([4, 5]);
   });
 
   it('reads assignments in a function body passed as an argument, and after a bracket left open', () => {
@@ -273,5 +349,85 @@ describe('ReadText calls while typing', () => {
         }
       }
     }
+  });
+});
+
+describe('ReadText with the other files of the extension', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'x4codesense-lua-'));
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  const write = (file: string, text: string): string => {
+    const full = path.join(root, file);
+    mkdirSync(path.dirname(full), { recursive: true });
+    writeFileSync(full, text);
+    return full;
+  };
+  write('mymod/content.xml', '<content id="mymod"/>');
+  write('mymod/ui/config.lua', 'local cfg = { PAGE = 1001, sub = { ID = 2 } }\nRegister_Require_Response("extensions.mymod.ui.config", cfg)\n');
+  const base = write('mymod/ui/base.lua', '-- shared\nMyMod = MyMod or {}\nMyMod = { config = { textId = 1002 } }\nShared = 1001\n');
+  write('mymod/ui/returned.xpl', 'local t = { PAGE = 2000 }\nreturn t\n');
+  write('mymod/ui/esm.lua', 'local esm = { PAGE = 1001 }\nLoader.Register("extensions.mymod.ui.esm", esm, init)\n');
+  write('mymod/ui/clash.lua', 'Clash = 1\nlocal Shared = 5\n');
+  write('mymod/ui/clash2.lua', 'Clash = 2\n');
+  // A packed copy below the extension is an extension of its own: not one of its files.
+  write('mymod/dist/1.00/out/mymod/content.xml', '<content id="mymod"/>');
+  write('mymod/dist/1.00/out/mymod/ui/base.lua', 'MyMod = { config = { textId = 9 } }\nShared = 9\n');
+  write('othermod/content.xml', '<content id="othermod"/>');
+  write('othermod/ui/config.lua', 'local c = { PAGE = 1 }\nreturn c\n');
+  const menuText = [
+    'local cfg = require("extensions.mymod.ui.config")',
+    'local ret = require "extensions.mymod.ui.returned"',
+    'local esm = Loader.Require("extensions.mymod.ui.esm")',
+    'local other = require("extensions.othermod.ui.config")',
+    'local ffi = require("ffi")',
+    'ReadText(cfg.PAGE, cfg.sub.ID)',
+    'ReadText(MyMod.config.textId, 10)',
+    'ReadText(ret.PAGE, 1)',
+    'ReadText(esm.PAGE, 1)',
+    'ReadText(other.PAGE, ffi.C)',
+    'ReadText(Shared, Clash)',
+    'ReadText(Missing, cfg.Missing)',
+  ].join('\n');
+  const menu = write('mymod/ui/menu.lua', menuText);
+  const folders = [path.join(root, 'mymod'), path.join(root, 'othermod')];
+
+  const resolved = (project: LuaProject, file = menu, text = menuText): string[] =>
+    project.resolveAll(readTextCalls(text), file).map((call) => `${shown(call.page)} ${shown(call.id)}`);
+
+  it('follows modules and globals within the extension that holds the file', () => {
+    expect(resolved(new LuaProject(folders))).toEqual([
+      '1001<cfg.PAGE 2<cfg.sub.ID',
+      '1002<MyMod.config.textId 10',
+      '2000<ret.PAGE 1',
+      '1001<esm.PAGE 1',
+      '?a field of the module extensions.othermod.ui.config, which is no file of this extension ?a field of the module ffi, which is no file of this extension',
+      '1001<Shared ?set to different values in the files of this extension',
+      '?not set in the files of this extension ?a field this file does not set',
+    ]);
+  });
+
+  it('says in the hover which file sets the value', () => {
+    const [call] = new LuaProject(folders).resolveAll(readTextCalls(menuText), menu);
+    expect(call.page.constant).toEqual({ name: 'cfg.PAGE', offset: 14, file: path.join(root, 'mymod', 'ui', 'config.lua'), line: 0 });
+    const document = TextDocument.create('file:///mymod/ui/menu.lua', 'lua', 1, menuText);
+    expect(describeReadText(document, call, texts)).toContain('The page `cfg.PAGE` is 1001, set in `config.lua` on line 1.');
+  });
+
+  it('follows nothing for a file outside the extensions, and the open text before the file on disk', () => {
+    const outside = write('loose/menu.lua', menuText);
+    expect(resolved(new LuaProject(folders), outside)[1]).toBe('?a field this file does not set 10');
+    const project = new LuaProject(folders, undefined, (file) => (file === base ? 'MyMod = { config = { textId = 1001 } }\n' : undefined));
+    expect(resolved(project)[1]).toBe('1001<MyMod.config.textId 10');
+  });
+
+  it('reads a file again after forget, and the files of the extension again after forgetListings', () => {
+    const project = new LuaProject(folders);
+    expect(resolved(project)[6]).toBe('?not set in the files of this extension ?a field this file does not set');
+    const added = write('mymod/ui/added.lua', 'Missing = 2000\n');
+    expect(resolved(project)[6]).toBe('?not set in the files of this extension ?a field this file does not set');
+    project.forgetListings();
+    expect(resolved(project)[6]).toBe('2000<Missing ?a field this file does not set');
+    writeFileSync(added, 'Missing = 1002\n');
+    project.forget(added);
+    expect(resolved(project)[6]).toBe('1002<Missing ?a field this file does not set');
   });
 });

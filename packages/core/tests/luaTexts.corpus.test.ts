@@ -8,7 +8,17 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadTexts, missingTextMessage, readTextCalls, readTextDefinitions, scanLua, type ReadTextCall } from '../src';
+import {
+  findExtensions,
+  loadTexts,
+  LuaProject,
+  missingTextMessage,
+  readTextCalls,
+  readTextDefinitions,
+  readTextPairs,
+  scanLua,
+  type ReadTextCall,
+} from '../src';
 import { bestOf, fileCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
@@ -75,19 +85,24 @@ describe.skipIf(!extracted)('ReadText in the Lua files of the corpus', { timeout
       let calls = 0;
       let known = 0;
       let throughNames = 0;
+      let throughOthers = 0;
+      const project = new LuaProject(
+        findExtensions(name === 'game' ? root : undefined, name === 'game' ? [] : [mods ?? '']).map((extension) => extension.folder)
+      );
       for (const file of files) {
         const found = checked(file, readFileSync(file, 'utf8'));
         problems.push(...found.problems);
-        for (const call of found.calls) {
+        for (const call of project.resolveAll(found.calls, file)) {
           calls++;
-          if (call.page.value !== undefined && call.id.value !== undefined) {
+          if (readTextPairs(call).length > 0) {
             known++;
             throughNames += call.page.constant || call.id.constant ? 1 : 0;
+            throughOthers += call.page.constant?.file || call.id.constant?.file ? 1 : 0;
           }
         }
       }
       console.log(
-        `ReadText in the Lua files of the ${name}: ${files.length} files, ${calls} calls, ${known} with page and id known, ${throughNames} of them through names`
+        `ReadText in the Lua files of the ${name}: ${files.length} files, ${calls} calls, ${known} with page and id known, ${throughNames} of them through names, ${throughOthers} through other files`
       );
     }
     expect(gameFiles.length).toBeGreaterThan(50);
@@ -101,14 +116,11 @@ describe.skipIf(!extracted)('ReadText in the Lua files of the corpus', { timeout
     for (const file of gameFiles) {
       const calls = readTextCalls(readFileSync(file, 'utf8'));
       for (const call of calls) {
-        const [page, id] = [call.page.value, call.id.value];
-        if (page === undefined || id === undefined) {
-          continue;
-        }
-        if (missingTextMessage(texts, page, id)) {
-          missing.push(`{${page}, ${id}} (${path.basename(file)})`);
-        } else if (readTextDefinitions(calls, call.open, texts).length === 0) {
-          withoutDefinition.push(`{${page}, ${id}} (${path.basename(file)})`);
+        const pairs = readTextPairs(call);
+        const absent = pairs.filter(([page, id]) => missingTextMessage(texts, page, id));
+        missing.push(...absent.map(([page, id]) => `{${page}, ${id}} (${path.basename(file)})`));
+        if (pairs.length > absent.length && readTextDefinitions(calls, call.open, texts).length < pairs.length - absent.length) {
+          withoutDefinition.push(`${call.start} (${path.basename(file)})`);
         }
       }
     }
