@@ -29,10 +29,10 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Location, Range, type TextEdit, type WorkspaceEdit } from 'vscode-languageserver-types';
 import type { DocumentAnalysis } from '../analysis/analyzeDocument';
 import { isGameFile, type GameData } from '../gameData';
-import { definitionKindOf, relatedOccurrences, type NamedOccurrence } from '../names/namedItems';
+import { definitionKindOf, relatedOccurrences, type DocumentNames, type NamedOccurrence } from '../names/namedItems';
 import { scriptNamesIn } from '../project/calls';
 import { mdReferenceAt, mdReferencesOf } from '../project/mdReferences';
-import type { IndexedFileModel, IndexedLibraryKind, IndexedPosition, ScriptIndex } from '../project/scriptIndex';
+import type { IndexedFileModel, IndexedLibraryKind, IndexedPosition, ScriptIndex, UsedLibrary } from '../project/scriptIndex';
 import type { ScriptVariable, VariableTable } from '../variables/variables';
 import { isInside } from './project';
 import { attributeNamed, attributeWithValueAt, elementWithStartTagAt, type XmlElement } from '../xml/xmlStructure';
@@ -201,7 +201,8 @@ function cueTable(tables: readonly VariableTable[], cue: string): VariableTable 
 
 /** Whether a file is the analysed document's. */
 function currentFileTest(analysis: DocumentAnalysis, current = fileOf(analysis.document.uri)): (file: string) => boolean {
-  return (file) => current !== undefined && sameFile(file, current);
+  const key = current === undefined ? undefined : path.resolve(current).toLowerCase();
+  return (file) => key !== undefined && path.resolve(file).toLowerCase() === key;
 }
 
 /** The names of the libraries of a Mission Director script an element sits in. */
@@ -228,12 +229,36 @@ function interruptItemAround(element: XmlElement): { kind: IndexedLibraryKind; n
   return undefined;
 }
 
+/** The occurrences of a document's names by name, worked out once per names. */
+const occurrencesByName = new WeakMap<DocumentNames, Map<string, NamedOccurrence[]>>();
+
+function occurrencesNamed(names: DocumentNames | undefined, name: string): NamedOccurrence[] {
+  if (!names) {
+    return [];
+  }
+  let byName = occurrencesByName.get(names);
+  if (!byName) {
+    byName = new Map();
+    for (const occurrence of names.occurrences) {
+      const list = byName.get(occurrence.name);
+      if (list) {
+        list.push(occurrence);
+      } else {
+        byName.set(occurrence.name, [occurrence]);
+      }
+    }
+    occurrencesByName.set(names, byName);
+  }
+  return byName.get(name) ?? [];
+}
+
 /**
- * The named occurrences of a file a test picks: from the analysis for the current document, else from the
- * index's model of the file, seen with the game's keywords as the analysis sees them.
+ * The named occurrences of a name in a file that a test picks: from the analysis for the current
+ * document, else from the index's model of the file, seen with the game's keywords as the analysis sees them.
  */
 function pickedOccurrences(
   file: string,
+  name: string,
   picks: (occurrence: NamedOccurrence) => boolean,
   analysis: DocumentAnalysis,
   game: GameData,
@@ -241,15 +266,14 @@ function pickedOccurrences(
   isCurrent: (file: string) => boolean
 ): Pick<Occurrences, 'here' | 'there'> {
   if (isCurrent(file)) {
-    return { here: (analysis.names?.occurrences ?? []).filter(picks), there: [] };
+    return { here: occurrencesNamed(analysis.names, name).filter(picks), there: [] };
   }
   const model = index.fileModel(file);
   if (!model) {
     return { here: [], there: [] };
   }
-  const there = model
-    .namesWith(game.properties)
-    .occurrences.filter(picks)
+  const there = occurrencesNamed(model.namesWith(game.properties), name)
+    .filter(picks)
     .map((occurrence) => ({
       file: model.file,
       ...model.positionAt(occurrence.start),
@@ -269,6 +293,27 @@ interface LibraryPlaces extends Pick<Occurrences, 'here' | 'there'> {
   others: string[];
 }
 
+/** The answers of `bareNamesOf`; the index makes new `UsedLibrary` objects when any file changes. */
+const bareNameSets = new WeakMap<UsedLibrary, { properties: GameData['properties']; names: Set<string> }>();
+
+/** The bare cue names written in a used library, in the files the index has: those that may name a cue of the script that uses it. */
+function bareNamesOf(used: UsedLibrary, game: GameData, index: ScriptIndex): Set<string> {
+  const known = bareNameSets.get(used);
+  if (known && known.properties === game.properties) {
+    return known.names;
+  }
+  const names = new Set<string>();
+  for (const file of used.files) {
+    for (const occurrence of index.fileModel(file)?.namesWith(game.properties).occurrences ?? []) {
+      if (occurrence.kind === 'cue' && occurrence.external && librariesAround(occurrence.element).includes(used.library)) {
+        names.add(occurrence.name);
+      }
+    }
+  }
+  bareNameSets.set(used, { properties: game.properties, names });
+  return names;
+}
+
 /** The bare names of a cue of a Mission Director script in the libraries of other scripts it splices in, instantiates or runs. */
 function cueLibraryPlaces(
   script: string,
@@ -279,17 +324,16 @@ function cueLibraryPlaces(
   isCurrent: (file: string) => boolean
 ): LibraryPlaces[] {
   const found: LibraryPlaces[] = [];
-  const refs = new Set(index.scripts('md', script).flatMap((entry) => [...entry.includes, ...entry.instantiates]));
-  for (const ref of refs) {
-    const parts = /^md\.(\w+)\.(\w+)$/.exec(ref);
-    if (!parts || parts[1] === script) {
-      continue;
-    }
-    const [, owner, library] = parts;
+  for (const used of index.librariesUsedBy(script)) {
+    const { owner, library, files } = used;
     const picks = (occurrence: NamedOccurrence): boolean =>
       occurrence.kind === 'cue' && occurrence.external && occurrence.name === cue && librariesAround(occurrence.element).includes(library);
-    for (const file of index.cueFiles(owner, library)) {
-      const places = pickedOccurrences(file, picks, analysis, game, index, isCurrent);
+    const named = bareNamesOf(used, game, index);
+    for (const file of files) {
+      if (!named.has(cue) && !isCurrent(file)) {
+        continue;
+      }
+      const places = pickedOccurrences(file, cue, picks, analysis, game, index, isCurrent);
       if (places.here.length + places.there.length > 0) {
         const others = index.libraryUserNames(owner, library).filter((name) => name !== script);
         found.push({ library: `library ${library} of ${owner}`, file, others, ...places });
@@ -321,7 +365,7 @@ function labelLibraryPlaces(
       return item?.kind === kind && item.name === name;
     };
     for (const item of index.libraryItems(kind, name)) {
-      const places = pickedOccurrences(item.position.file, picks, analysis, game, index, isCurrent);
+      const places = pickedOccurrences(item.position.file, label, picks, analysis, game, index, isCurrent);
       if (places.here.length + places.there.length > 0) {
         found.push({ library: `interrupt ${kind} ${name}`, file: item.position.file, others: [], ...places });
       }
@@ -920,32 +964,53 @@ function withMirroredEdits(
   return refused ? { refused } : { changes };
 }
 
-/** References with the places in patches' paths that repeat them (`pathMirrors`). */
-function withMirroredLocations(analysis: DocumentAnalysis, locations: Location[], game: GameData | undefined): Location[] {
+/**
+ * Groups of references, each with the places in patches' paths that repeat them (`pathMirrors`). The
+ * mirrors of all groups are worked out at once, which applies each patch once, not once per group.
+ */
+function withMirroredLocations(analysis: DocumentAnalysis, groups: Location[][], game: GameData | undefined): Location[][] {
   const index = game?.index;
-  if (!index || locations.length === 0) {
-    return locations;
+  if (!index || groups.every((locations) => locations.length === 0)) {
+    return groups;
   }
   const documentOf = documentsFor(analysis, index);
   const places: FilePlace[] = [];
-  for (const location of locations) {
-    const file = fileOf(location.uri);
-    const document = file === undefined ? undefined : documentOf(file);
-    if (document && file !== undefined) {
-      places.push({ file, start: document.offsetAt(location.range.start), end: document.offsetAt(location.range.end) });
+  // The groups each place is in, by its file and start.
+  const groupsOf = new Map<string, number[]>();
+  const keyOf = (file: string, start: number): string => `${path.resolve(file).toLowerCase()}|${start}`;
+  for (const [group, locations] of groups.entries()) {
+    for (const location of locations) {
+      const file = fileOf(location.uri);
+      const document = file === undefined ? undefined : documentOf(file);
+      if (!document || file === undefined) {
+        continue;
+      }
+      const start = document.offsetAt(location.range.start);
+      const key = keyOf(file, start);
+      let inGroups = groupsOf.get(key);
+      if (!inGroups) {
+        inGroups = [];
+        groupsOf.set(key, inGroups);
+        places.push({ file, start, end: document.offsetAt(location.range.end) });
+      }
+      if (!inGroups.includes(group)) {
+        inGroups.push(group);
+      }
     }
   }
-  const found = [...locations];
+  const found = groups.map((locations) => [...locations]);
   for (const mirror of pathMirrors(places, index, mirrorDocument(analysis))) {
     const document = documentOf(mirror.file);
     const range = Range.create(document.positionAt(mirror.start), document.positionAt(mirror.end));
-    if (
-      !found.some(
-        (location) =>
-          location.uri === document.uri && location.range.start.line === range.start.line && location.range.start.character === range.start.character
-      )
-    ) {
-      found.push(Location.create(document.uri, range));
+    for (const group of groupsOf.get(keyOf(mirror.of.file, mirror.of.start)) ?? []) {
+      if (
+        !found[group].some(
+          (location) =>
+            location.uri === document.uri && location.range.start.line === range.start.line && location.range.start.character === range.start.character
+        )
+      ) {
+        found[group].push(Location.create(document.uri, range));
+      }
     }
   }
   return found;
@@ -985,7 +1050,16 @@ function patchPrepareRenameAt(
  * content names where it lands, and of the names in its paths.
  */
 export function referencesAt(analysis: DocumentAnalysis, offset: number, game?: GameData): Location[] {
-  return withMirroredLocations(analysis, ownReferencesAt(analysis, offset, game), game);
+  return referencesAtEach(analysis, [offset], game)[0];
+}
+
+/** `referencesAt` for each of the offsets, the patches' paths read once for all of them. */
+export function referencesAtEach(analysis: DocumentAnalysis, offsets: readonly number[], game?: GameData): Location[][] {
+  return withMirroredLocations(
+    analysis,
+    offsets.map((offset) => ownReferencesAt(analysis, offset, game)),
+    game
+  );
 }
 
 /** The occurrences under the caret, without the literals of paths that repeat them. */

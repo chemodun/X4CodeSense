@@ -1,7 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LanguageClient, TransportKind, type LanguageClientOptions, type ServerOptions } from 'vscode-languageclient/node';
+import {
+  LanguageClient,
+  TransportKind,
+  type LanguageClientOptions,
+  type Location as LspLocation,
+  type Position as LspPosition,
+  type ServerOptions,
+} from 'vscode-languageclient/node';
 import {
   DocumentInfoRequestMethod,
   EditorTabsNotificationMethod,
@@ -233,6 +240,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('x4CodeSense.comparePatch', () => comparePatch(comparisons, sides)),
     vscode.commands.registerCommand('x4CodeSense.editPatchWithResult', () => editPatchWithResult(comparisons, sides, layout)),
     vscode.commands.registerCommand('x4CodeSense.writeSideIntoPatch', writeSideIntoPatch),
+    // A code lens's references, as the server found them, in the peek view at the lens's name.
+    vscode.commands.registerCommand('x4CodeSense.showReferences', (uri: string, position: LspPosition, locations: LspLocation[]) => {
+      const converter = languageClient.protocol2CodeConverter;
+      return vscode.commands.executeCommand(
+        'editor.action.showReferences',
+        converter.asUri(uri),
+        converter.asPosition(position),
+        locations.map((location) => converter.asLocation(location))
+      );
+    }),
     vscode.commands.registerCommand('x4CodeSense.showMenu', showMenu)
   );
 

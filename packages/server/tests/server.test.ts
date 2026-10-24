@@ -13,6 +13,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   CodeActionRequest,
+  CodeLensRefreshRequest,
+  CodeLensRequest,
+  CodeLensResolveRequest,
   CompletionRequest,
   ConfigurationRequest,
   createProtocolConnection,
@@ -103,6 +106,8 @@ const statusWaiters = new Set<(status: ServerStatus) => boolean>();
 let semanticTokensRefreshes = 0;
 /** How often the server asked for the inlay hints of the open documents again. */
 let inlayHintRefreshes = 0;
+/** How often the server asked for the code lenses of the open documents again. */
+let codeLensRefreshes = 0;
 /** The methods the server registered for. */
 const registrations: string[] = [];
 
@@ -194,6 +199,9 @@ beforeAll(async () => {
   connection.onRequest(InlayHintRefreshRequest.type, () => {
     inlayHintRefreshes++;
   });
+  connection.onRequest(CodeLensRefreshRequest.type, () => {
+    codeLensRefreshes++;
+  });
   connection.listen();
   const result = await connection.sendRequest(InitializeRequest.type, {
     processId: process.pid,
@@ -205,6 +213,7 @@ beforeAll(async () => {
         workspaceFolders: true,
         semanticTokens: { refreshSupport: true },
         inlayHint: { refreshSupport: true },
+        codeLens: { refreshSupport: true },
       },
       textDocument: { completion: { completionItem: { snippetSupport: true } } },
       window: { workDoneProgress: true },
@@ -220,6 +229,7 @@ beforeAll(async () => {
   expect(result.capabilities.documentSymbolProvider).toEqual({ label: 'X4CodeSense' });
   expect(result.capabilities.foldingRangeProvider).toBe(true);
   expect(result.capabilities.inlayHintProvider).toBe(true);
+  expect(result.capabilities.codeLensProvider).toEqual({ resolveProvider: true });
   expect(result.capabilities.workspaceSymbolProvider).toBe(true);
   expect(result.capabilities.codeActionProvider).toEqual({ codeActionKinds: ['quickfix', 'source.fixAll'] });
   expect(result.capabilities.semanticTokensProvider).toEqual({ legend: semanticTokensLegend, full: { delta: true }, range: true });
@@ -764,6 +774,83 @@ describe('inlay hints', () => {
       range: { start: { line: 0, character: 0 }, end: { line: 3, character: 0 } },
     });
     expect(other?.map((hint) => String(hint.label))).toEqual(['Hull']);
+  });
+});
+
+describe('code lens', () => {
+  it('counts the references of each cue when the client resolves its lens, and asks again when the settings change', async () => {
+    const uri = 'file:///mod/md/Lenses.xml';
+    const lines = [
+      '<mdscript name="L">',
+      '  <cues>',
+      '    <cue name="Start">',
+      '      <actions>',
+      '        <signal_cue_instantly cue="Later"/>',
+      '        <cancel_cue cue="Later"/>',
+      '      </actions>',
+      '    </cue>',
+      '    <cue name="Later"/>',
+      '  </cues>',
+      '</mdscript>',
+      '',
+    ];
+    await open(uri, lines.join('\n'));
+    const lenses = await connection.sendRequest(CodeLensRequest.type, { textDocument: { uri } });
+    expect(lenses?.map((lens) => `${lens.range.start.line + 1}:${lens.range.start.character + 1}`)).toEqual(['3:16', '9:16']);
+    const resolved = await Promise.all((lenses ?? []).map((lens) => connection.sendRequest(CodeLensResolveRequest.type, lens)));
+    expect(resolved.map((lens) => lens.command?.title)).toEqual(['0 references', '2 references']);
+    // No references, nothing to click; else the client's command shows them at the name.
+    expect(resolved[0].command?.command).toBe('');
+    const [shownUri, position, locations] = resolved[1].command?.arguments as [string, { line: number; character: number }, Location[]];
+    expect(resolved[1].command?.command).toBe('x4CodeSense.showReferences');
+    expect([shownUri, position]).toEqual([uri, { line: 8, character: 15 }]);
+    expect(locations.map((location) => `${location.uri === uri} ${location.range.start.line + 1}:${location.range.start.character + 1}`)).toEqual([
+      'true 5:36',
+      'true 6:26',
+    ]);
+
+    // A lens of a version before an edit that moved it: the client asks for the lenses again.
+    const moved = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri, version: 2 },
+      contentChanges: [{ range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } }, text: '\n' }],
+    });
+    await moved;
+    expect((await connection.sendRequest(CodeLensResolveRequest.type, (lenses ?? [])[1])).command?.title).toBe('…');
+
+    onTestFinished(async () => {
+      delete clientSettings.codeLens;
+      const restored = nextDiagnostics(uri);
+      await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+      await restored;
+    });
+    const refreshes = codeLensRefreshes;
+    clientSettings.codeLens = { references: false };
+    const reanalysed = nextDiagnostics(uri);
+    await connection.sendNotification(DidChangeConfigurationNotification.type, { settings: null });
+    await reanalysed;
+    await vi.waitFor(() => expect(codeLensRefreshes).toBeGreaterThan(refreshes));
+    expect(await connection.sendRequest(CodeLensRequest.type, { textDocument: { uri } })).toEqual([]);
+  });
+
+  it('asks for the lenses of the open documents again once typing pauses in one', async () => {
+    const uri = 'file:///mod/md/Typed.xml';
+    await open(uri, '<mdscript name="T">\n  <cues>\n    <cue name="A"/>\n  </cues>\n</mdscript>\n');
+    const refreshes = codeLensRefreshes;
+    await connection.sendNotification(DidChangeTextDocumentNotification.type, {
+      textDocument: { uri, version: 2 },
+      contentChanges: [{ range: { start: { line: 2, character: 4 }, end: { line: 2, character: 4 } }, text: '<cue name="B"/>\n    ' }],
+    });
+    await vi.waitFor(() => expect(codeLensRefreshes).toBeGreaterThan(refreshes));
+    expect((await connection.sendRequest(CodeLensRequest.type, { textDocument: { uri } }))?.map((lens) => lens.range.start.line + 1)).toEqual([3, 4]);
+  });
+
+  it('gives no lenses to other XML', async () => {
+    const otherUri = 'file:///mod/assets/lensless.xml';
+    await connection.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: { uri: otherUri, languageId: 'xml', version: 1, text: '<macros>\n  <macro name="m"/>\n</macros>\n' },
+    });
+    expect(await connection.sendRequest(CodeLensRequest.type, { textDocument: { uri: otherUri } })).toEqual([]);
   });
 });
 

@@ -68,6 +68,7 @@ export * from './features/scriptNames';
 export * from './features/symbols';
 export * from './features/folding';
 export * from './features/inlayHints';
+export * from './features/codeLens';
 export * from './features/workspaceSymbols';
 export * from './features/codeActions';
 export * from './features/semanticTokens';

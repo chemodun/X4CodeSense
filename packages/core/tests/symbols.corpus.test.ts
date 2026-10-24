@@ -6,7 +6,8 @@
  * inside its parent's. Go to Symbol in Workspace names every script, cue, library and interrupt library
  * item of the index at its name. Folding folds every element whose end tag is lines below its start, in
  * ranges inside the document. Inlay hints come in text order, a text after its reference, a type after
- * a variable name, once there.
+ * a variable name, once there. Each named definition has a code lens, which never counts its own name and
+ * finds what Find All References finds.
  */
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
@@ -23,6 +24,8 @@ import {
   inlayHints,
   loadGameData,
   parseXml,
+  referenceLenses,
+  referencesAt,
   scriptSchemaOf,
   workspaceSymbols,
   type AnalysisContext,
@@ -308,6 +311,67 @@ describe.skipIf(!extracted)('the outline on the corpus', { timeout: 300_000 }, (
     expect(counts.files).toBeGreaterThan(400);
     expect(counts.texts).toBeGreaterThan(1000);
     expect(counts.types).toBeGreaterThan(1000);
+    expect(problems.slice(0, 20)).toEqual([]);
+    expect(best).toBeLessThan(fileCeilingMs);
+  });
+
+  it('gives a code lens to each named definition, its references those of Find All References without it', () => {
+    const problems: string[] = [];
+    const counts = { files: 0, lenses: 0, references: 0, unreferenced: 0 };
+    let largest = { length: 0, file: '', text: '' };
+    for (const entry of game.index?.entries() ?? []) {
+      const text = readFileSync(entry.file, 'utf8');
+      if (entry.kind === 'script' && text.length > largest.length) {
+        largest = { length: text.length, file: entry.file, text };
+      }
+      const analysis = analyzeText(text, context, pathToFileURL(entry.file).toString());
+      const lenses = referenceLenses(analysis, game);
+      const where = path.basename(entry.file);
+      // A patch whose target is not known has nothing it brings in to put lenses over.
+      if (!lenses) {
+        if (entry.kind === 'script' || analysis.patch?.patched) {
+          problems.push(`${where}: no lenses`);
+        }
+        continue;
+      }
+      counts.files++;
+      counts.lenses += lenses.length;
+      const definitions = entry.kind === 'script' ? (analysis.names?.occurrences ?? []).filter((occurrence) => occurrence.role === 'definition') : undefined;
+      if (definitions && definitions.length !== lenses.length) {
+        problems.push(`${where}: ${definitions.length} definitions, ${lenses.length} lenses`);
+      }
+      for (const lens of lenses) {
+        counts.references += lens.references.length;
+        if (lens.references.length === 0) {
+          counts.unreferenced++;
+        }
+        const own = lens.references.some(
+          (location) =>
+            location.uri === analysis.document.uri &&
+            location.range.start.line === lens.range.start.line &&
+            location.range.start.character === lens.range.start.character
+        );
+        if (own) {
+          problems.push(`${where}: the lens at line ${lens.range.start.line + 1} counts its own name`);
+        }
+      }
+    }
+    // The references found at once are those found one name at a time.
+    const analysis = analyzeText(largest.text, context, pathToFileURL(largest.file).toString());
+    const lenses = referenceLenses(analysis, game) ?? [];
+    const key = (location: Location): string => `${location.uri}|${location.range.start.line}|${location.range.start.character}`;
+    for (const lens of lenses) {
+      const alone = new Set(referencesAt(analysis, analysis.document.offsetAt(lens.range.start), game).map(key));
+      if (lens.references.some((location) => !alone.has(key(location)))) {
+        problems.push(`${path.basename(largest.file)}: the lens at line ${lens.range.start.line + 1} differs from Find All References`);
+      }
+    }
+    const best = bestOf(3, () => referenceLenses(analysis, game));
+    console.log(
+      `code lens: ${counts.files} files, ${counts.lenses} lenses (${counts.unreferenced} unreferenced), ${counts.references} references; largest ${path.basename(largest.file)} ${best.toFixed(1)} ms best of 3`
+    );
+    expect(counts.files).toBeGreaterThan(600);
+    expect(counts.lenses).toBeGreaterThan(20_000);
     expect(problems.slice(0, 20)).toEqual([]);
     expect(best).toBeLessThan(fileCeilingMs);
   });

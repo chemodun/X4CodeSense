@@ -604,9 +604,18 @@ function referenceKey(kind: IndexedReferenceKind, name: string, script = '', cue
   }
 }
 
+/** A library of another Mission Director script that a script splices in, instantiates or runs, with the files it is written in. */
+export interface UsedLibrary {
+  owner: string;
+  library: string;
+  files: string[];
+}
+
 interface Lookups {
   scripts: Map<string, IndexedScript[]>;
   cues: Map<IndexedScript, IndexedCue[]>;
+  /** The cues of every Mission Director script of a name that are called so, by `Script:Cue`, in the order `cues` gives them. */
+  cuesByName: Map<string, IndexedCue[]>;
   libraryItems: Map<string, IndexedLibraryItem[]>;
   writesThroughValues: Set<string>;
   /** Scripts that include a library, by `md.Script.Library`; a patch counts as a script without a name. */
@@ -615,6 +624,8 @@ interface Lookups {
   instantiators: Map<string, Set<string>>;
   /** The patches of each script file, by its key, in load order. */
   patches: Map<string, IndexedPatch[]>;
+  /** Answers of `librariesUsedBy` by script name, worked out when first asked for. */
+  usedLibraries: Map<string, UsedLibrary[]>;
   /** The AI scripts that define an order, by its id, in load order. */
   orders: Map<string, IndexedScript[]>;
 }
@@ -632,6 +643,7 @@ export class ScriptIndex {
   /** Scanned files for the patch support, by key, until they change; with the text as a document once asked for. */
   private readonly parsed = new Map<string, { text: string; structure: XmlStructure; document?: TextDocument }>();
   private lookups: Lookups | undefined;
+  private changes = 0;
   /** References of every file by what they name, built when first asked for. */
   private referenceLookup: Map<string, IndexedReference[]> | undefined;
   /** Answers of `cueVariables` by `Script.Cue`, until any file changes. */
@@ -674,6 +686,7 @@ export class ScriptIndex {
       this.parsed.delete(key);
     }
     this.listings.delete(keyOf(path.dirname(file)));
+    this.changes++;
     // A file indexed neither before nor now, a library file, changes nothing the lookups know.
     if (entry || known) {
       this.models.delete(key);
@@ -682,6 +695,11 @@ export class ScriptIndex {
       this.referenceLookup = undefined;
     }
     return signatureOf(entry) !== before;
+  }
+
+  /** Grows with each file set or forgotten: what was worked out from the index at another version may be out of date. */
+  get version(): number {
+    return this.changes;
   }
 
   /** Forgets a file; returns true when it was indexed. */
@@ -693,6 +711,7 @@ export class ScriptIndex {
     this.listings.delete(keyOf(path.dirname(file)));
     this.models.delete(key);
     this.cueVariableLists.clear();
+    this.changes++;
     if (removed) {
       this.lookups = undefined;
       this.referenceLookup = undefined;
@@ -1065,7 +1084,17 @@ export class ScriptIndex {
           push(libraryItems, `${item.kind}:${item.name}`, { ...item, script: target.name });
         }
       }
-      this.lookups = { scripts, cues, libraryItems, writesThroughValues, includers, instantiators, patches, orders };
+      const cuesByName = new Map<string, IndexedCue[]>();
+      for (const [key, entries] of scripts) {
+        if (key.startsWith('md:')) {
+          for (const entry of entries) {
+            for (const cue of cues.get(entry) ?? []) {
+              push(cuesByName, `${entry.name}:${cue.name}`, cue);
+            }
+          }
+        }
+      }
+      this.lookups = { scripts, cues, cuesByName, libraryItems, writesThroughValues, includers, instantiators, patches, orders, usedLibraries: new Map() };
     }
     return this.lookups;
   }
@@ -1140,9 +1169,26 @@ export class ScriptIndex {
     return this.lookup().cues.get(script) ?? [];
   }
 
+  /** The libraries of other scripts that the Mission Director scripts of a name splice in, instantiate or run (`md.Owner.Library`). */
+  librariesUsedBy(scriptName: string): UsedLibrary[] {
+    const lookups = this.lookup();
+    let libraries = lookups.usedLibraries.get(scriptName);
+    if (!libraries) {
+      libraries = [];
+      for (const ref of new Set(this.scripts('md', scriptName).flatMap((entry) => [...entry.includes, ...entry.instantiates]))) {
+        const parts = /^md\.(\w+)\.(\w+)$/.exec(ref);
+        if (parts && parts[1] !== scriptName) {
+          libraries.push({ owner: parts[1], library: parts[2], files: this.cueFiles(parts[1], parts[2]) });
+        }
+      }
+      lookups.usedLibraries.set(scriptName, libraries);
+    }
+    return libraries;
+  }
+
   /** The cues of every script with the name that are called so. */
   cues(scriptName: string, cueName: string): IndexedCue[] {
-    return this.scripts('md', scriptName).flatMap((script) => this.cuesOf(script).filter((cue) => cue.name === cueName));
+    return this.lookup().cuesByName.get(`${scriptName}:${cueName}`) ?? [];
   }
 
   /** Interrupt library items of a kind with a name, from every AI script and patch. */

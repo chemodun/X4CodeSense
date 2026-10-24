@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   CodeActionKind,
+  CodeLensRefreshRequest,
   createConnection,
   DidChangeConfigurationNotification,
   ErrorCodes,
@@ -11,6 +12,7 @@ import {
   TextDocuments,
   TextDocumentSyncKind,
   type CodeAction,
+  type CodeLens,
   type CompletionItem,
   type CompletionList,
   type DocumentSymbol,
@@ -69,6 +71,9 @@ import {
   quickFixes,
   readTextCalls,
   readTextHover,
+  referenceLensRanges,
+  referenceLenses,
+  referenceLensTitle,
   referencesAt,
   renameAt,
   ScriptIndex,
@@ -96,6 +101,7 @@ import {
   type PatchWriteParams,
   type PatchWriteResult,
   type ReadTextCall,
+  type ReferenceLens,
   type ServerStatus,
   type TextDisplayOptions,
   type TextLoadOptions,
@@ -124,6 +130,8 @@ interface X4CodeSenseSettings {
   readInstalledDependencies: boolean;
   /** Which inlay hints are shown: the text of a text reference, the type of a variable where it is set. */
   inlayHints: { texts: boolean; variableTypes: boolean };
+  /** Which code lenses are shown: the count of references over each cue, library, label and interrupt library item. */
+  codeLens: { references: boolean };
   debug: boolean;
 }
 
@@ -139,6 +147,7 @@ const defaultSettings: X4CodeSenseSettings = {
   libraryPatchUnknownElements: 'warning',
   readInstalledDependencies: false,
   inlayHints: { texts: true, variableTypes: true },
+  codeLens: { references: true },
   debug: false,
 };
 
@@ -161,6 +170,7 @@ function settingsOf(received: unknown): X4CodeSenseSettings {
   // `x4CodeSense.inlayHints.texts` comes as `inlayHints: { texts }`.
   const hints = typeof values.inlayHints === 'object' && values.inlayHints !== null ? (values.inlayHints as Record<string, unknown>) : {};
   const hint = (key: 'texts' | 'variableTypes'): boolean => (typeof hints[key] === 'boolean' ? hints[key] : defaultSettings.inlayHints[key]);
+  const lenses = typeof values.codeLens === 'object' && values.codeLens !== null ? (values.codeLens as Record<string, unknown>) : {};
   return {
     unpackedFileLocation: text('unpackedFileLocation'),
     gameFolder: text('gameFolder'),
@@ -174,6 +184,7 @@ function settingsOf(received: unknown): X4CodeSenseSettings {
       libraryPatchUnknownElementLevels.find((level) => level === values.libraryPatchUnknownElements) ?? defaultSettings.libraryPatchUnknownElements,
     readInstalledDependencies: flag('readInstalledDependencies'),
     inlayHints: { texts: hint('texts'), variableTypes: hint('variableTypes') },
+    codeLens: { references: typeof lenses.references === 'boolean' ? lenses.references : defaultSettings.codeLens.references },
     debug: flag('debug'),
   };
 }
@@ -199,6 +210,7 @@ let snippetSupport = false;
 let workspaceFolderSupport = false;
 let semanticTokensRefreshSupport = false;
 let inlayHintRefreshSupport = false;
+let codeLensRefreshSupport = false;
 let game: GameData | undefined;
 /** What the game data was loaded as: its key (see `gameKey`), where it comes from, and an installed game's version. */
 let loadedGame: { key: string; source: GameSource; version?: string } | undefined;
@@ -244,6 +256,9 @@ let othersTimer: NodeJS.Timeout | undefined;
 let folderTimer: NodeJS.Timeout | undefined;
 /** How long the other open documents wait after the last change: a keystroke analyses its own document only. */
 const othersDelay = 300;
+let lensTimer: NodeJS.Timeout | undefined;
+/** The code lenses of open documents with their references, as worked out from an analysis and the index at a version. */
+const lensesByUri = new Map<string, { analysis: DocumentAnalysis; indexVersion?: number; lenses: ReferenceLens[] }>();
 /** Why a side of a patch comparison is not renamed in: its edits would land in the comparison. */
 const sideRenameRefusal = 'Rename in the patch or in the script, not in a side of their comparison';
 /** Why a game document is not renamed in, nor its patch written. */
@@ -365,6 +380,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   workspaceFolderSupport = params.capabilities.workspace?.workspaceFolders === true;
   semanticTokensRefreshSupport = params.capabilities.workspace?.semanticTokens?.refreshSupport === true;
   inlayHintRefreshSupport = params.capabilities.workspace?.inlayHint?.refreshSupport === true;
+  codeLensRefreshSupport = params.capabilities.workspace?.codeLens?.refreshSupport === true;
   const folders = params.workspaceFolders?.map((folder) => folder.uri) ?? (params.rootUri ? [params.rootUri] : []);
   workspaceFolders = folders.map(filePathOf).filter((folder): folder is string => folder !== undefined);
   return {
@@ -380,6 +396,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       documentSymbolProvider: { label: 'X4CodeSense' },
       foldingRangeProvider: true,
       inlayHintProvider: true,
+      codeLensProvider: { resolveProvider: true },
       workspaceSymbolProvider: true,
       codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix, CodeActionKind.SourceFixAll] },
       semanticTokensProvider: { legend: semanticTokensLegend, full: { delta: true }, range: true },
@@ -807,6 +824,9 @@ connection.onDidChangeWatchedFiles((params) => {
     reanalyzeAll();
     scheduleWorkspaceCheck();
     sendStatus();
+  } else {
+    // References of the file count in the open documents' lenses.
+    scheduleLensRefresh();
   }
 });
 
@@ -889,7 +909,10 @@ function libraryUsersOf(analysis: DocumentAnalysis, index: ScriptIndex): string[
   return name ? index.libraryUsersOf(name) : [];
 }
 
-/** Asks the client for the semantic tokens and inlay hints of the open documents again: their analyses changed, not only their text. */
+/**
+ * Asks the client for the semantic tokens, inlay hints and code lenses of the open documents again: their
+ * analyses changed, not only their text.
+ */
 function refreshTokensAndHints(): void {
   if (semanticTokensRefreshSupport) {
     connection.languages.semanticTokens.refresh().catch((error: unknown) => debug(`semantic tokens refresh: ${String(error)}`));
@@ -897,6 +920,25 @@ function refreshTokensAndHints(): void {
   if (inlayHintRefreshSupport) {
     connection.languages.inlayHint.refresh().catch((error: unknown) => debug(`inlay hint refresh: ${String(error)}`));
   }
+  refreshLenses();
+}
+
+/** Asks the client for the code lenses of the open documents again. */
+function refreshLenses(): void {
+  clearTimeout(lensTimer);
+  lensTimer = undefined;
+  if (codeLensRefreshSupport) {
+    connection.sendRequest(CodeLensRefreshRequest.type).catch((error: unknown) => debug(`code lens refresh: ${String(error)}`));
+  }
+}
+
+/**
+ * The code lenses of the other open documents again once typing pauses: a document's references count in
+ * theirs. The client asks for the edited document's own lenses itself.
+ */
+function scheduleLensRefresh(): void {
+  clearTimeout(lensTimer);
+  lensTimer = setTimeout(refreshLenses, othersDelay);
 }
 
 /** What an analysis uses; with the uri of an open document, also the parsed values of its previous analysis. */
@@ -1293,6 +1335,7 @@ documents.onDidChangeContent((event) => {
     return;
   }
   analyze(event.document, true);
+  scheduleLensRefresh();
 });
 
 documents.onDidClose((event) => {
@@ -1300,6 +1343,7 @@ documents.onDidClose((event) => {
   expressionCaches.delete(event.document.uri);
   tokenBuilders.delete(event.document.uri);
   readTextCallsByUri.delete(event.document.uri);
+  lensesByUri.delete(event.document.uri);
   staleSides.delete(event.document.uri);
   clearTimeout(sideTimers.get(event.document.uri));
   sideTimers.delete(event.document.uri);
@@ -1440,6 +1484,52 @@ connection.onFoldingRanges((params): FoldingRange[] | null => {
 connection.languages.inlayHint.on((params): InlayHint[] => {
   const analysis = currentAnalysis(params.textDocument.uri);
   return analysis ? inlayHints(analysis, params.range, game, { ...textDisplay(), ...settings.inlayHints }) : [];
+});
+
+/** The code lenses of an open document with their references, worked out for all of them at once and kept while the analysis and the index stay. */
+function lensesOf(uri: string): ReferenceLens[] | undefined {
+  const analysis = currentAnalysis(uri);
+  if (!analysis) {
+    return undefined;
+  }
+  const indexVersion = game?.index?.version;
+  const known = lensesByUri.get(uri);
+  if (known?.analysis === analysis && known.indexVersion === indexVersion) {
+    return known.lenses;
+  }
+  const started = performance.now();
+  const lenses = (referenceLenses(analysis, game) ?? []).map((lens) => ({ ...lens, references: locationsInClient(uri, analysis, lens.references) }));
+  debug(`${uri}: references of ${lenses.length} code lens(es) in ${(performance.now() - started).toFixed(1)} ms`);
+  lensesByUri.set(uri, { analysis, indexVersion, lenses });
+  return lenses;
+}
+
+// Over the cues, libraries, labels and interrupt library items of scripts and of what a patch brings in;
+// the counts come when the client resolves the lenses it shows. Not in the sides of a patch comparison.
+connection.onCodeLens((params): CodeLens[] => {
+  const uri = params.textDocument.uri;
+  const analysis = settings.codeLens.references && !comparisonSideOf(uri) ? currentAnalysis(uri) : undefined;
+  return (analysis && referenceLensRanges(analysis))?.map((range) => ({ range, data: { uri } })) ?? [];
+});
+
+// A click shows the references in the peek view, through the client's command; no references, no click.
+connection.onCodeLensResolve((lens): CodeLens => {
+  const uri = (lens.data as { uri?: unknown } | undefined)?.uri;
+  const start = lens.range.start;
+  const found =
+    typeof uri === 'string'
+      ? lensesOf(uri)?.find((candidate) => candidate.range.start.line === start.line && candidate.range.start.character === start.character)
+      : undefined;
+  if (typeof uri !== 'string' || !found) {
+    // The document changed since the client asked for its lenses: it asks again.
+    return { ...lens, command: { title: '…', command: '' } };
+  }
+  const title = referenceLensTitle(found.references.length);
+  return {
+    ...lens,
+    command:
+      found.references.length === 0 ? { title, command: '' } : { title, command: 'x4CodeSense.showReferences', arguments: [uri, start, found.references] },
+  };
 });
 
 // The scripts, cues and interrupt library items of the index; the workspace's own first among equal matches.

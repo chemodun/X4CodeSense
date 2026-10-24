@@ -297,6 +297,11 @@
           "default": true,
           "markdownDescription": "Show a variable's type after the definition it comes from, once per variable, as `: ship`, or `: ship?` when guessed (`#x4CodeSense.guessVariableTypes#`). Left out where the element already shows it: `<param type>`, or a value that is a lone string, text reference or empty list or table."
         },
+        "x4CodeSense.codeLens.references": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show over each cue and library of a Mission Director script, and each label and interrupt library item of an AI script, how often it is referenced, as Find All References finds it, its definition left out; a click shows the references. In a patch, over those of what it brings in. VS Code's `#editor.codeLens#` turns all code lenses off."
+        },
         "x4CodeSense.mcpServer.enabled": {
           "type": "boolean",
           "default": true,
