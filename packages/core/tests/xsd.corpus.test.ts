@@ -1,12 +1,15 @@
 /**
  * Corpus gate for schema validation against the extracted vanilla game (X4_EXTRACTED, never committed):
- * the real schemas must load cleanly and no vanilla script may produce a single diagnostic.
+ * the real schemas must load cleanly and no vanilla script, nor library file of a schema, may produce a
+ * single diagnostic.
  * Any hit is a bug in the engine or a gap in the model, never something to suppress.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { analyzeText, loadSchemas, scriptSchemas, schemaFolderName, type SchemaSet } from '../src';
+import { TextDocument } from 'vscode-languageserver-textdocument';
+import { analyzeText, loadSchemas, parseXml, scriptSchemas, schemaFolderName, validateStructure, type SchemaSet } from '../src';
 
 const extracted = process.env.X4_EXTRACTED;
 
@@ -73,6 +76,64 @@ describe.skipIf(!extracted)('schema validation on the vanilla corpus', { timeout
       expect(failures).toEqual([]);
     }, 30_000);
   }
+
+  it('loads every library schema without problems', () => {
+    const names = readdirSync(path.join(root, 'libraries'))
+      .filter((name) => name.endsWith('.xsd'))
+      .map((name) => name.slice(0, -'.xsd'.length));
+    const loaded = names.filter((name) => schemas.library(name));
+    expect(names.filter((name) => !loaded.includes(name)).sort()).toEqual(['aiscripts', 'common', 'diff', 'md', 'scriptproperties']);
+    expect(loaded.length).toBeGreaterThan(30);
+    expect(schemas.problems).toEqual([]);
+  });
+
+  it("reports nothing on the library files that name their schema, and on the DLCs' files of their names", () => {
+    const failures: string[] = [];
+    const rootOf = (text: string) => parseXml(text, { stopAfterFirstStartTag: true }).roots[0];
+    const schemaNameOf = (text: string): string | undefined => {
+      const location = rootOf(text)?.attributes.find((attribute) => attribute.name === 'xsi:noNamespaceSchemaLocation');
+      return location && /(?:^|\/)([\w.-]+)\.xsd$/i.exec(location.value)?.[1];
+    };
+    const gameSchemas = new Map<string, string>();
+    const checked: string[] = [];
+    const check = (file: string, text: string, schemaName: string): void => {
+      const schema = schemas.library(schemaName);
+      const structure = parseXml(text);
+      const rootName = structure.roots[0]?.name;
+      if (!schema || !rootName) {
+        failures.push(`${path.relative(root, file)}: no schema '${schemaName}' or no root`);
+        return;
+      }
+      checked.push(file);
+      const document = TextDocument.create(pathToFileURL(file).href, 'xml', 1, text);
+      for (const diagnostic of validateStructure(structure, schema, rootName, document, { checkContent: true, source: 'corpus' }).diagnostics) {
+        failures.push(
+          `${path.relative(root, file)}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}: ${diagnostic.message} [${diagnostic.code}]`
+        );
+      }
+    };
+    for (const file of xmlFilesIn(path.join(root, 'libraries'))) {
+      const text = readFileSync(file, 'utf8');
+      const schemaName = schemaNameOf(text);
+      if (schemaName && schemaName !== 'scriptproperties') {
+        gameSchemas.set(path.basename(file).toLowerCase(), schemaName);
+        check(file, text, schemaName);
+      }
+    }
+    const games = checked.length;
+    for (const file of dlcFoldersOf(root, 'libraries').flatMap(xmlFilesIn)) {
+      const text = readFileSync(file, 'utf8');
+      const schemaName = gameSchemas.get(path.basename(file).toLowerCase());
+      // The patches have their own gate.
+      if (schemaName && rootOf(text)?.name !== 'diff') {
+        check(file, text, schemaName);
+      }
+    }
+    console.log(`library files checked: ${games} of the game, ${checked.length - games} of the DLCs`);
+    expect(games).toBeGreaterThan(40);
+    expect(checked.length - games).toBeGreaterThan(20);
+    expect(failures).toEqual([]);
+  }, 30_000);
 
   it("has checked the DLCs' scripts", () => {
     expect(dlcScripts).toBeGreaterThan(0);

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+
+  <xs:simpleType name="unitvalue">
+    <xs:restriction base="xs:string">
+      <xs:pattern value="[0-9]+[\.]?[0-9]*([ ]*(m|km|ms|s|min|h))?" />
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:complexType name="time">
+    <xs:attribute name="min" type="unitvalue" />
+    <xs:attribute name="max" type="unitvalue" />
+  </xs:complexType>
+
+  <xs:complexType name="conditions">
+    <xs:all>
+      <xs:element name="distance" type="time" minOccurs="0" maxOccurs="1" />
+    </xs:all>
+    <xs:attribute name="weight" type="xs:integer" />
+  </xs:complexType>
+
+  <xs:complexType name="actions">
+    <xs:all>
+      <xs:element name="duration" type="time" minOccurs="0" maxOccurs="1" />
+    </xs:all>
+  </xs:complexType>
+
+  <xs:attributeGroup name="sharedunlock">
+    <xs:attribute name="id" type="xs:string" use="required" />
+    <xs:attribute name="name" type="xs:string">
+      <xs:annotation>
+        <xs:documentation>
+          Unlock name
+        </xs:documentation>
+      </xs:annotation>
+    </xs:attribute>
+  </xs:attributeGroup>
+
+  <xs:element name="rechecktime" type="time">
+    <xs:annotation>
+      <xs:documentation>
+        Time after which this unlock may be triggered again at the same entity once it has been unlocked.
+      </xs:documentation>
+    </xs:annotation>
+  </xs:element>
+
+  <xs:complexType name="unlock">
+    <xs:all>
+      <xs:element name="conditions" type="conditions" minOccurs="1" maxOccurs="1" />
+      <xs:element name="actions" type="actions" minOccurs="0" maxOccurs="1" />
+      <xs:element ref="rechecktime" minOccurs="0" maxOccurs="1" />
+    </xs:all>
+    <xs:attributeGroup ref="sharedunlock" />
+  </xs:complexType>
+
+  <xs:element name="unlocks">
+    <xs:annotation>
+      <xs:documentation>
+        Unlock library document node
+      </xs:documentation>
+    </xs:annotation>
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="discount" type="unlock" minOccurs="0" maxOccurs="unbounded" />
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

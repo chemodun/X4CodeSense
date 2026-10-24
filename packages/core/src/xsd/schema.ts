@@ -1,10 +1,10 @@
 /**
- * The XSD model of one schema (`md` or `aiscripts`, with `common.xsd` merged in, or `diff`), built from
- * the schema texts with the core's own scanner. Only the subset of XML Schema the game uses is supported:
- * sequence, choice, all, group references, `any` wildcards, named complex types with extension, mixed
- * and simple content (whether an element may hold text), attribute groups, simple types with
- * restriction facets, unions and lists; entities a schema file declares in its own DOCTYPE are expanded
- * in facet values. Everything is compiled lazily and cached, so a schema loads in milliseconds and only
+ * The XSD model of one schema (`md` or `aiscripts`, with `common.xsd` merged in, `diff`, or one of the
+ * library files' schemas), built from the schema texts with the core's own scanner. Only the subset of XML
+ * Schema the game uses is supported: sequence, choice, all, group references, element references, `any`
+ * and `anyAttribute` wildcards, named complex types with extension, mixed and simple content (whether an
+ * element may hold text), attribute groups, simple types with restriction facets, unions and lists;
+ * entities a schema file declares in its own DOCTYPE are expanded in facet values. Everything is compiled lazily and cached, so a schema loads in milliseconds and only
  * the parts a document touches get resolved.
  */
 import type { SourceLocation } from '../sourceLocation';
@@ -73,6 +73,8 @@ interface ComplexType {
   particle?: Particle;
   /** True when the content may hold text: mixed or simple content. */
   text?: boolean;
+  /** True when `xs:anyAttribute` allows attributes the type does not declare. */
+  anyAttribute?: boolean;
 }
 
 function isMixed(node: XmlElement): boolean {
@@ -423,6 +425,11 @@ export class XsdElement {
     return this.resolved()?.attributes ?? emptyAttributes;
   }
 
+  /** True when the element may carry attributes it does not declare (`xs:anyAttribute`). */
+  get allowsAnyAttribute(): boolean {
+    return this.resolved()?.anyAttribute === true;
+  }
+
   get contentModel(): ContentModel {
     if (!this.model) {
       this.model = compileContentModel(this.resolved()?.particle);
@@ -655,6 +662,9 @@ export class XsdSchema {
         case 'attributeGroup':
           this.addAttributeGroup(child, into.attributes);
           break;
+        case 'anyAttribute':
+          into.anyAttribute = true;
+          break;
         case 'sequence':
         case 'choice':
         case 'all':
@@ -687,6 +697,9 @@ export class XsdSchema {
           }
           for (const [name, attribute] of own.attributes) {
             into.attributes.set(name, attribute);
+          }
+          if (own.anyAttribute || (base?.anyAttribute && localName(derivation.name) === 'extension')) {
+            into.anyAttribute = true;
           }
           if (base && localName(derivation.name) === 'extension' && base.particle && own.particle) {
             into.particle = { kind: 'sequence', particles: [base.particle, own.particle], min: 1, max: 1 };
@@ -762,8 +775,11 @@ export class XsdSchema {
       switch (localName(child.name)) {
         case 'element': {
           const { min, max } = occursOf(child);
-          const element: ElementParticle = { kind: 'element', declaration: this.declaration(child), min, max };
-          particles.push(element);
+          const node = this.referencedElement(child);
+          if (node) {
+            const element: ElementParticle = { kind: 'element', declaration: this.declaration(node), min, max };
+            particles.push(element);
+          }
           break;
         }
         case 'sequence':
@@ -780,6 +796,23 @@ export class XsdSchema {
       }
     }
     return { kind, particles, ...occursOf(node) };
+  }
+
+  /**
+   * The declaration node of an element particle: the node itself, or for `<xs:element ref="...">` the
+   * global element it names (`unlocks.xsd`'s `rechecktime`); undefined, with a problem, for an unknown name.
+   * The particle keeps the occurrence of the reference.
+   */
+  private referencedElement(node: XmlElement): XmlElement | undefined {
+    const name = attributeNamed(node, 'ref')?.value;
+    if (name === undefined) {
+      return node;
+    }
+    const global = this.globalElements.get(name);
+    if (!global) {
+      this.problem(node, `unknown element '${name}'`);
+    }
+    return global;
   }
 
   /** The model group of a named group, with the occurrence of the reference. */

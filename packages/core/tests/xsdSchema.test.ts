@@ -1,8 +1,21 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity } from 'vscode-languageserver-types';
-import { acceptsFreeText, acceptsValue, analyzeText, enumerationsOf, loadSchemas, typeNamesOf, XsdSchema, type XsdElement, type XsdSimpleType } from '../src';
+import {
+  acceptsFreeText,
+  acceptsValue,
+  analyzeText,
+  enumerationsOf,
+  loadSchemas,
+  parseXml,
+  typeNamesOf,
+  validateStructure,
+  XsdSchema,
+  type XsdElement,
+  type XsdSimpleType,
+} from '../src';
 
 const libraries = fileURLToPath(new URL('./fixtures/unpacked/libraries', import.meta.url));
 const schemas = loadSchemas(libraries);
@@ -37,6 +50,19 @@ describe('loadSchemas', () => {
     const missing = loadSchemas(path.join(libraries, 'nowhere'));
     expect(missing.schemas).toEqual({});
     expect(missing.problems.map((problem) => path.basename(problem.file)).sort()).toEqual(['aiscripts.xsd', 'diff.xsd', 'md.xsd']);
+  });
+
+  it('loads a library schema on first use and keeps it; none for the scripts, the patches, scriptproperties or a missing file', () => {
+    const set = loadSchemas(libraries);
+    const unlocks = set.library('unlocks');
+    expect(unlocks?.rootNames).toEqual(['rechecktime', 'unlocks']);
+    expect(set.library('unlocks')).toBe(unlocks);
+    expect(set.library('Unlocks')).toBe(unlocks);
+    expect(['md', 'aiscripts', 'common', 'diff', 'scriptproperties', 'wares', '../libraries/unlocks', ''].map((name) => set.library(name))).toEqual(
+      new Array(8).fill(undefined)
+    );
+    expect(set.problems).toEqual([]);
+    expect(loadSchemas(path.join(libraries, 'nowhere')).library('unlocks')).toBeUndefined();
   });
 
   it("loads the game's diff.xsd: entities of its DOCTYPE, XML name escapes, any content", () => {
@@ -420,5 +446,76 @@ describe('structure validation', () => {
     expect(texts(wrap('        < set_value'))).toEqual([]);
     expect(texts(wrap('        <do_if value="1">\n          typing'))).toEqual([]);
     expect(texts(wrap('        <![CDATA[ data ]]>'))).toEqual([]);
+  });
+});
+
+describe('library schemas', () => {
+  function validate(schema: XsdSchema, rootName: string, text: string): string[] {
+    const document = TextDocument.create('file:///library.xml', 'xml', 1, text);
+    return validateStructure(parseXml(text), schema, rootName, document, { checkContent: true, source: 'test' }).diagnostics.map(
+      (diagnostic) => `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1} ${diagnostic.code}: ${diagnostic.message}`
+    );
+  }
+
+  it('resolves an element reference to the global element, with the occurrence of the reference', () => {
+    const unlocks = loadSchemas(libraries).library('unlocks') as XsdSchema;
+    const recheck = declaration(unlocks, 'unlocks', 'discount', 'rechecktime');
+    expect(recheck.name).toBe('rechecktime');
+    expect(recheck.documentation).toBe('Time after which this unlock may be triggered again at the same entity once it has been unlocked.');
+    expect([...recheck.attributes.keys()]).toEqual(['min', 'max']);
+    const discount = (body: string): string => `<unlocks>\n  <discount id="d">\n${body}\n  </discount>\n</unlocks>`;
+    expect(validate(unlocks, 'unlocks', discount('    <rechecktime min="24h" max="36h"/>\n    <conditions/>'))).toEqual([]);
+    expect(validate(unlocks, 'unlocks', discount('    <conditions/>\n    <rechecktime min="1h"/>\n    <rechecktime max="2 days"/>'))).toEqual([
+      "5:6 invalid-child-element: Element 'rechecktime' is not allowed after 'rechecktime' in 'discount'. Expected 'actions'",
+      "5:23 invalid-attribute-value: Invalid value '2 days' for attribute 'max' in 'rechecktime'. Expected a value of type 'unitvalue'",
+    ]);
+    expect(unlocks.problems).toEqual([]);
+  });
+
+  it('reports a reference to an unknown element as a schema problem and leaves it out of the model', () => {
+    const text = [
+      '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">',
+      '  <xs:element name="root"><xs:complexType><xs:sequence>',
+      '    <xs:element ref="missing"/><xs:element name="known"/>',
+      '  </xs:sequence></xs:complexType></xs:element>',
+      '</xs:schema>',
+    ].join('\n');
+    const schema = new XsdSchema('broken', [{ path: 'broken.xsd', text }]);
+    expect(validate(schema, 'root', '<root><known/></root>')).toEqual([]);
+    expect(schema.problems.map((problem) => problem.message)).toEqual([`unknown element 'missing' at offset ${text.indexOf('<xs:element ref')}`]);
+  });
+
+  it('accepts any attribute where the type has xs:anyAttribute, and checks the declared ones still', () => {
+    const text = [
+      '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">',
+      '  <xs:complexType name="anycontent">',
+      '    <xs:sequence minOccurs="0" maxOccurs="unbounded"><xs:any processContents="skip"/></xs:sequence>',
+      '    <xs:anyAttribute processContents="skip"/>',
+      '  </xs:complexType>',
+      '  <xs:complexType name="tuned"><xs:complexContent><xs:extension base="anycontent">',
+      '    <xs:attribute name="factor" type="xs:float"/>',
+      '  </xs:extension></xs:complexContent></xs:complexType>',
+      '  <xs:element name="parameters"><xs:complexType><xs:sequence>',
+      '    <xs:element name="spline" type="anycontent" minOccurs="0"/>',
+      '    <xs:element name="tuned" type="tuned" minOccurs="0"/>',
+      '    <xs:element name="plain" minOccurs="0"><xs:complexType><xs:attribute name="a" type="xs:string"/></xs:complexType></xs:element>',
+      '  </xs:sequence></xs:complexType></xs:element>',
+      '</xs:schema>',
+    ].join('\n');
+    const schema = new XsdSchema('parameters', [{ path: 'parameters.xsd', text }]);
+    expect(declaration(schema, 'parameters', 'spline').allowsAnyAttribute).toBe(true);
+    expect(declaration(schema, 'parameters', 'plain').allowsAnyAttribute).toBe(false);
+    const document = [
+      '<parameters>',
+      '  <spline turnradius="2" rotaccfactor="0.25"><anything at="all"/></spline>',
+      '  <tuned factor="x" extra="1"/>',
+      '  <plain a="1" b="2"/>',
+      '</parameters>',
+    ].join('\n');
+    expect(validate(schema, 'parameters', document)).toEqual([
+      "3:18 invalid-attribute-value: Invalid value 'x' for attribute 'factor' in 'tuned'. Expected a value of type 'xs:float'",
+      "4:16 unknown-attribute: Unknown attribute 'b' in 'plain'",
+    ]);
+    expect(schema.problems).toEqual([]);
   });
 });

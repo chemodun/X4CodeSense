@@ -154,6 +154,9 @@ class Validator {
         continue;
       }
       const declared = allowed.get(attribute.name);
+      if (!declared && declaration.allowsAnyAttribute) {
+        continue;
+      }
       if (!declared) {
         this.report('unknown-attribute', `Unknown attribute '${attribute.name}' in '${element.name}'`, attribute.nameStart, attribute.nameEnd);
         continue;

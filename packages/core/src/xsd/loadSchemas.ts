@@ -15,6 +15,13 @@ export interface SchemaSet {
   diff?: XsdSchema;
   /** Problems found while reading or compiling, for logging. */
   problems: XsdProblem[];
+  /**
+   * The schema of library files, by the name a file gives in `xsi:noNamespaceSchemaLocation` without
+   * folder and extension (`libraries` for `jobs.xml`, `unlocks` for `unlocks.xml`): read on first use and
+   * kept. Undefined when the folder has no such file, and for the scripts', the patches' and
+   * `scriptproperties.xsd`.
+   */
+  library(name: string): XsdSchema | undefined;
 }
 
 /** Root element name of each script schema. */
@@ -25,6 +32,12 @@ export const rootElementName: Record<ScriptSchema, string> = {
 
 /** The schema of patch documents, and their root element. */
 export const diffSchemaName = 'diff';
+
+/** Schemas in `libraries` that are no library files' schema: the scripts', the include they share, the patches'. */
+const notLibrarySchemas: ReadonlySet<string> = new Set([...scriptSchemas, 'common', diffSchemaName, 'scriptproperties']);
+
+/** A schema name as a library file gives it: a file name, without folders. */
+const librarySchemaName = /^[\w.-]+$/;
 
 /** Files an XSD file includes, resolved against its folder, in order and without duplicates. */
 function collectFiles(files: FileSource, entry: string, into: XsdFile[], seen: Set<string>, problems: XsdProblem[]): void {
@@ -71,9 +84,24 @@ function loadSchema(files: FileSource, librariesFolder: string, name: string, pr
 /**
  * Loads `md.xsd` and `aiscripts.xsd` from a folder, following their includes (`common.xsd`), and
  * `diff.xsd`. Missing files are reported, not thrown; the returned set holds whatever could be loaded.
+ * The library files' schemas are loaded when first asked for: one with `common.xsd` takes tens of
+ * milliseconds, and a session needs few of them.
  */
 export function loadSchemas(librariesFolder: string, files: FileSource = diskFiles): SchemaSet {
-  const set: SchemaSet = { folder: librariesFolder, schemas: {}, problems: [] };
+  const libraries = new Map<string, XsdSchema | undefined>();
+  const set: SchemaSet = {
+    folder: librariesFolder,
+    schemas: {},
+    problems: [],
+    library(name: string): XsdSchema | undefined {
+      const key = name.toLowerCase();
+      if (!libraries.has(key)) {
+        const known = librarySchemaName.test(key) && !notLibrarySchemas.has(key) && files.exists(path.join(librariesFolder, `${key}.xsd`));
+        libraries.set(key, known ? loadSchema(files, librariesFolder, key, set.problems) : undefined);
+      }
+      return libraries.get(key);
+    },
+  };
   for (const schemaName of scriptSchemas) {
     const schema = loadSchema(files, librariesFolder, schemaName, set.problems);
     if (schema) {
