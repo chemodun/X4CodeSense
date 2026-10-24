@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.11.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.10.0...x4-script-language-server@v0.11.0) (2026-10-24)
+
+
+### Features
+
+* code lens with reference counts ([ddfb082](https://github.com/chemodun/X4CodeSense/commit/ddfb0828b5d97ee9efe461bf0a86571096f87b23))
+* follow fields, globals and modules of the extension in ReadText ([711119b](https://github.com/chemodun/X4CodeSense/commit/711119b317de3bd7c24f0efe08494665a840fa3b))
+* go to the text and complete pages and ids in ReadText of Lua files ([93a9c04](https://github.com/chemodun/X4CodeSense/commit/93a9c0478c27c43f90b9840d2ec25b813939fd6f))
+* library files are checked against the schema their root names ([0b42a67](https://github.com/chemodun/X4CodeSense/commit/0b42a67ae254dc16fbcca1b2efdb917048b35a45))
+* patches and merge files of library files are checked against their game file's schema ([84e8cad](https://github.com/chemodun/X4CodeSense/commit/84e8cadcbb557a9ad2524596befc94fa5f0cf29b))
+* warn about texts ReadText reads that no text file defines ([1820f10](https://github.com/chemodun/X4CodeSense/commit/1820f1070833ba7f979e4114f7c1d17cfa7444b2))
+
+
+### Bug Fixes
+
+* name the code lens setting in the server's settings log ([3437387](https://github.com/chemodun/X4CodeSense/commit/3437387372101400aaf31b77ac0bdbc09cbf1cb6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.11.0 to 0.12.0
+
 ## [0.10.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-language-server@v0.9.2...x4-script-language-server@v0.10.0) (2026-10-06)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v1.1.0...x4-script-check@v1.2.0) (2026-10-24)
+
+
+### Features
+
+* library files are checked against the schema their root names ([0b42a67](https://github.com/chemodun/X4CodeSense/commit/0b42a67ae254dc16fbcca1b2efdb917048b35a45))
+* patches and merge files of library files are checked against their game file's schema ([84e8cad](https://github.com/chemodun/X4CodeSense/commit/84e8cadcbb557a9ad2524596befc94fa5f0cf29b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * x4-script-core bumped from 0.11.0 to 0.12.0
+
 ## [1.1.0](https://github.com/chemodun/X4CodeSense/compare/x4-script-check@v1.0.0...x4-script-check@v1.1.0) (2026-10-06)
 
 
