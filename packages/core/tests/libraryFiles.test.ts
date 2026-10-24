@@ -1,12 +1,26 @@
 /**
  * Library files that name their schema in `xsi:noNamespaceSchemaLocation`: validated against that schema of
- * the game's `libraries`, with completion, hover, the outline and the quick fixes the schema gives. The
- * fixture's `unlocks.xsd` is the game's, trimmed.
+ * the game's `libraries`, with completion, hover, the outline and the quick fixes the schema gives; the
+ * patches and merge files of a game file that names one, against that. The fixture's `unlocks.xsd` is
+ * the game's, trimmed.
  */
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
-import { analyzeText, checkFile, completionAt, documentSymbols, hoverAt, loadGameData, quickFixes, type AnalysisContext, type DocumentAnalysis } from '../src';
+import { afterAll, describe, expect, it } from 'vitest';
+import {
+  analyzeText,
+  checkFile,
+  completionAt,
+  documentSymbols,
+  hoverAt,
+  loadGameData,
+  loadScriptIndex,
+  quickFixes,
+  type AnalysisContext,
+  type DocumentAnalysis,
+} from '../src';
 
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
 const game = loadGameData(unpacked);
@@ -139,5 +153,76 @@ describe('library files: features', () => {
   it('is a library file for the checker', () => {
     expect(checkFile(libraryFile, 'libraries', context, game, valid)).toEqual({ findings: [], kind: 'library' });
     expect(checkFile(libraryFile, 'libraries', context, game, '<unlocks/>').kind).toBe('other');
+  });
+});
+
+describe('library files: patches and merge files', () => {
+  // The game's library file, which names its schema, and an extension with a patch and a merge file of it.
+  const root = mkdtempSync(path.join(tmpdir(), 'x4codesense-library-patches-'));
+  const gameFolder = path.join(root, 'game');
+  const modsFolder = path.join(root, 'mods');
+  const modLibraries = path.join(modsFolder, 'my_mod', 'libraries');
+  mkdirSync(path.join(gameFolder, 'libraries'), { recursive: true });
+  mkdirSync(modLibraries, { recursive: true });
+  writeFileSync(path.join(gameFolder, 'libraries', 'unlocks.xml'), valid);
+  writeFileSync(path.join(modsFolder, 'my_mod', 'content.xml'), '<content id="my_mod" name="My Mod" version="100"/>\n');
+  const index = loadScriptIndex(gameFolder, [modsFolder], game.schemas);
+  const withIndex: AnalysisContext = { ...context, index };
+  const data = { ...game, index };
+  const patchFile = path.join(modLibraries, 'unlocks.xml');
+  const patchUri = pathToFileURL(patchFile).href;
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  const diff = (body: string): string => `<?xml version="1.0" encoding="utf-8"?>\n<diff>\n${body}\n</diff>\n`;
+  /** `line severity code: text` of each diagnostic, the text the one covers. */
+  const reported = (analysis: DocumentAnalysis): string[] =>
+    analysis.diagnostics.map(
+      (diagnostic) => `${diagnostic.range.start.line + 1} ${diagnostic.severity} ${diagnostic.code}: ${analysis.document.getText(diagnostic.range)}`
+    );
+  const marked = (text: string): { analysis: DocumentAnalysis; offset: number } => {
+    const offset = text.indexOf('|');
+    return { analysis: analyze(text.slice(0, offset) + text.slice(offset + 1), patchUri, withIndex), offset };
+  };
+
+  it('checks what a patch brings in where it lands, by names, an unknown element a warning', () => {
+    const analysis = analyze(
+      diff(
+        `  <add sel="/unlocks">\n    <discount id="d2"/>\n    <discount name="x">\n      <conditions weight="many"/>\n      <rechektime/>\n    </discount>\n  </add>`
+      ),
+      patchUri,
+      withIndex
+    );
+    // `d2` lacks its `conditions`: the order and the counts are not checked in a library file's patch.
+    expect(reported(analysis)).toEqual(['5 1 missing-required-attribute: discount', '6 1 invalid-attribute-value: many', '7 2 unknown-element: rechektime']);
+    expect(analysis.patch?.patched?.analysis.detection.library).toEqual({ schema: 'unlocks', schemaLocation: 'unlocks.xsd' });
+  });
+
+  it('reports an unknown element in a patch as severe as asked', () => {
+    const text = diff(`  <add sel="/unlocks/discount[@id='d1']">\n    <rechektime/>\n  </add>`);
+    const severity = (level: AnalysisContext['libraryPatchUnknownElements']): unknown[] =>
+      analyze(text, patchUri, { ...withIndex, libraryPatchUnknownElements: level }).diagnostics.map((diagnostic) => diagnostic.severity);
+    expect([severity('error'), severity('warning'), severity('info'), severity(undefined)]).toEqual([[1], [2], [3], [2]]);
+  });
+
+  it('completes and hovers what a patch brings in from the schema', () => {
+    const elements = marked(diff(`  <add sel="/unlocks">\n    <discount id="d2"><conditions/></discount>\n    <|\n  </add>`));
+    expect(completionAt(elements.analysis, elements.offset, data).map((item) => item.label)).toEqual(['discount']);
+    const children = marked(diff(`  <add sel="/unlocks">\n    <discount id="d2"><conditions/><|</discount>\n  </add>`));
+    expect(completionAt(children.analysis, children.offset, data).map((item) => item.label)).toEqual(['actions', 'rechecktime']);
+    const attributes = marked(diff(`  <add sel="/unlocks">\n    <discount |/>\n  </add>`));
+    expect(completionAt(attributes.analysis, attributes.offset, data).map((item) => item.label)).toEqual(['id', 'name']);
+    const hovered = marked(diff(`  <add sel="/unlocks/discount[@id='d1']">\n    <actions/>\n    <recheck|time min="1h"/>\n  </add>`));
+    const hover = hoverAt(hovered.analysis, hovered.offset, data);
+    expect(hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '').toContain('Time after which this unlock');
+  });
+
+  it("checks a merge file that names no schema against its game file's", () => {
+    const merge = '<unlocks>\n  <discount id="d2">\n    <conditions weight="many"/>\n  </discount>\n</unlocks>\n';
+    const analysis = analyze(merge, patchUri, withIndex);
+    expect(analysis.detection.library).toEqual({ schema: 'unlocks', schemaLocation: 'unlocks.xsd' });
+    expect(reported(analysis)).toEqual(['3 1 invalid-attribute-value: many']);
+    expect(checkFile(patchFile, 'libraries', withIndex, data, merge).kind).toBe('library');
+    // One the game skips is that, and nothing else.
+    expect(reported(analyze('<rechecktime min="soon"/>', patchUri, withIndex))).toEqual(['1 1 library-root-mismatch: rechecktime']);
   });
 });

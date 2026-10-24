@@ -62,6 +62,10 @@ export function serverArguments(): string[] {
   if (!booleanSetting(configuration, 'guessVariableTypes', true)) {
     args.push('--no-type-guesses');
   }
+  const unknownElements = configuration.get<unknown>('libraryPatchUnknownElements');
+  if (unknownElements === 'error' || unknownElements === 'info') {
+    args.push('--library-patch-unknown-elements', unknownElements);
+  }
   return args;
 }
 

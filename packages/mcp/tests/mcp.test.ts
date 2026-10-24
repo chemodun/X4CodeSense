@@ -549,6 +549,9 @@ describe('x4-script-mcp options', { timeout: 30_000 }, () => {
     expect(unknown.code).toBe(2);
     expect(unknown.stderr).toContain('unknown argument --verbose');
     expect(unknown.stderr).toContain('Usage: x4-script-mcp');
+    const severity = await run('--library-patch-unknown-elements', 'loud');
+    expect(severity.code).toBe(2);
+    expect(severity.stderr).toContain("--library-patch-unknown-elements needs one of error, warning, info, not 'loud'");
     const help = await run('--help');
     expect(help.code).toBe(0);
     expect(help.stdout).toContain('--extensions <folder>');

@@ -34,6 +34,7 @@ Options:
 - `--language <number>` - the language texts are shown in, `44` (English) by default; the game's `libraries/languages.xml` lists the numbers.
 - `--no-structure` - report unknown elements, attributes and values, missing required attributes and text inside elements only, not the order and completeness of child elements.
 - `--no-type-guesses` - type variables only by what the scripts and the schemas state, not by guesses from the names and documentation of actions (`create_ship` a ship).
+- `--library-patch-unknown-elements <severity>` - how severe an element is that a patch of a library file brings in where the file's schema does not declare it: `error`, `warning` (default) or `info`. The library schemas lag behind the files: every DLC adds `<extension>` to a module's `<category>`, which no schema declares.
 - `--port <number>` - serve Streamable HTTP at `http://127.0.0.1:<port>/mcp` instead of standard input and output, for agents that are given a URL; `0` picks a free port. The game files are then read at once, and every client shares them. Only clients on this machine are served: a request naming another host, or from a web page of another site, is refused. A port in use ends it with exit code 1.
 - `-h`, `--help` - usage.
 

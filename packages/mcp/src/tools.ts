@@ -552,6 +552,7 @@ function statusTool(workspace: Workspace, version: string | undefined): CallTool
     language: workspace.options.language,
     structure: workspace.options.structure,
     typeGuesses: workspace.options.typeGuesses,
+    libraryPatchUnknownElements: workspace.options.libraryPatchUnknownElements ?? 'warning',
     problems: workspace.problems.slice(0, 50),
     ...(workspace.problems.length > 50 ? { moreProblems: workspace.problems.length - 50 } : {}),
   });

@@ -12,8 +12,8 @@
  *   and what X4CodeSense does not model, such as changing an element's text (`patch-operation-unsupported`,
  *   information).
  * - With the index and the schemas: text an `add` or `replace` holds beside the elements it brings in,
- *   which goes into an element of the script that allows none (`text-not-allowed`, warning). Text inside
- *   what it brings in is checked where it lands in the script.
+ *   which goes into an element of the script, or of the library file whose root names its schema, that
+ *   allows none (`text-not-allowed`, warning). Text inside what it brings in is checked where it lands.
  * - A merge file, a file in an extension's `libraries` that is no patch, whose root is not the root of the
  *   game's file it merges into: the game skips it (`library-root-mismatch`).
  */
@@ -22,7 +22,8 @@ import * as path from 'node:path';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range, type Diagnostic } from 'vscode-languageserver-types';
 import type { PatchTarget, ScriptIndex } from '../project/scriptIndex';
-import type { ScriptSchema } from '../types';
+import { libraryOfRoot } from '../scripts/scriptMetadata';
+import type { LibraryMetadata, ScriptSchema } from '../types';
 import { attributeNamed, rangeInValue, type XmlAttribute, type XmlElement, type XmlStructure } from '../xml/xmlStructure';
 import { parseXPath, parseXPathCondition, type XPath } from '../xml/xpath';
 import { diffSchemaName, rootElementName, type SchemaSet } from '../xsd/loadSchemas';
@@ -78,11 +79,21 @@ function operationsOf(structure: XmlStructure): XmlElement[] {
 
 const shown = (text: string): string => (text.length > 60 ? `${text.slice(0, 57)}...` : text);
 
-/** The schema of the script a patch changes, by the root element of its tree. */
-function targetSchema(patch: PatchAnalysis, schemas: SchemaSet): XsdSchema | undefined {
+/**
+ * The schema of the file a patch changes: a script's by the root element of its tree, a library file's the
+ * one its root names, when the game has it.
+ */
+export function targetSchema(patch: PatchAnalysis, schemas: SchemaSet): XsdSchema | undefined {
   const root = patch.document?.children.find((child) => child.kind === 'element');
-  const schema = (Object.keys(rootElementName) as ScriptSchema[]).find((name) => rootElementName[name] === root?.name);
-  return schema && schemas.schemas[schema];
+  if (!root) {
+    return undefined;
+  }
+  const schema = (Object.keys(rootElementName) as ScriptSchema[]).find((name) => rootElementName[name] === root.name);
+  if (schema) {
+    return schemas.schemas[schema];
+  }
+  const library = libraryOfRoot(root.name, root.attributes);
+  return library && schemas.library(library.schema);
 }
 
 /** The declaration of an element of a script's tree, by the names from its root down. */
@@ -261,6 +272,12 @@ export function validateMergeFile(document: TextDocument, structure: XmlStructur
       source,
     },
   ];
+}
+
+/** The library schema the root of the game's file a merge file goes into names, if any. */
+export function mergeTargetLibrary(target: PatchTarget, index: ScriptIndex): LibraryMetadata | undefined {
+  const root = target.file === undefined ? undefined : index.parsedFile(target.file)?.structure.roots[0];
+  return root && libraryOfRoot(root.name, root.attributes);
 }
 
 /** For a patch of a game file the game does not have: where a patch of an extension's file of that name goes. */

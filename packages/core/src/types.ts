@@ -34,6 +34,7 @@ export interface DocumentDetection {
    * Present when the document is neither a script nor a patch and its root names a schema in
    * `xsi:noNamespaceSchemaLocation` that is not the scripts', the patches', `common.xsd` or
    * `scriptproperties.xsd`. Whether the game has that schema is for the schemas to tell (`SchemaSet.library`).
+   * For a merge file that names none, the analysis sets the one its game file names, when the game has it.
    */
   library?: LibraryMetadata;
   /**

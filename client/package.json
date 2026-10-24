@@ -254,6 +254,16 @@
           "default": "openFilesOnly",
           "description": "Which scripts the Problems panel shows problems of: only the open ones, or every script in the workspace folders."
         },
+        "x4CodeSense.libraryPatchUnknownElements": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "default": "warning",
+          "markdownDescription": "How severe an element is that a patch of a library file brings in where the file's schema does not declare it. The game's library schemas lag behind its files: every DLC adds `<extension>` to a module's `<category>` in `modules.xml`, which no schema declares."
+        },
         "x4CodeSense.inlayHints.texts": {
           "type": "boolean",
           "default": true,

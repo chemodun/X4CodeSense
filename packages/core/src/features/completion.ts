@@ -395,12 +395,12 @@ class Completer {
 /**
  * Completion items for a caret offset in an analysed document. In a patch document, what it brings in is
  * completed as it is where it lands, and its paths from the target they select in. In a library file
- * that names its schema, the elements, attributes and values of that schema.
+ * that names its schema, or a patch or merge file of one, the elements, attributes and values of that schema.
  */
 export function completionAt(analysis: DocumentAnalysis, offset: number, game: GameData | undefined, options: CompletionOptions = {}): CompletionItem[] {
-  if (!analysis.structure || (analysis.detection.isDiff && !scriptSchemaOf(analysis))) {
-    // XML that is no script, or a patch of such a file (texts, wares): the paths of a patch from the file it
-    // changes, else text references only.
+  if (!analysis.structure || (analysis.detection.isDiff && !scriptSchemaOf(analysis) && !analysis.patch?.patched)) {
+    // XML that is no script, or a patch of such a file without a schema (texts, wares): the paths of a patch
+    // from the file it changes, else text references only.
     const inPath = analysis.structure && game ? pathCompletionsAt(analysis, offset, game) : undefined;
     if (inPath) {
       return inPath;
@@ -426,8 +426,8 @@ export function completionAt(analysis: DocumentAnalysis, offset: number, game: G
     completer.complete(context);
   }
   const texts = game?.texts;
-  if (completer.items.length === 0 && !analysis.detection.script && !analysis.detection.isDiff && texts && texts.fileCount > 0) {
-    // A library or merge file: text references also where its schema declares nothing, as in other XML.
+  if (completer.items.length === 0 && !scriptSchemaOf(analysis) && texts && texts.fileCount > 0) {
+    // A library or merge file, or a patch of one: text references also where its schema declares nothing, as in other XML.
     return textReferenceCompletions(analysis.document, offset, texts, options) ?? [];
   }
   return completer.items;

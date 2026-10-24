@@ -1,4 +1,4 @@
-import type { DocumentDetection, ScriptMetadata, ScriptRootElement, ScriptSchema } from '../types';
+import type { DocumentDetection, LibraryMetadata, ScriptMetadata, ScriptRootElement, ScriptSchema } from '../types';
 import { attributeNamed, parseXml, type XmlElement } from '../xml/xmlStructure';
 
 const rootElementToSchema: Record<ScriptRootElement, ScriptSchema> = {
@@ -69,6 +69,20 @@ export function librarySchemaFromLocation(schemaLocation: string): string | unde
 }
 
 /**
+ * The library schema a root element names by its attributes, for a root that is no script's and no patch's:
+ * that of the game's file a patch or a merge file goes into.
+ */
+export function libraryOfRoot(name: string, attributes: readonly { name: string; value: string }[]): LibraryMetadata | undefined {
+  const rootElement = name.toLowerCase();
+  const schemaLocation = attributes.find((attribute) => attribute.name.toLowerCase() === schemaLocationAttribute);
+  if (!schemaLocation || isScriptRootElement(rootElement) || rootElement === diffRootElement) {
+    return undefined;
+  }
+  const schema = librarySchemaFromLocation(schemaLocation.value);
+  return schema === undefined ? undefined : { schema, schemaLocation: schemaLocation.value };
+}
+
+/**
  * Classifies an XML text by its root element: script, patch, library file or something else.
  * For scripts the root element decides the schema; `xsi:noNamespaceSchemaLocation` is only recorded
  * so a later diagnostic can flag a mismatch, it never overrides the root element. Any other file is a
@@ -93,10 +107,10 @@ export function detectDocument(text: string): DocumentDetection {
       script.schemaLocation = schemaLocation.value;
     }
     detection.script = script;
-  } else if (!detection.isDiff && schemaLocation !== undefined) {
-    const schema = librarySchemaFromLocation(schemaLocation.value);
-    if (schema !== undefined) {
-      detection.library = { schema, schemaLocation: schemaLocation.value };
+  } else {
+    const library = libraryOfRoot(rootElement, root.attributes);
+    if (library) {
+      detection.library = library;
     }
   }
   return detection;

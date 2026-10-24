@@ -14,6 +14,7 @@ import {
   fileFindingDescriptions,
   fixAll,
   isInstalledGame,
+  libraryPatchUnknownElementLevels,
   loadGameData,
   messageOf,
   openInstalledGame,
@@ -26,6 +27,7 @@ import {
   type FileSource,
   type Finding,
   type GameData,
+  type LibraryPatchUnknownElements,
   type Severity,
 } from 'x4-script-core';
 
@@ -68,6 +70,8 @@ interface Options {
   structure: boolean;
   /** Guess what actions write into variables from their names and documentation. */
   typeGuesses: boolean;
+  /** The severity of an element a patch brings into a library file that its schema does not declare. */
+  libraryPatchUnknownElements: LibraryPatchUnknownElements;
   /** Also the names and texts of the installed mods the checked extensions depend on, not only their patches. */
   installedDependencies: boolean;
   /** Apply the preferred fixes to the files before checking them. */
@@ -103,7 +107,11 @@ Options:
   --no-structure        do not check the order and completeness of child elements
   --no-type-guesses     type variables only by what the scripts and the schemas state, not by
                         guesses from the names and documentation of actions (create_ship: a ship)
-  --fix                 apply the preferred quick fixes to the files first, as the editor's fix
+  --library-patch-unknown-elements <severity>
+                        the severity of an element a patch of a library file brings in that the
+                        file's schema does not declare: error, warning or info (default: warning;
+                        every DLC adds <extension> to a module's <category>, which no schema declares)
+  --fix               apply the preferred quick fixes to the files first, as the editor's fix
                         all does, then report what is left
   --format <format>     text: a line per finding, file:line:column: severity: message [code], and
                         a line per quick fix (default)
@@ -123,6 +131,7 @@ const valueOptions = new Map([
   ['--extensions', 'a folder'],
   ['--format', `one of ${formats.join(', ')}`],
   ['--fail-on', `one of ${severities.join(', ')}`],
+  ['--library-patch-unknown-elements', `one of ${libraryPatchUnknownElementLevels.join(', ')}`],
 ]);
 
 function oneOf<T extends string>(option: string, value: string, allowed: readonly T[]): T {
@@ -139,6 +148,7 @@ function parseOptions(argv: string[]): Options {
     extensions: [],
     structure: true,
     typeGuesses: true,
+    libraryPatchUnknownElements: 'warning',
     installedDependencies: false,
     fix: false,
     format: 'text',
@@ -163,6 +173,8 @@ function parseOptions(argv: string[]): Options {
         options.extensions.push(value);
       } else if (name === '--format') {
         options.format = oneOf(name, value, formats);
+      } else if (name === '--library-patch-unknown-elements') {
+        options.libraryPatchUnknownElements = oneOf(name, value, libraryPatchUnknownElementLevels);
       } else {
         options.failOn = oneOf(name, value, severities);
       }
@@ -514,7 +526,11 @@ async function main(argv: string[]): Promise<number> {
     console.log(usage);
     return 0;
   }
-  const context: AnalysisContext = { validateStructure: options.structure, guessVariableTypes: options.typeGuesses };
+  const context: AnalysisContext = {
+    validateStructure: options.structure,
+    guessVariableTypes: options.typeGuesses,
+    libraryPatchUnknownElements: options.libraryPatchUnknownElements,
+  };
   let game: GameData | undefined;
   let gameFolder: string | undefined;
   let files: FileSource = diskFiles;

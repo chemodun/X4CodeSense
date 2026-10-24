@@ -713,6 +713,9 @@ describe('x4-script-check', { timeout: 30_000 }, () => {
     expect(failOn.code).toBe(2);
     expect(failOn.stderr).toContain('--fail-on needs one of error, warning, info, hint');
     expect((await run('--fail-on=errors', extension)).code).toBe(2);
+    const unknownElements = await run('--library-patch-unknown-elements', 'loud', extension);
+    expect(unknownElements.code).toBe(2);
+    expect(unknownElements.stderr).toContain("--library-patch-unknown-elements needs one of error, warning, info, not 'loud'");
 
     const help = await run('--help');
     expect(help.code).toBe(0);

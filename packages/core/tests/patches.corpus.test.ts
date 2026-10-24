@@ -122,6 +122,22 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
       (module) =>
         `patch-no-match: No matching node in libraries/gamestarts.xml after 1 earlier patch: 'ware[@ware='module_par_${module}_01']' selects nothing (silent) (ego_dlc_terran/libraries/gamestarts.xml)`
     ),
+    // Additional category data for the game's modules, as the DLCs' comment calls it, which no schema declares (a warning).
+    ...(
+      [
+        ['ego_dlc_boron', 25],
+        ['ego_dlc_split', 26],
+        ['ego_dlc_terran', 2],
+      ] as const
+    ).flatMap(([dlc, count]) =>
+      Array<string>(count).fill(`unknown-element: Element 'category' does not allow child elements, found 'extension' (${dlc}/libraries/modules.xml)`)
+    ),
+    // `preferbuilding` belongs on the job's `environment`, where the other jobs of the file have it.
+    "unknown-attribute: Unknown attribute 'preferbuilding' in 'owner' (ego_dlc_boron/libraries/jobs.xml)",
+    "unknown-attribute: Unknown attribute 'preferbuilding' in 'quota' (ego_dlc_boron/libraries/jobs.xml)",
+    // A job's ship without the `loadout` that holds these in the other jobs of the file.
+    "unknown-element: Unknown element 'quality' in 'ship' (ego_dlc_timelines/libraries/jobs.xml)",
+    "unknown-element: Unknown element 'quantity' in 'ship' (ego_dlc_timelines/libraries/jobs.xml)",
   ];
 
   /** The same for the extensions'. */
@@ -131,6 +147,8 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
       (race) =>
         `patch-no-match: No matching node in libraries/baskets.xml after 4 earlier patches: 'basket[@id='all_container_${race}_da']' selects nothing (silent) (DeadAir_Eco/libraries/baskets.xml)`
     ),
+    // As the DLCs do.
+    ...Array<string>(7).fill("unknown-element: Element 'category' does not allow child elements, found 'extension' (DeadAir_Eco/libraries/modules.xml)"),
   ];
 
   it("applies the patches and merges the merge files in the DLCs' and the extensions' libraries, with the known findings", () => {
@@ -204,8 +222,14 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
           wrong.push(`${where} ${operation.path?.text ?? ''}: ${told.split('\n')[2] ?? 'no hover'}`);
         }
         // What it brings in is seen in the patched target, and shown at its place in the patch; a library
-        // file has no schema to tell of it.
-        for (const element of library ? [] : operation.inserted.flatMap((node) => node.element ?? [])) {
+        // file whose root names no schema has none to tell of it, nor its schema of an element it does not declare.
+        const unknown = new Set(
+          analysis.diagnostics.filter((diagnostic) => diagnostic.code === 'unknown-element').map((diagnostic) => document.offsetAt(diagnostic.range.start))
+        );
+        for (const element of library && !analysis.patch?.patched ? [] : operation.inserted.flatMap((node) => node.element ?? [])) {
+          if (unknown.has(element.nameStart)) {
+            continue;
+          }
           inserted++;
           const range = hoverAt(analysis, element.nameStart + 1, data)?.range;
           if (!range || document.offsetAt(range.start) !== element.nameStart) {

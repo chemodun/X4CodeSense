@@ -19,6 +19,7 @@ import {
   type AnalysisContext,
   type FileSource,
   type GameData,
+  type LibraryPatchUnknownElements,
 } from 'x4-script-core';
 
 export interface WorkspaceOptions {
@@ -34,6 +35,8 @@ export interface WorkspaceOptions {
   structure: boolean;
   /** Guess what actions write into variables from their names and documentation. */
   typeGuesses: boolean;
+  /** The severity of an element a patch brings into a library file that its schema does not declare; `warning` when absent. */
+  libraryPatchUnknownElements?: LibraryPatchUnknownElements;
   /** With `game`, also the names and texts of the installed mods the extensions depend on, not only their patches. */
   installedDependencies?: boolean;
 }
@@ -104,7 +107,11 @@ export class Workspace {
     this.loaded = true;
     this.game = undefined;
     this.problems = [];
-    this.context = { validateStructure: this.options.structure, guessVariableTypes: this.options.typeGuesses };
+    this.context = {
+      validateStructure: this.options.structure,
+      guessVariableTypes: this.options.typeGuesses,
+      ...(this.options.libraryPatchUnknownElements ? { libraryPatchUnknownElements: this.options.libraryPatchUnknownElements } : {}),
+    };
     this.layout = '';
     this.watchedFolders = new Map();
     this.stamps = new Map();

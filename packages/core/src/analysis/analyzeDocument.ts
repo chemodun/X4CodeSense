@@ -24,10 +24,20 @@ import { validateTexts } from '../texts/validateTexts';
 import type { PatchAnalysis } from '../patches/patchAnalysis';
 import { overlapsPieceOf, sourceOffsetAt, sourceRange, writePatchedTree } from '../patches/patchedDocument';
 import type { PatchSource } from '../patches/patchTree';
-import { mergeTargetOf, validateMergeFile, validatePatch } from '../patches/validatePatch';
+import { mergeTargetLibrary, mergeTargetOf, targetSchema, validateMergeFile, validatePatch } from '../patches/validatePatch';
 
 /** `source` of every diagnostic this library produces. */
 export const diagnosticSource = 'X4CodeSense';
+
+/** The severities `AnalysisContext.libraryPatchUnknownElements` takes. */
+export const libraryPatchUnknownElementLevels = ['error', 'warning', 'info'] as const;
+export type LibraryPatchUnknownElements = (typeof libraryPatchUnknownElementLevels)[number];
+
+const levelSeverity: Record<LibraryPatchUnknownElements, DiagnosticSeverity> = {
+  error: DiagnosticSeverity.Error,
+  warning: DiagnosticSeverity.Warning,
+  info: DiagnosticSeverity.Information,
+};
 
 /** What an analysis may use besides the document itself. */
 export interface AnalysisContext {
@@ -99,6 +109,12 @@ export interface AnalysisContext {
    * the placeholders take is a warning, more is information. Defaults to true.
    */
   validateFormats?: boolean;
+  /**
+   * The severity of an element a patch brings into a library file that the file's schema does not
+   * declare: the library schemas lag behind the files, every DLC adds `extension` to a module's
+   * `category`, which none declares. Defaults to `warning`.
+   */
+  libraryPatchUnknownElements?: LibraryPatchUnknownElements;
   /**
    * Check only the elements for which this holds: their attributes, expressions, text and `md.`
    * references, and their children. The declarations, variables and names of the whole document are
@@ -216,9 +232,10 @@ export interface DocumentAnalysis {
  * Analyses one document: classifies it, and for scripts and patches scans the XML structure and reports
  * well-formedness problems as diagnostics. Scripts are then validated against their schema when one is
  * available; patches against `diff.xsd`, and with the index against the file they change, where what
- * they bring in is checked as part of that script. With the index, a merge file in an extension's
- * `libraries` is scanned as well, and its root checked. A library file whose root names its schema in
- * `xsi:noNamespaceSchemaLocation` is validated against that schema of the game's `libraries`; in a
+ * they bring in is checked as part of that script, or of the library file whose root names a schema. With
+ * the index, a merge file in an extension's `libraries` is scanned as well, and its root checked. A
+ * library file whose root names its schema in `xsi:noNamespaceSchemaLocation` is validated against that
+ * schema of the game's `libraries`, and so is a merge file that names none against its game file's; in a
  * `libraries` folder, a name the game has no schema of is a warning. Other XML documents get no
  * diagnostics, so other XML tooling stays in charge of them.
  */
@@ -250,11 +267,20 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
   }
   if (!detection.script && !detection.isDiff) {
     // A merge file, a library file that names its schema, or both.
+    let schema = librarySchema;
     if (merge && context.index) {
-      analysis.diagnostics.push(...validateMergeFile(document, structure, merge, context.index, diagnosticSource));
+      const mismatch = validateMergeFile(document, structure, merge, context.index, diagnosticSource);
+      analysis.diagnostics.push(...mismatch);
+      // One that names no schema takes its game file's, where the game merges it.
+      const inherited = !library && mismatch.length === 0 ? mergeTargetLibrary(merge, context.index) : undefined;
+      const inheritedSchema = inherited && context.schemas?.library(inherited.schema);
+      if (inherited && inheritedSchema) {
+        analysis.detection = { ...detection, library: inherited };
+        schema = inheritedSchema;
+      }
     }
-    if (librarySchema) {
-      validateLibraryFile(analysis, structure, librarySchema, context);
+    if (schema) {
+      validateLibraryFile(analysis, structure, schema, context);
     } else if (library && unknownSchema) {
       analysis.diagnostics.push(...unknownLibrarySchema(structure, document, library.schema));
     }
@@ -343,17 +369,20 @@ export function analyzeDocument(document: TextDocument, context: AnalysisContext
  * that lie in what this patch brought in, placed in the patch document. The target's own findings and
  * those in what earlier patches brought in are theirs to report, and the patch document reports its own
  * well-formedness problems. So only the elements the patch's pieces touch are checked: what it inserted,
- * the elements it set values of, and their ancestors, whose children it changed. Only a script is
- * analysed so: a library file has no schema to check it against.
+ * the elements it set values of, and their ancestors, whose children it changed. A script is analysed
+ * so, and a library file whose root names a schema the game has, by the names of its elements and
+ * attributes and their values, an unknown element as `libraryPatchUnknownElements` says; other library files have none to check
+ * them against.
  */
 function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, context: AnalysisContext): Diagnostic[] {
   const target = patch.target.file;
   const root = patch.document?.children.find((child) => child.kind === 'element');
+  const script = root !== undefined && Object.values(rootElementName).includes(root.name);
   if (
     !patch.document ||
     target === undefined ||
     !root ||
-    !Object.values(rootElementName).includes(root.name) ||
+    !(script || (context.schemas && targetSchema(patch, context.schemas))) ||
     !patch.operations.some((operation) => operation.status === 'applied' && operation.kind !== 'remove')
   ) {
     return [];
@@ -384,6 +413,8 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
   const patched = analyzeDocument(TextDocument.create(`${pathToFileURL(target).toString()}#patched`, 'xml', 0, written.text), {
     ...context,
     checkElement: (element) => touched(element.start, element.end),
+    // In a library file the names only: an `add` appends, and the DLCs' own patches keep no schema's order.
+    ...(script ? {} : { validateStructure: false }),
     // The target's trees are kept apart from the patch document's, which would take their place.
     ...(context.expressionCache ? { expressionCache: (context.expressionCache.patched ??= {}) } : {}),
     origin,
@@ -400,7 +431,8 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
   for (const diagnostic of patched.diagnostics.slice(patched.structure?.problems.length ?? 0)) {
     const range = sourceRange(written, patch.source, patched.document.offsetAt(diagnostic.range.start), patched.document.offsetAt(diagnostic.range.end));
     if (range && !(diagnostic.code === 'text-not-allowed' && inOperation(range.start))) {
-      diagnostics.push({ ...diagnostic, range: Range.create(document.positionAt(range.start), document.positionAt(range.end)) });
+      const severity = !script && diagnostic.code === 'unknown-element' ? { severity: levelSeverity[context.libraryPatchUnknownElements ?? 'warning'] } : {};
+      diagnostics.push({ ...diagnostic, ...severity, range: Range.create(document.positionAt(range.start), document.positionAt(range.end)) });
     }
   }
   return diagnostics;

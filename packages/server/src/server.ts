@@ -57,6 +57,7 @@ import {
   languageOfTextFile,
   loadGameData,
   loadTexts,
+  libraryPatchUnknownElementLevels,
   newProblems,
   openInstalledGame,
   withInstalledMods,
@@ -88,6 +89,7 @@ import {
   type GameFileParams,
   type GameFileResult,
   type GameSource,
+  type LibraryPatchUnknownElements,
   type ParsedValueCache,
   type PatchComparisonParams,
   type PatchComparisonResult,
@@ -113,6 +115,8 @@ interface X4CodeSenseSettings {
   guessVariableTypes: boolean;
   /** Problems of the open documents only, or also of every other script in the workspace folders. */
   diagnosticMode: 'openFilesOnly' | 'workspace';
+  /** The severity of an element a patch brings into a library file that its schema does not declare. */
+  libraryPatchUnknownElements: LibraryPatchUnknownElements;
   /**
    * Also the names and texts of the mods installed in `gameFolder` that the extensions depend on; without
    * it those mods are read only for the patches of the extensions.
@@ -132,6 +136,7 @@ const defaultSettings: X4CodeSenseSettings = {
   validateXmlStructure: true,
   guessVariableTypes: true,
   diagnosticMode: 'openFilesOnly',
+  libraryPatchUnknownElements: 'warning',
   readInstalledDependencies: false,
   inlayHints: { texts: true, variableTypes: true },
   debug: false,
@@ -165,6 +170,8 @@ function settingsOf(received: unknown): X4CodeSenseSettings {
     validateXmlStructure: flag('validateXmlStructure'),
     guessVariableTypes: flag('guessVariableTypes'),
     diagnosticMode: diagnosticModes.find((mode) => mode === values.diagnosticMode) ?? defaultSettings.diagnosticMode,
+    libraryPatchUnknownElements:
+      libraryPatchUnknownElementLevels.find((level) => level === values.libraryPatchUnknownElements) ?? defaultSettings.libraryPatchUnknownElements,
     readInstalledDependencies: flag('readInstalledDependencies'),
     inlayHints: { texts: hint('texts'), variableTypes: hint('variableTypes') },
     debug: flag('debug'),
@@ -688,7 +695,7 @@ async function refreshSettings(): Promise<void> {
   try {
     settings = settingsOf(await connection.workspace.getConfiguration('x4CodeSense'));
     log(
-      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} readInstalledDependencies=${settings.readInstalledDependencies} inlayHints.texts=${settings.inlayHints.texts} inlayHints.variableTypes=${settings.inlayHints.variableTypes} debug=${settings.debug}`
+      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} libraryPatchUnknownElements=${settings.libraryPatchUnknownElements} readInstalledDependencies=${settings.readInstalledDependencies} inlayHints.texts=${settings.inlayHints.texts} inlayHints.variableTypes=${settings.inlayHints.variableTypes} debug=${settings.debug}`
     );
     await refreshGameData();
     refreshTexts();
@@ -894,7 +901,11 @@ function refreshTokensAndHints(): void {
 
 /** What an analysis uses; with the uri of an open document, also the parsed values of its previous analysis. */
 function analysisContext(openUri?: string): AnalysisContext {
-  const context: AnalysisContext = { validateStructure: settings.validateXmlStructure, guessVariableTypes: settings.guessVariableTypes };
+  const context: AnalysisContext = {
+    validateStructure: settings.validateXmlStructure,
+    guessVariableTypes: settings.guessVariableTypes,
+    libraryPatchUnknownElements: settings.libraryPatchUnknownElements,
+  };
   if (openUri !== undefined) {
     let cache = expressionCaches.get(openUri);
     if (!cache) {

@@ -2,6 +2,7 @@
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { libraryPatchUnknownElementLevels } from 'x4-script-core';
 import { httpHost, httpPath, serveHttp } from './http';
 import { createServer } from './tools';
 import { Workspace, type WorkspaceOptions } from './workspace';
@@ -30,12 +31,16 @@ Options:
   --no-structure        do not check the order and completeness of child elements
   --no-type-guesses     type variables only by what the scripts and the schemas state, not by
                         guesses from the names and documentation of actions (create_ship: a ship)
+  --library-patch-unknown-elements <severity>
+                        the severity of an element a patch of a library file brings in that the
+                        file's schema does not declare: error, warning or info (default: warning;
+                        every DLC adds <extension> to a module's <category>, which no schema declares)
   --port <number>       serve Streamable HTTP on 127.0.0.1 at this port, for agents given a URL;
                         0 picks a free port. Only clients on this machine are served
   -h, --help            show this help`;
 
 /** The options that take a value. */
-const valueOptions = new Set(['--unpacked', '--game', '--extensions', '--language', '--port']);
+const valueOptions = new Set(['--unpacked', '--game', '--extensions', '--language', '--port', '--library-patch-unknown-elements']);
 
 type Options = WorkspaceOptions & { help: boolean; port?: number };
 
@@ -48,9 +53,17 @@ function parseOptions(argv: string[]): Options {
     if (valueOptions.has(name)) {
       const value = equals === -1 ? argv[++index] : argument.slice(equals + 1);
       if (value === undefined) {
-        throw new Error(`${name} needs ${name === '--language' || name === '--port' ? 'a number' : 'a folder'}`);
+        throw new Error(
+          `${name} needs ${name === '--language' || name === '--port' ? 'a number' : name === '--library-patch-unknown-elements' ? 'a severity' : 'a folder'}`
+        );
       }
-      if (name === '--unpacked') {
+      if (name === '--library-patch-unknown-elements') {
+        const level = libraryPatchUnknownElementLevels.find((candidate) => candidate === value);
+        if (level === undefined) {
+          throw new Error(`${name} needs one of ${libraryPatchUnknownElementLevels.join(', ')}, not '${value}'`);
+        }
+        options.libraryPatchUnknownElements = level;
+      } else if (name === '--unpacked') {
         options.unpacked = value;
       } else if (name === '--game') {
         options.game = value;
