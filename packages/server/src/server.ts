@@ -712,7 +712,7 @@ async function refreshSettings(): Promise<void> {
   try {
     settings = settingsOf(await connection.workspace.getConfiguration('x4CodeSense'));
     log(
-      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} libraryPatchUnknownElements=${settings.libraryPatchUnknownElements} readInstalledDependencies=${settings.readInstalledDependencies} inlayHints.texts=${settings.inlayHints.texts} inlayHints.variableTypes=${settings.inlayHints.variableTypes} debug=${settings.debug}`
+      `settings: unpackedFileLocation='${settings.unpackedFileLocation}' gameFolder='${settings.gameFolder}' extensionsFolder='${settings.extensionsFolder}' languageNumber=${settings.languageNumber} limitLanguageOutput=${settings.limitLanguageOutput} validateXmlStructure=${settings.validateXmlStructure} guessVariableTypes=${settings.guessVariableTypes} diagnosticMode=${settings.diagnosticMode} libraryPatchUnknownElements=${settings.libraryPatchUnknownElements} readInstalledDependencies=${settings.readInstalledDependencies} inlayHints.texts=${settings.inlayHints.texts} inlayHints.variableTypes=${settings.inlayHints.variableTypes} codeLens.references=${settings.codeLens.references} debug=${settings.debug}`
     );
     await refreshGameData();
     refreshTexts();
