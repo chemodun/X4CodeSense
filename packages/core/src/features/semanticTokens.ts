@@ -24,8 +24,8 @@
  * What the analysis cannot place, such as a name inside an expression that is no keyword or an unknown
  * character, gets no token and keeps the grammar's colour, as do plain attribute values. Without the
  * game's schemas no attribute is known to hold an expression, so there are no tokens. In a patch
- * document, what lands in the target is classified there and the tokens are taken back to the patch; its
- * own attributes (`sel`) get none.
+ * document, what lands in the target is classified there and the tokens are taken back to the patch; the
+ * paths of its `sel` and `if` are read as XPath (`pathTokens.ts`), with or without the game's files.
  */
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import type { SemanticTokensLegend } from 'vscode-languageserver-types';
@@ -46,9 +46,26 @@ import { stepTypesIn, type VariableOccurrence } from '../variables/variables';
 import { offsetInValue, type XmlAttribute, type XmlElement } from '../xml/xmlStructure';
 import { isExpressionAttribute, type XsdAttribute, type XsdSchema } from '../xsd/schema';
 import { patchedViewOf } from './patchContent';
+import { pathTokens } from './pathTokens';
 
-/** The token types, in the order of the legend. */
-export const semanticTokenTypes = ['namespace', 'function', 'label', 'variable', 'property', 'enumMember', 'keyword', 'number', 'string', 'operator'] as const;
+/**
+ * The token types, in the order of the legend. `xmlTag` and `xmlAttribute` are the names of elements and
+ * attributes in a patch's paths; the extension gives them the colours of XML's tags and attributes.
+ */
+export const semanticTokenTypes = [
+  'namespace',
+  'function',
+  'label',
+  'variable',
+  'property',
+  'enumMember',
+  'keyword',
+  'number',
+  'string',
+  'operator',
+  'xmlTag',
+  'xmlAttribute',
+] as const;
 
 export type SemanticTokenType = (typeof semanticTokenTypes)[number];
 
@@ -425,13 +442,13 @@ export function semanticTokens(analysis: DocumentAnalysis, game: GameData | unde
   if (!analysis.detection.isDiff) {
     return ordered(scriptTokens(analysis, game, reaches));
   }
+  const tokens = pathTokens(analysis, reaches);
   const view = patchedViewOf(analysis);
   if (!view) {
-    return [];
+    return tokens;
   }
   // The patched target is classified only where the patch's own text lies in it.
   const touched = overlapsPieceOf(view.written, view.source);
-  const tokens: SemanticToken[] = [];
   for (const token of scriptTokens(view.analysis, game, (start, end) => end > start && touched(start, end))) {
     const region = sourceRange(view.written, view.source, token.start, token.end);
     if (region && region.end > region.start && reaches(region.start, region.end)) {

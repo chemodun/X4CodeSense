@@ -71,4 +71,5 @@ export * from './features/inlayHints';
 export * from './features/workspaceSymbols';
 export * from './features/codeActions';
 export * from './features/semanticTokens';
+export * from './features/pathTokens';
 export * from './check/check';

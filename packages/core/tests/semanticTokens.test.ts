@@ -123,7 +123,20 @@ second'" />
 describe('semantic tokens', () => {
   it('announces its types and modifiers in the legend', () => {
     expect(semanticTokensLegend).toEqual({ tokenTypes: [...semanticTokenTypes], tokenModifiers: [...semanticTokenModifiers] });
-    expect(semanticTokenTypes).toEqual(['namespace', 'function', 'label', 'variable', 'property', 'enumMember', 'keyword', 'number', 'string', 'operator']);
+    expect(semanticTokenTypes).toEqual([
+      'namespace',
+      'function',
+      'label',
+      'variable',
+      'property',
+      'enumMember',
+      'keyword',
+      'number',
+      'string',
+      'operator',
+      'xmlTag',
+      'xmlAttribute',
+    ]);
   });
 
   it('classifies a Mission Director script: variables, keywords, properties, lookups, cues, literals and operators', () => {
@@ -299,7 +312,12 @@ describe('semantic tokens', () => {
     const text = readFileSync(file, 'utf8');
     const tokens = tokensOf(text, { ...context, index }, pathToFileURL(file).toString());
     checkShape(text, tokens);
-    expect(tokens.map((token) => describeToken(text, token))).toEqual([
+    // Without the index there is no target to classify in: only the patch's own paths have tokens, the next test's subject.
+    const paths = tokensOf(text, context, pathToFileURL(file).toString());
+    expect(paths.length).toBeGreaterThan(50);
+    expect(tokens.filter((token) => paths.some((own) => own.start === token.start))).toEqual(paths);
+    const brought = tokens.filter((token) => !paths.some((own) => own.start === token.start));
+    expect(brought.map((token) => describeToken(text, token))).toEqual([
       'Late=namespace.declaration',
       // The text of a `replace` that sets an attribute, as the value it becomes.
       '2=number',
@@ -308,8 +326,141 @@ describe('semantic tokens', () => {
       '$b=variable.modification',
       '2=number',
     ]);
-    // Without the index there is no target to classify in; the patch's own paths get nothing either way.
-    expect(tokensOf(text, context, pathToFileURL(file).toString())).toEqual([]);
+  });
+
+  it("reads a patch's paths in sel and if as XPath, also beyond what is evaluated, with or without the game's files", () => {
+    const patch = `<diff>
+  <add sel="//cue[@name='Start']/actions/set_value[@name='$count']/@exact" if="not(//cue[@name=&quot;Gone&quot;])">2</add>
+  <remove sel="/mdscript/cues/cue[2]/following-sibling::cue[not(@x) and contains(@name, 'a')][last()]/@*" />
+  <replace sel="(//cue)[1] | //library[@n &lt; 3 or $v]/text()">x</replace>
+</diff>
+`;
+    const uri = pathToFileURL(path.join(fixtures, 'patches', 'mods', 'late_mod', 'md', 'paths.xml')).toString();
+    for (const tokens of [tokensOf(patch, context, uri), semanticTokens(analyzeText(patch, {}, uri), undefined) ?? []]) {
+      checkShape(patch, tokens);
+      expect(onLine(patch, '<add', tokens)).toEqual([
+        '//=operator',
+        'cue=xmlTag',
+        '[=operator',
+        '@=operator',
+        'name=xmlAttribute',
+        '==operator',
+        // The name a path selects a cue by, as cue names are elsewhere.
+        "'=string",
+        'Start=namespace',
+        "'=string",
+        ']=operator',
+        '/=operator',
+        'actions=xmlTag',
+        '/=operator',
+        'set_value=xmlTag',
+        '[=operator',
+        '@=operator',
+        'name=xmlAttribute',
+        '==operator',
+        "'$count'=string",
+        ']=operator',
+        '/=operator',
+        '@=operator',
+        'exact=xmlAttribute',
+        'not=function',
+        '(=operator',
+        '//=operator',
+        'cue=xmlTag',
+        '[=operator',
+        '@=operator',
+        'name=xmlAttribute',
+        '==operator',
+        '&quot;=string',
+        'Gone=namespace',
+        '&quot;=string',
+        ']=operator',
+        ')=operator',
+      ]);
+      expect(onLine(patch, '<remove', tokens)).toEqual([
+        '/=operator',
+        'mdscript=xmlTag',
+        '/=operator',
+        'cues=xmlTag',
+        '/=operator',
+        'cue=xmlTag',
+        '[=operator',
+        '2=number',
+        ']=operator',
+        '/=operator',
+        'following-sibling=keyword',
+        '::=operator',
+        'cue=xmlTag',
+        '[=operator',
+        'not=function',
+        '(=operator',
+        '@=operator',
+        'x=xmlAttribute',
+        ')=operator',
+        'and=operator',
+        'contains=function',
+        '(=operator',
+        '@=operator',
+        'name=xmlAttribute',
+        ',=operator',
+        "'a'=string",
+        ')=operator',
+        ']=operator',
+        '[=operator',
+        'last=function',
+        '(=operator',
+        ')=operator',
+        ']=operator',
+        '/=operator',
+        '@=operator',
+        '*=xmlAttribute',
+      ]);
+      expect(onLine(patch, '<replace', tokens)).toEqual([
+        '(=operator',
+        '//=operator',
+        'cue=xmlTag',
+        ')=operator',
+        '[=operator',
+        '1=number',
+        ']=operator',
+        '|=operator',
+        '//=operator',
+        'library=xmlTag',
+        '[=operator',
+        '@=operator',
+        'n=xmlAttribute',
+        '&lt;=operator',
+        '3=number',
+        'or=operator',
+        '$v=variable',
+        ']=operator',
+        '/=operator',
+        'text=function',
+        '(=operator',
+        ')=operator',
+      ]);
+    }
+    // In a patch of an AI script, interrupt library items; an element named like an operator is a name.
+    const aiPatch = `<diff><remove sel="//library/handler[@name='Watch']/and" /></diff>`;
+    const aiUri = pathToFileURL(path.join(fixtures, 'patches', 'mods', 'late_mod', 'aiscripts', 'paths.xml')).toString();
+    expect(tokensOf(aiPatch, context, aiUri).map((token) => describeToken(aiPatch, token))).toEqual([
+      '//=operator',
+      'library=xmlTag',
+      '/=operator',
+      'handler=xmlTag',
+      '[=operator',
+      '@=operator',
+      'name=xmlAttribute',
+      '==operator',
+      "'=string",
+      'Watch=function',
+      "'=string",
+      ']=operator',
+      '/=operator',
+      'and=xmlTag',
+    ]);
+    // Other attributes of an operation, and paths outside an operation, have none.
+    expect(tokensOf('<diff><add sel="/a" pos="after"><x sel="/b" /></add></diff>', context, uri).length).toBe(2);
   });
 
   it('has nothing without the game schemas, and leaves other XML to other tooling', () => {
@@ -341,6 +492,33 @@ describe('semantic tokens', () => {
         ',=operator',
         '$cou=variable',
       ]);
+    });
+
+    it("reads a patch's path as far as it is typed", () => {
+      const uri = pathToFileURL(path.join(fixtures, 'patches', 'mods', 'late_mod', 'md', 'paths.xml')).toString();
+      const described = (text: string): string[] => {
+        const tokens = tokensOf(text, context, uri);
+        checkShape(text, tokens);
+        return tokens.map((token) => describeToken(text, token));
+      };
+      expect(described(`<diff>\n  <remove sel="//cue[@name='Sta`)).toEqual([
+        '//=operator',
+        'cue=xmlTag',
+        '[=operator',
+        '@=operator',
+        'name=xmlAttribute',
+        '==operator',
+        "'Sta=string",
+      ]);
+      expect(described(`<diff>\n  <remove sel="//cue[@na`)).toEqual(['//=operator', 'cue=xmlTag', '[=operator', '@=operator', 'na=xmlAttribute']);
+      expect(described(`<diff>\n  <remove sel=`)).toEqual([]);
+      // A value whose quote is missing ends where the editor's next attribute starts; the next operation keeps its tokens.
+      expect(described(`<diff>\n  <remove sel="//a />\n  <remove sel="//b" />\n</diff>`)).toContain('b=xmlTag');
+      const patch = `<diff>\n  <add sel="//cue[@name='Start']/actions" if="not(//cue[@name='Gone'])">\n    <x />\n  </add>\n</diff>\n`;
+      for (let cut = 0; cut <= patch.length; cut++) {
+        const text = patch.slice(0, cut);
+        checkShape(text, tokensOf(text, context, uri));
+      }
     });
 
     it('keeps its shape at every cut of the scripts', () => {

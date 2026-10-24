@@ -30,8 +30,25 @@ import { bestOf, fileCeilingMs } from './timing';
 const extracted = process.env.X4_EXTRACTED;
 const mods = process.env.X4_MODS;
 
-const operatorWords: ReadonlySet<string> = new Set(['and', 'or', 'not', 'typeof', 'lt', 'le', 'gt', 'ge']);
-const operators = /^([-+*/%^=<>!.,{}[\]()@?]|==|!=|<=|>=|&lt;|&gt;|&amp;|&lt;=|&gt;=)$/;
+const operatorWords: ReadonlySet<string> = new Set(['and', 'or', 'not', 'typeof', 'lt', 'le', 'gt', 'ge', 'div', 'mod']);
+// With those of a patch's paths: `|`, `//`, `::`, `..`.
+const operators = /^([-+*/%^=<>!.,{}[\]()@?|]|==|!=|<=|>=|\/\/|::|\.\.|&lt;|&gt;|&amp;|&lt;=|&gt;=)$/;
+const axes: ReadonlySet<string> = new Set([
+  'ancestor',
+  'ancestor-or-self',
+  'attribute',
+  'child',
+  'descendant',
+  'descendant-or-self',
+  'following',
+  'following-sibling',
+  'namespace',
+  'parent',
+  'preceding',
+  'preceding-sibling',
+  'self',
+]);
+const xmlName = /^[A-Za-z_][\w.:-]*$|^\*$/;
 
 describe.skipIf(!extracted)('semantic tokens on the corpus', { timeout: 300_000 }, () => {
   const game = loadGameData(extracted ?? '', { extensionFolders: mods ? [mods] : [], index: true });
@@ -61,11 +78,15 @@ describe.skipIf(!extracted)('semantic tokens on the corpus', { timeout: 300_000 
     // Labels and interrupt library items are named freely: `await build task`, `debug.economy.mining`.
     function: (text) => text !== '' && text.trim() === text,
     label: (text) => text !== '' && text.trim() === text,
-    keyword: (text) => keywords.has(text),
+    // And the axes of a patch's paths.
+    keyword: (text) => keywords.has(text) || axes.has(text),
     // A unit after a parenthesis stands alone.
     number: (text) => /^(\d|\.\d)|^[A-Za-z]+$/.test(text),
-    string: (text) => text.startsWith("'"),
+    // In a patch's paths also in double quotes, and the quotes alone around a name.
+    string: (text) => /^('|"|&quot;|&apos;)/.test(text),
     operator: (text) => operatorWords.has(text) || operators.test(text),
+    xmlTag: (text) => xmlName.test(text),
+    xmlAttribute: (text) => xmlName.test(text),
   };
 
   /** The analysis with its names and variables collected, and those of a patch's target: a server's analysis has them before the tokens are asked for. */

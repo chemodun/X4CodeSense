@@ -198,6 +198,29 @@
         }
       ]
     },
+    "semanticTokenTypes": [
+      {
+        "id": "xmlTag",
+        "description": "An element name in the path of a patch's sel or if."
+      },
+      {
+        "id": "xmlAttribute",
+        "description": "An attribute name in the path of a patch's sel or if."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "xml",
+        "scopes": {
+          "xmlTag": [
+            "entity.name.tag.localname.xml"
+          ],
+          "xmlAttribute": [
+            "entity.other.attribute-name.localname.xml"
+          ]
+        }
+      }
+    ],
     "configuration": {
       "title": "X4CodeSense",
       "properties": {
