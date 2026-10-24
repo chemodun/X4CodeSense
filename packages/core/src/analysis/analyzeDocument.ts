@@ -39,6 +39,11 @@ const levelSeverity: Record<LibraryPatchUnknownElements, DiagnosticSeverity> = {
   info: DiagnosticSeverity.Information,
 };
 
+/** A diagnostic of what a patch brings into a library file, an unknown element as `libraryPatchUnknownElements` says. */
+export function libraryPatchDiagnostic(diagnostic: Diagnostic, context: AnalysisContext): Diagnostic {
+  return diagnostic.code === 'unknown-element' ? { ...diagnostic, severity: levelSeverity[context.libraryPatchUnknownElements ?? 'warning'] } : diagnostic;
+}
+
 /** What an analysis may use besides the document itself. */
 export interface AnalysisContext {
   /** Game schemas; without them no structure validation takes place. */
@@ -431,8 +436,8 @@ function analyzePatchedTarget(patch: PatchAnalysis, document: TextDocument, cont
   for (const diagnostic of patched.diagnostics.slice(patched.structure?.problems.length ?? 0)) {
     const range = sourceRange(written, patch.source, patched.document.offsetAt(diagnostic.range.start), patched.document.offsetAt(diagnostic.range.end));
     if (range && !(diagnostic.code === 'text-not-allowed' && inOperation(range.start))) {
-      const severity = !script && diagnostic.code === 'unknown-element' ? { severity: levelSeverity[context.libraryPatchUnknownElements ?? 'warning'] } : {};
-      diagnostics.push({ ...diagnostic, ...severity, range: Range.create(document.positionAt(range.start), document.positionAt(range.end)) });
+      const placed = { ...diagnostic, range: Range.create(document.positionAt(range.start), document.positionAt(range.end)) };
+      diagnostics.push(script ? placed : libraryPatchDiagnostic(placed, context));
     }
   }
   return diagnostics;

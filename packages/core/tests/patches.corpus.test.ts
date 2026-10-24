@@ -505,6 +505,7 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
   /**
    * The problems the side with a patch shows: those of the extensions' patches where they land, as the
    * patch documents report them (`knownModFindings`). The targets' own are in the side before the patch too.
+   * In the side of a library file, what its patch reports where its content lands (`knownDlcLibraryFindings`).
    */
   const knownSideProblems = [
     "expression-unknown-property: 'npctemplateentry' has no property 'controlpost' (lsrpcr/conversations.xml:879)",
@@ -513,12 +514,13 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
 
   it('shows in the side with each patch only the problems the file before it does not have', () => {
     const kept: string[] = [];
+    const keptInLibraries: string[] = [];
     let compared = 0;
     let leftOut = 0;
-    let largest = { run: (): unknown => undefined, where: '', size: 0, target: '' };
-    for (const { file, analysis, library } of analyses) {
-      // The side of a library file is no script: there is nothing to check in it.
-      const comparison = index && analysis.patch && !library ? comparePatch(analysis.patch, index) : undefined;
+    const largest = { run: (): unknown => undefined, where: '', size: 0, target: '' };
+    const largestLibrary = { ...largest };
+    for (const { file, source, analysis, library } of analyses) {
+      const comparison = index && analysis.patch ? comparePatch(analysis.patch, index) : undefined;
       if (!comparison) {
         continue;
       }
@@ -530,25 +532,48 @@ describe.skipIf(!extracted)('patches on the corpus', { timeout: 300_000 }, () =>
       const before = side('before', comparison.before);
       const run = (): DocumentAnalysis => side('after', comparison.after);
       const after = run();
-      if (comparison.after.length > largest.size) {
-        largest = { run, where, size: comparison.after.length, target: comparison.file };
+      const largestOfKind = library ? largestLibrary : largest;
+      if (comparison.after.length > largestOfKind.size) {
+        Object.assign(largestOfKind, { run, where, size: comparison.after.length, target: comparison.file });
       }
       const problems = newProblems(after, before);
       leftOut += after.diagnostics.length - problems.length;
-      kept.push(...problems.map((problem) => `${String(problem.code)}: ${String(problem.message)} (${where}:${problem.range.start.line + 1})`));
+      if (library) {
+        // What the patch reports where its content lands, with the same severity.
+        keptInLibraries.push(
+          ...problems.map(
+            (problem) => `${String(problem.code)} ${String(problem.severity)}: ${String(problem.message)} (${source}/libraries/${path.basename(file)})`
+          )
+        );
+      } else {
+        kept.push(...problems.map((problem) => `${String(problem.code)}: ${String(problem.message)} (${where}:${problem.range.start.line + 1})`));
+      }
     }
     const best = bestOf(5, largest.run);
     const targetText = readFileSync(largest.target, 'utf8');
     const bestTarget = bestOf(5, () => analyzeText(targetText, context, pathToFileURL(largest.target).toString()));
+    const bestLibrary = bestOf(5, largestLibrary.run);
     console.log(
-      `${compared} patches with both sides analysed: ${kept.length} problems in the sides with the patch, ${leftOut} of the targets left out; the largest side ${largest.where} (${largest.size} characters) best of 5 ${best.toFixed(1)} ms, its target alone (${targetText.length} characters) ${bestTarget.toFixed(1)} ms`
+      `${compared} patches with both sides analysed: ${kept.length} problems in the sides with the patch, ${keptInLibraries.length} in those of library files, ${leftOut} of the targets left out; the largest side ${largest.where} (${largest.size} characters) best of 5 ${best.toFixed(1)} ms, its target alone (${targetText.length} characters) ${bestTarget.toFixed(1)} ms; the largest of a library file ${largestLibrary.where} (${largestLibrary.size} characters) ${bestLibrary.toFixed(1)} ms`
     );
     expect(compared).toBeGreaterThan(100);
     expect(leftOut).toBeGreaterThan(0);
     expect(kept.sort()).toEqual(mods ? knownSideProblems : []);
+    const libraryPatches = analyses.filter((patch) => patch.library);
+    const reported = libraryPatches.flatMap(({ file, source, analysis }) =>
+      analysis.diagnostics
+        .filter((diagnostic) => diagnostic.code !== 'patch-no-match')
+        .map((diagnostic) => `${String(diagnostic.code)} ${String(diagnostic.severity)}: ${diagnostic.message} (${source}/libraries/${path.basename(file)})`)
+    );
+    expect(reported.length).toBeGreaterThan(50);
+    expect(keptInLibraries.sort()).toEqual(reported.sort());
     // A side is a whole script: it costs what its target costs when it is opened itself, with all the
     // server knows (the index, texts and variables, which the file ceiling's analysis leaves out).
     expect(best).toBeLessThan(1.5 * bestTarget);
+    // The side of a library file holds what all its patches bring in, a third more than the game's file
+    // for the largest: within the ceiling of a patch document, which analyses the same.
+    expect(largestLibrary.size).toBeGreaterThan(0);
+    expect(bestLibrary).toBeLessThan(patchCeilingMs);
   });
 
   // A patch document's analysis includes the file it changes: twice the ceiling of a file. The slowest of the

@@ -1,24 +1,29 @@
 /**
  * Library files that name their schema in `xsi:noNamespaceSchemaLocation`: validated against that schema of
  * the game's `libraries`, with completion, hover, the outline and the quick fixes the schema gives; the
- * patches and merge files of a game file that names one, against that. The fixture's `unlocks.xsd` is
+ * patches, the sides of their comparison and merge files of a game file that names one, against that. The fixture's `unlocks.xsd` is
  * the game's, trimmed.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  analyzeComparisonSide,
   analyzeText,
   checkFile,
+  comparePatch,
   completionAt,
   documentSymbols,
   hoverAt,
   loadGameData,
   loadScriptIndex,
+  newProblems,
   quickFixes,
   type AnalysisContext,
+  type ComparisonSide,
   type DocumentAnalysis,
 } from '../src';
 
@@ -214,6 +219,31 @@ describe('library files: patches and merge files', () => {
     const hovered = marked(diff(`  <add sel="/unlocks/discount[@id='d1']">\n    <actions/>\n    <recheck|time min="1h"/>\n  </add>`));
     const hover = hoverAt(hovered.analysis, hovered.offset, data);
     expect(hover && typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '').toContain('Time after which this unlock');
+  });
+
+  it('shows in the side with the patch what the patch reports, the order not checked', () => {
+    const patch = analyze(
+      diff(`  <add sel="/unlocks">\n    <discount id="d2"/>\n    <discount name="x">\n      <rechektime/>\n    </discount>\n  </add>`),
+      patchUri,
+      withIndex
+    ).patch;
+    const comparison = patch && comparePatch(patch, index);
+    expect(comparison?.file).toBe(path.join(gameFolder, 'libraries', 'unlocks.xml'));
+    if (!comparison) {
+      return;
+    }
+    const side = (name: ComparisonSide, text: string, sideContext = withIndex): DocumentAnalysis =>
+      analyzeComparisonSide(TextDocument.create(`x4codesense-patched:/unlocks.xml`, 'xml', 1, text), name, comparison.file, sideContext);
+    const before = side('before', comparison.before);
+    expect(before.detection.library?.schema).toBe('unlocks');
+    expect(before.diagnostics).toEqual([]);
+    const after = side('after', comparison.after);
+    expect(newProblems(after, before).map((problem) => `${problem.severity} ${problem.code}: ${after.document.getText(problem.range)}`)).toEqual([
+      '1 missing-required-attribute: discount',
+      '2 unknown-element: rechektime',
+    ]);
+    const severe = side('after', comparison.after, { ...withIndex, libraryPatchUnknownElements: 'error' });
+    expect(severe.diagnostics.map((diagnostic) => diagnostic.severity)).toEqual([1, 1]);
   });
 
   it("checks a merge file that names no schema against its game file's", () => {

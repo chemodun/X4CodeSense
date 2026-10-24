@@ -2,7 +2,8 @@
  * The two sides of a patch comparison as documents of their own: the file a patch changes before the
  * patch (read only), and after it (editable). Each is analysed as the script it shows, under the uri of
  * the target file with a fragment, as the patched target of a patch document is: the features that look
- * across files then take the target for the current file, whose indexed places are the side's own.
+ * across files then take the target for the current file, whose indexed places are the side's own. A
+ * library file whose root names a schema is analysed against it, as its patches are.
  *
  * The side with the patch shows the problems the side before it does not have: what the patch and the
  * edits of the side bring in, and what they break elsewhere in the script. The target's own problems are
@@ -11,8 +12,9 @@
 import { pathToFileURL } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { Diagnostic } from 'vscode-languageserver-types';
-import { analyzeDocument, type AnalysisContext, type DocumentAnalysis } from '../analysis/analyzeDocument';
+import { analyzeDocument, libraryPatchDiagnostic, type AnalysisContext, type DocumentAnalysis } from '../analysis/analyzeDocument';
 import { patchAfterScheme, patchBeforeScheme } from '../protocol';
+import { detectDocument } from '../scripts/scriptMetadata';
 
 export type ComparisonSide = 'before' | 'after';
 
@@ -36,13 +38,21 @@ export function comparisonSideOf(uri: string): { side: ComparisonSide; patch: st
   return patch ? { side, patch } : undefined;
 }
 
-/** A side of a patch comparison analysed as the script it shows, as the file `target` when that is known. */
+/**
+ * A side of a patch comparison analysed as the script it shows, as the file `target` when that is known.
+ * A library file is checked as a patch of it is: by the names of its elements and attributes and their
+ * values, an unknown element as `libraryPatchUnknownElements` says.
+ */
 export function analyzeComparisonSide(document: TextDocument, side: ComparisonSide, target: string | undefined, context: AnalysisContext): DocumentAnalysis {
+  const text = document.getText();
   const shown =
-    target === undefined
-      ? document
-      : TextDocument.create(`${pathToFileURL(target).toString()}#${side}`, document.languageId, document.version, document.getText());
-  return analyzeDocument(shown, context);
+    target === undefined ? document : TextDocument.create(`${pathToFileURL(target).toString()}#${side}`, document.languageId, document.version, text);
+  if (!detectDocument(text).library) {
+    return analyzeDocument(shown, context);
+  }
+  const analysis = analyzeDocument(shown, { ...context, validateStructure: false });
+  analysis.diagnostics = analysis.diagnostics.map((diagnostic) => libraryPatchDiagnostic(diagnostic, context));
+  return analysis;
 }
 
 /** What makes two problems the same in both sides: a line number in the message aside, since lines move. */
