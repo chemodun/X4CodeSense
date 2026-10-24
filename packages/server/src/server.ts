@@ -70,6 +70,8 @@ import {
   prepareRenameAt,
   quickFixes,
   readTextCalls,
+  readTextCompletions,
+  readTextDefinitions,
   readTextHover,
   referenceLensRanges,
   referenceLenses,
@@ -103,6 +105,7 @@ import {
   type ReadTextCall,
   type ReferenceLens,
   type ServerStatus,
+  type TextDatabase,
   type TextDisplayOptions,
   type TextLoadOptions,
   type XmlStructure,
@@ -1379,6 +1382,10 @@ function locate(uri: string, position: { line: number; character: number }): { a
 }
 
 connection.onCompletion((params): CompletionList | CompletionItem[] => {
+  const document = documents.get(params.textDocument.uri);
+  if (document && isLua(document)) {
+    return luaTextCompletions(document, document.offsetAt(params.position));
+  }
   const located = locate(params.textDocument.uri, params.position);
   if (!located) {
     return [];
@@ -1402,13 +1409,32 @@ function readTextCallsOf(document: TextDocument): ReadTextCall[] {
   return calls;
 }
 
+/** The loaded texts, or undefined while none are: Lua documents get nothing then. */
+function loadedTexts(): TextDatabase | undefined {
+  const texts = game?.texts;
+  return texts && texts.fileCount > 0 ? texts : undefined;
+}
+
+/**
+ * Completion in a `ReadText(` of a Lua document. A `ReadText` shortly before the caret is looked for
+ * first: completion is also asked at every space typed, and the calls of a large file take a while to
+ * find after a change.
+ */
+function luaTextCompletions(document: TextDocument, offset: number): CompletionItem[] {
+  const texts = loadedTexts();
+  const text = document.getText();
+  const near = text.lastIndexOf('ReadText', offset);
+  if (!texts || near < 0 || offset - near > 300) {
+    return [];
+  }
+  return readTextCompletions(document, readTextCallsOf(document), offset, texts, textDisplay()) ?? [];
+}
+
 connection.onHover((params): Hover | null => {
   const document = documents.get(params.textDocument.uri);
   if (document && isLua(document)) {
-    const texts = game?.texts;
-    return texts && texts.fileCount > 0
-      ? (readTextHover(document, readTextCallsOf(document), document.offsetAt(params.position), texts, textDisplay()) ?? null)
-      : null;
+    const texts = loadedTexts();
+    return texts ? (readTextHover(document, readTextCallsOf(document), document.offsetAt(params.position), texts, textDisplay()) ?? null) : null;
   }
   const located = locate(params.textDocument.uri, params.position);
   return located ? (hoverAt(located.analysis, located.offset, game, textDisplay()) ?? null) : null;
@@ -1427,6 +1453,16 @@ connection.onSignatureHelp((params): SignatureHelp | null => {
 
 connection.onDefinition((params): Location[] => {
   const uri = params.textDocument.uri;
+  const document = documents.get(uri);
+  if (document && isLua(document)) {
+    const texts = loadedTexts();
+    return texts
+      ? readTextDefinitions(readTextCallsOf(document), document.offsetAt(params.position), texts, textDisplay()).map((location) => ({
+          ...location,
+          uri: clientUriOf(location.uri),
+        }))
+      : [];
+  }
   const located = locate(uri, params.position);
   return located ? locationsInClient(uri, located.analysis, definitionAt(located.analysis, located.offset, game, textDisplay())) : [];
 });

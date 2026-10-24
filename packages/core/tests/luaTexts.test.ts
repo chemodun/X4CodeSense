@@ -1,7 +1,17 @@
 import { fileURLToPath } from 'node:url';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { describe, expect, it } from 'vitest';
-import { describeText, loadTexts, readTextCallAt, readTextCalls, readTextHover, scanLua, type ReadTextArgument } from '../src';
+import {
+  describeText,
+  loadTexts,
+  readTextCallAt,
+  readTextCalls,
+  readTextCompletions,
+  readTextDefinitions,
+  readTextHover,
+  scanLua,
+  type ReadTextArgument,
+} from '../src';
 
 const unpacked = fileURLToPath(new URL('./fixtures/unpacked', import.meta.url));
 const texts = loadTexts(unpacked);
@@ -35,6 +45,20 @@ function hoverText(text: string, offset: number, language?: string): { value: st
   const range = hover.range!;
   const value = typeof hover.contents === 'object' && 'value' in hover.contents ? hover.contents.value : '';
   return { value, range: `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}` };
+}
+
+/** Completion at the `|` of a text, as `label detail` for the first items and the range they replace; undefined when none. */
+function completionAt(marked: string): { items: string[]; range: string } | undefined {
+  const offset = marked.indexOf('|');
+  const text = marked.replace('|', '');
+  const document = TextDocument.create('file:///mod/ui/menu.lua', 'lua', 1, text);
+  const items = readTextCompletions(document, readTextCalls(text), offset, texts);
+  if (!items) {
+    return undefined;
+  }
+  const edit = items[0]?.textEdit;
+  const range = edit && 'range' in edit ? `${edit.range.start.character}-${edit.range.end.character}` : '';
+  return { items: items.map((item) => `${item.label}${item.detail ? ` ${item.detail}` : ''}`), range };
 }
 
 describe('the Lua scanner', () => {
@@ -167,6 +191,35 @@ describe('ReadText calls', () => {
     );
   });
 
+  it('goes to the text from the argument list when page and id are known', () => {
+    const text = 'local PAGE_ID = 1001\nprint(ReadText(PAGE_ID, 2), ReadText(PAGE_ID, unknown))';
+    const calls = readTextCalls(text);
+    const [location] = readTextDefinitions(calls, text.indexOf(', 2') + 2, texts);
+    expect(location.uri).toMatch(/\/t\/0001-l044\.xml$/);
+    expect(location.range.start.line).toBe(5);
+    expect(readTextDefinitions(calls, text.indexOf('2)') + 1, texts)).toHaveLength(1);
+    expect(readTextDefinitions(calls, text.indexOf('unknown'), texts)).toEqual([]);
+    expect(readTextDefinitions(calls, text.indexOf('print'), texts)).toEqual([]);
+    expect(readTextDefinitions(readTextCalls('ReadText(1001, 999)'), 10, texts)).toEqual([]);
+  });
+
+  it('completes the page and the ids of a known page, where the argument is empty or digits', () => {
+    expect(completionAt('x = ReadText(|)')).toEqual({ items: ['1001 Interface', '1002 Player Choices', '2000 Formats'], range: '13-13' });
+    expect(completionAt('x = ReadText(10|0)')).toEqual({ items: ['1001 Interface', '1002 Player Choices'], range: '13-16' });
+    expect(completionAt('x = ReadText(1002, |)')).toEqual({ items: ['10 Yes'], range: '19-19' });
+    expect(completionAt('local PAGE = 1001\nx = ReadText(PAGE, 1|)')?.items).toEqual(['1 Hull']);
+    expect(completionAt('local PAGE = 1001\nx = ReadText(PAGE,|)')?.items).toHaveLength(7);
+    // A name being typed is the Lua extension's; an unknown page has no ids to offer.
+    expect(completionAt('x = ReadText(PA|)')).toBeUndefined();
+    expect(completionAt('x = ReadText(|PAGE, 1)')).toBeUndefined();
+    expect(completionAt('x = ReadText(1001, |id)')).toBeUndefined();
+    expect(completionAt('x = ReadText(1001, 1| + 1)')).toBeUndefined();
+    expect(completionAt('x = ReadText(1001, id|)')).toBeUndefined();
+    expect(completionAt('function f(page) return ReadText(page, |) end')).toBeUndefined();
+    expect(completionAt('x = |ReadText(1001, 1)')).toBeUndefined();
+    expect(completionAt('x = ReadText(1001, 1)|')).toBeUndefined();
+  });
+
   it('takes the innermost call around the offset', () => {
     const text = 'x = ReadText(1001, ReadText(1001, 2))';
     const calls = readTextCalls(text);
@@ -183,6 +236,16 @@ describe('ReadText calls while typing', () => {
     expect(callsOf('x = ReadText(')).toEqual(['?missing ?missing (cut off)']);
     const text = 'local PAGE_ID = 1001\nlocal t = ReadText(PAGE_ID, 1';
     expect(hoverText(text, text.length)?.value).toContain('Hull');
+  });
+
+  it('completes in a call being written, the white space after it included', () => {
+    expect(completionAt('x = ReadText(|')?.items).toHaveLength(3);
+    expect(completionAt('x = ReadText( |')?.items).toHaveLength(3);
+    expect(completionAt('x = ReadText(1002, |\nlocal y = 2')?.items).toEqual(['10 Yes']);
+    expect(completionAt('x = ReadText(1002,\n  |\nlocal y = 2')?.items).toEqual(['10 Yes']);
+    expect(completionAt('x = ReadText(1001, 3|\ny = 2')?.items).toEqual(['3 None']);
+    expect(completionAt('x = ReadText(1001, 3 |\ny = 2')).toBeUndefined();
+    expect(completionAt('local s = "open\nx = ReadText(2000, |')?.items).toEqual(['1 %1 sold to %2 for %3Cr']);
   });
 
   it('finds calls after an unclosed string, and none in an unclosed long comment', () => {

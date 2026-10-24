@@ -2,13 +2,13 @@
  * Corpus gate for texts in Lua files, over the Lua files of the extracted game (X4_EXTRACTED) and of a
  * folder of extensions (X4_MODS), never committed: every string and comment closes and every call of
  * `ReadText` has its `)`, the tokens in order and apart; every call of the game with two numbers names a
- * text of the game but for the known ones; the calls of the largest game file are found under the file
- * ceiling.
+ * text of the game but for the known ones, and goes to its definition; the calls of the largest game file
+ * are found under the file ceiling.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadTexts, missingTextMessage, readTextCalls, scanLua, type ReadTextCall } from '../src';
+import { loadTexts, missingTextMessage, readTextCalls, readTextDefinitions, scanLua, type ReadTextCall } from '../src';
 import { bestOf, fileCeilingMs } from './timing';
 
 const extracted = process.env.X4_EXTRACTED;
@@ -94,18 +94,26 @@ describe.skipIf(!extracted)('ReadText in the Lua files of the corpus', { timeout
     expect(problems).toEqual([]);
   });
 
-  it('names a text of the game with every call of the game with page and id known, but for the known ones', () => {
+  it('names a text of the game with every call of the game with page and id known, but for the known ones, and goes to it', () => {
     const texts = loadTexts(root);
     const missing: string[] = [];
+    const withoutDefinition: string[] = [];
     for (const file of gameFiles) {
-      for (const call of readTextCalls(readFileSync(file, 'utf8'))) {
+      const calls = readTextCalls(readFileSync(file, 'utf8'));
+      for (const call of calls) {
         const [page, id] = [call.page.value, call.id.value];
-        if (page !== undefined && id !== undefined && missingTextMessage(texts, page, id)) {
+        if (page === undefined || id === undefined) {
+          continue;
+        }
+        if (missingTextMessage(texts, page, id)) {
           missing.push(`{${page}, ${id}} (${path.basename(file)})`);
+        } else if (readTextDefinitions(calls, call.open, texts).length === 0) {
+          withoutDefinition.push(`{${page}, ${id}} (${path.basename(file)})`);
         }
       }
     }
     expect(missing).toEqual(knownMissing);
+    expect(withoutDefinition).toEqual([]);
   });
 
   it('finds the calls of the largest Lua file of the game under the file ceiling', () => {

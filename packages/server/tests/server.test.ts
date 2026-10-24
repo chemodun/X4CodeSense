@@ -1155,10 +1155,22 @@ describe('Lua files', () => {
     expect(await hoverAt(1, lines[1].indexOf('ReadText'))).toBeNull();
     expect((await hoverAt(2, lines[2].lastIndexOf('id)')))?.value).toContain('The id `id` is not known here: a parameter of a function.');
 
+    // Completion of the ids where the id is written, not before the name of the page.
+    const completionAt = async (character: number): Promise<string[]> => {
+      const completion = await connection.sendRequest(CompletionRequest.type, { textDocument: { uri }, position: { line: 1, character } });
+      return (Array.isArray(completion) ? completion : (completion?.items ?? [])).map((item) => item.label);
+    };
+    expect(await completionAt(lines[1].indexOf(', 1') + 2)).toEqual(['1', '2', '3', '4', '5', '6', '7']);
+    expect(await completionAt(open + 1)).toEqual([]);
+    expect(await completionAt(0)).toEqual([]);
+
+    // The definition of the text, from anywhere in the argument list.
     const position = { line: 1, character: open + 1 };
-    const completion = await connection.sendRequest(CompletionRequest.type, { textDocument: { uri }, position });
-    expect(Array.isArray(completion) ? completion : completion?.items).toEqual([]);
-    expect(await connection.sendRequest(DefinitionRequest.type, { textDocument: { uri }, position })).toEqual([]);
+    const definitions = await connection.sendRequest(DefinitionRequest.type, { textDocument: { uri }, position });
+    expect(Array.isArray(definitions) ? definitions.map((location) => 'uri' in location && location.uri.replace(/^.*\//, '')) : definitions).toEqual([
+      '0001-l044.xml',
+    ]);
+    expect(await connection.sendRequest(DefinitionRequest.type, { textDocument: { uri }, position: { line: 0, character: 0 } })).toEqual([]);
     expect(await connection.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } })).toBeNull();
     expect(await connection.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } })).toBeNull();
 

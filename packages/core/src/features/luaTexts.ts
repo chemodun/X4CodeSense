@@ -9,11 +9,11 @@
  * the file is not resolved. Fields, expressions and other files are not followed.
  */
 import type { TextDocument } from 'vscode-languageserver-textdocument';
-import { Range, type Hover } from 'vscode-languageserver-types';
+import { Range, type CompletionItem, type Hover, type Location } from 'vscode-languageserver-types';
 import { scanLua, type LuaScan, type LuaToken } from '../lua/luaScanner';
 import type { TextDatabase } from '../texts/textDatabase';
 import { inlineCode } from './markdown';
-import { describeText, type TextDisplayOptions } from './texts';
+import { describeText, textDefinitions, textIdCompletionItems, textPageCompletionItems, type TextDisplayOptions } from './texts';
 
 export interface ReadTextArgument {
   /** Offsets of the argument's tokens; both at the place of a missing argument. */
@@ -431,4 +431,52 @@ export function readTextHover(
     contents: { kind: 'markdown', value: describeReadText(document, call, texts, options) },
     range: Range.create(document.positionAt(call.open), document.positionAt(call.end)),
   };
+}
+
+/** Where the text of the `ReadText` call around the offset is defined, when its page and id are known. */
+export function readTextDefinitions(calls: readonly ReadTextCall[], offset: number, texts: TextDatabase, options: TextDisplayOptions = {}): Location[] {
+  const call = readTextCallAt(calls, offset);
+  if (call?.page.value === undefined || call.id.value === undefined) {
+    return [];
+  }
+  return textDefinitions(texts, call.page.value, call.id.value, options);
+}
+
+/**
+ * Completion in the argument list of the `ReadText` call around the offset: the pages in the page
+ * argument, the ids of a known page in the id argument. Only where the argument is empty or digits, so
+ * a name being typed is left to the Lua extension; the digits around the caret are replaced.
+ */
+export function readTextCompletions(
+  document: TextDocument,
+  calls: readonly ReadTextCall[],
+  offset: number,
+  texts: TextDatabase,
+  options: TextDisplayOptions = {}
+): CompletionItem[] | undefined {
+  const text = document.getText();
+  // A call cut off while typing ends with its last token: the caret may be in the white space after it.
+  const call =
+    readTextCallAt(calls, offset) ??
+    calls
+      .filter((cut) => !cut.closed && cut.end <= offset && offset - cut.end < 1000 && /^\s*$/.test(text.slice(cut.end, offset)))
+      .reduce<ReadTextCall | undefined>((found, cut) => (!found || cut.open > found.open ? cut : found), undefined);
+  if (!call || offset <= call.open) {
+    return undefined;
+  }
+  const typed = /\d*$/.exec(text.slice(call.open + 1, offset))?.[0] ?? '';
+  const digitsAfter = /^\d*/.exec(text.slice(offset, offset + 20))?.[0].length ?? 0;
+  // After the digits the argument ends: a name or more of an expression there is no place for a number.
+  if (!/^[ \t]*([,)\r\n]|$)/.test(text.slice(offset + digitsAfter, offset + digitsAfter + 100))) {
+    return undefined;
+  }
+  const from = offset - typed.length;
+  const range = Range.create(document.positionAt(from), document.positionAt(offset + digitsAfter));
+  if (/^\s*$/.test(text.slice(call.open + 1, from))) {
+    return textPageCompletionItems(texts, range, typed);
+  }
+  if (call.page.value !== undefined && call.page.end <= from && /^\s*,\s*$/.test(text.slice(call.page.end, from))) {
+    return textIdCompletionItems(texts, call.page.value, range, typed, options);
+  }
+  return undefined;
 }

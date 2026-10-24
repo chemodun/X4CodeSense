@@ -47,7 +47,7 @@ The Problems panel lists the problems of the open scripts, also of those in tabs
 
 ### Texts in Lua files
 
-In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the text, as for `{page, id}` in scripts. The page and the id may be numbers, or names the file sets to one number, such as `local PAGE_ID = 1972092427`. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table, an expression. The Lua extension you use keeps its own hover and everything else. `.xpl` files count when VS Code opens them as Lua, for example with `"files.associations": { "*.xpl": "lua" }`.
+In Lua files, hovering between the parentheses of `ReadText(page, id)` shows the text, as for `{page, id}` in scripts. The page and the id may be numbers, or names the file sets to one number, such as `local PAGE_ID = 1972092427`. When one of them is not known, the hover says why: a parameter, a loop variable, a field of a table, an expression. Go to Definition from the parentheses opens the text in its text file. Where the page or the id is written as a number, or not written yet, completion offers the pages, and the ids of the page with their texts; after `ReadText(` type a digit or press Ctrl+Space. The Lua extension you use keeps its own hover and everything else. `.xpl` files count when VS Code opens them as Lua, for example with `"files.associations": { "*.xpl": "lua" }`.
 
 ### Navigation and rename
 
@@ -353,6 +353,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](https:
   - Semantic highlighting of the paths in a patch's `sel` and `if`: element and attribute names in the colours of XML's, functions, strings, numbers and operators, and the cue or interrupt library item a path selects by as it is coloured elsewhere.
   - Rename in the side with the patch, in what the patch brings in: it renames from the patch, and the side follows. On the game's own text there, or while the side has changes not yet written into the patch, it is refused, with the reason.
   - Code lens with reference counts over cues, libraries, labels and interrupt library items, in scripts and over what a patch brings in; a click shows the references. `x4CodeSense.codeLens.references` turns them off.
+  - In Lua files, Go to Definition from the parentheses of `ReadText(page, id)` opens the text, and completion there offers the pages and the ids of a page.
 
 ### [1.1.0] - 2026-10-06
 
